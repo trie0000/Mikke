@@ -137,7 +137,28 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
     if (!plan) return;
     const repo = getRepo();
     try {
+      // F6: 取込前に、設定でチェックした動的列 (Scan_*) を SP に作成しておく。
+      const settings = await repo.getSettings();
+      if (settings.managedColumns.length) {
+        await repo.ensureScanColumns(settings.managedColumns);
+      }
+      // F6/F7 の列候補サジェスト用に、今回の CSV ヘッダを設定に保存。
+      if (plan.headers.length) {
+        await repo.saveSettings({ ...settings, lastCsvHeaders: plan.headers }).catch(() => { /* noop */ });
+      }
       const { ok, fail } = await repo.applyImportOps(plan.ops);
+      // ImportLog 記録
+      const user = await repo.getCurrentUser();
+      await repo.writeImportLog({
+        fileName,
+        operator: user?.displayName ?? user?.email ?? '',
+        added: plan.summary.added,
+        updated: plan.summary.updated,
+        undetected: plan.summary.undetected,
+        skipped: plan.summary.skipped,
+        rowCount: plan.summary.rowCount,
+        importedAt: new Date().toISOString(),
+      }).catch(() => { /* ログ失敗は取込自体を止めない */ });
       toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
     } catch (e) {
       toast(rootEl, `取込に失敗しました: ${(e as Error).message}`, 'error');

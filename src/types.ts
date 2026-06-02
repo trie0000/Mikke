@@ -96,6 +96,8 @@ export interface MikkeSettings {
   matchConditions: ConditionGroup | null;
   /** F7: 個別管理対象の Issue Instance ID リスト。 */
   individualIds: string[];
+  /** 直近取込 CSV のヘッダ一覧 (F6/F7 の列候補サジェストに使う)。 */
+  lastCsvHeaders?: string[];
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
 }

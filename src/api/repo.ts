@@ -20,6 +20,22 @@ export interface Repository {
   getCurrentUser(): Promise<SiteUser | null>;
   /** 取込計画の ops を一括適用 (SP は $batch、mock は逐次)。 */
   applyImportOps(ops: ImportOp[], onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
+  /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成する。既存はスキップ。 */
+  ensureScanColumns(columns: string[]): Promise<void>;
+  /** 取込履歴を ImportLog に記録する。 */
+  writeImportLog(entry: ImportLogEntry): Promise<void>;
+}
+
+/** 取込履歴の 1 レコード。 */
+export interface ImportLogEntry {
+  fileName: string;
+  operator: string;
+  added: number;
+  updated: number;
+  undetected: number;
+  skipped: number;
+  rowCount: number;
+  importedAt: string; // ISO
 }
 
 let repo: Repository | null = null;

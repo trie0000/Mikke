@@ -19,11 +19,14 @@ export function renderIssueList(): HTMLElement {
 
   void load();
 
+  let scanCols: string[] = []; // F6 でチェックした動的列 (Scan_*)
+
   async function load(): Promise<void> {
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
-      const all = await getRepo().listIssues();
+      const [all, settings] = await Promise.all([getRepo().listIssues(), getRepo().getSettings()]);
+      scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
       setState({ issueCount: all.length }, { silent: true });
       paint(all);
     } catch (e) {
@@ -84,7 +87,7 @@ export function renderIssueList(): HTMLElement {
       tableWrap.appendChild(emptyState());
       return;
     }
-    const thead = el('thead', {}, [el('tr', {}, [
+    const headCells = [
       el('th', { class: 'mikke-check-col' }, ['']),
       el('th', {}, ['Issue']),
       el('th', {}, ['検知']),
@@ -92,8 +95,10 @@ export function renderIssueList(): HTMLElement {
       el('th', {}, ['深刻度']),
       el('th', {}, ['担当']),
       el('th', {}, ['期限']),
+      ...scanCols.map((c) => el('th', {}, [c.replace(/^Scan_/, '')])),
       el('th', {}, ['最終同期']),
-    ])]);
+    ];
+    const thead = el('thead', {}, [el('tr', {}, headCells)]);
     const tbody = el('tbody');
     for (const i of filtered) {
       const row = el('tr', {
@@ -109,6 +114,7 @@ export function renderIssueList(): HTMLElement {
         el('td', {}, [severityBadge(i.severity)]),
         el('td', {}, [i.assignee || '—']),
         el('td', {}, [fmtDate(i.dueDate, false) || '—']),
+        ...scanCols.map((c) => el('td', {}, [i.scanFields?.[c] || '—'])),
         el('td', {}, [fmtDate(i.lastSyncedAt) || '—']),
       ]);
       tbody.appendChild(row);

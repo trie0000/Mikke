@@ -1,6 +1,6 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
-import type { Repository } from './repo';
+import type { Repository, ImportLogEntry } from './repo';
 import type { ManagedIssue, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
@@ -110,5 +110,17 @@ export class MockRepository implements Repository {
       onProgress?.(++done, ops.length);
     }
     return { ok, fail };
+  }
+
+  async ensureScanColumns(_columns: string[]): Promise<void> { /* mock: no-op */ }
+
+  async writeImportLog(entry: ImportLogEntry): Promise<void> {
+    // mock: localStorage に履歴を積む (デバッグ用)。
+    try {
+      const key = 'mikke.mock.importlog';
+      const log = load<ImportLogEntry[]>(key, []);
+      log.unshift(entry);
+      save(key, log.slice(0, 50));
+    } catch { /* noop */ }
   }
 }

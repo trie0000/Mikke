@@ -64,19 +64,33 @@ export function renderSettingsView(rootEl: HTMLElement): HTMLElement {
         '一覧・詳細に表示する検査ツール CSV 列をチェックします。チェックを外した列のデータは保持され、再チェックで復活します（削除されません）。',
       ]),
     );
-    // 既知列が無い場合の案内 (実際の列は取込時に検出)
-    const known = s.managedColumns.length ? s.managedColumns : ['Scan_Asset', 'Scan_CVE'];
-    const list = el('div', { style: 'margin-top:var(--s-5)' });
-    for (const col of known) {
+    // 候補列: 直近取込 CSV のヘッダ。無ければ既存チェック済み列を表示。
+    const headers = s.lastCsvHeaders ?? [];
+    const checked = new Set(s.managedColumns.map((c) => c.replace(/^Scan_/, '')));
+    const candidates = headers.length
+      ? headers
+      : Array.from(checked).length ? Array.from(checked) : [];
+
+    if (!candidates.length) {
+      detail.append(el('p', { class: 'mikke-empty', style: 'text-align:left;padding:var(--s-5) 0' }, [
+        'まだ CSV を取り込んでいないため列候補がありません。先に「CSV 取込」を一度実行すると、ここに列が一覧表示されます。',
+      ]));
+      detail.append(saveBtn());
+      return;
+    }
+
+    const list = el('div', { style: 'margin-top:var(--s-5);columns:2;max-width:600px' });
+    for (const col of candidates) {
       list.appendChild(el('label', {
-        style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px',
+        style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;break-inside:avoid',
       }, [
-        el('input', { type: 'checkbox', ...(s.managedColumns.includes(col) ? { checked: 'checked' } : {}),
+        el('input', { type: 'checkbox', ...(checked.has(col) ? { checked: 'checked' } : {}),
           onchange: (e: Event) => {
             const on = (e.target as HTMLInputElement).checked;
+            const scanName = `Scan_${col}`;
             s.managedColumns = on
-              ? Array.from(new Set([...s.managedColumns, col]))
-              : s.managedColumns.filter((c) => c !== col);
+              ? Array.from(new Set([...s.managedColumns, scanName]))
+              : s.managedColumns.filter((c) => c !== scanName && c !== col);
           },
         }),
         col,
@@ -107,33 +121,53 @@ export function renderSettingsView(rootEl: HTMLElement): HTMLElement {
     ]);
     detail.append(el('div', { style: 'margin:var(--s-5) 0' }, [combSel]));
 
+    // CSV ヘッダ候補 (datalist でサジェスト)
+    const headers = s.lastCsvHeaders ?? [];
+    const dlId = 'mikke-csv-headers';
+    const datalist = el('datalist', { id: dlId }, headers.map((h) => el('option', { value: h })));
+    detail.appendChild(datalist);
+
     const rulesBox = el('div');
     detail.appendChild(rulesBox);
+
+    // マッチ件数プレビュー (直近 CSV を取り込んでいれば概算を出す)。
+    const previewLine = el('div', { style: 'margin-top:var(--s-4);font-size:var(--fs-sm);color:var(--ink-3)' });
+    function updatePreview(): void {
+      // 行データが手元にないため、件数の実測は取込時に行う。ここではルールの妥当性のみ表示。
+      const valid = group.rules.filter((r) => !(r as ConditionGroup).combinator)
+        .every((r) => (r as ConditionRule).field.trim() && (r as ConditionRule).value.trim());
+      const n = group.rules.length;
+      previewLine.textContent = n === 0
+        ? '条件が未設定です（このままだと条件一致での自動追加は行われません）。'
+        : `${n} 条件 / ${group.combinator}${valid ? '' : ' — ⚠ 未入力の条件があります'}`;
+    }
 
     function paintRules(): void {
       clear(rulesBox);
       group.rules.forEach((r, idx) => {
-        if ((r as ConditionGroup).combinator) return; // ネストグループは骨組みでは省略
+        if ((r as ConditionGroup).combinator) return; // ネストグループは MVP では非対応
         const rule = r as ConditionRule;
         const row = el('div', { class: 'mikke-cond-row' }, [
-          el('input', { class: 'mikke-input', style: 'border:1px solid var(--line)', placeholder: '列名 (CSV ヘッダ)',
-            value: rule.field, oninput: (e: Event) => { rule.field = (e.target as HTMLInputElement).value; } }),
+          el('input', { class: 'mikke-input', list: dlId, style: 'border:1px solid var(--line)', placeholder: '列名 (CSV ヘッダ)',
+            value: rule.field, oninput: (e: Event) => { rule.field = (e.target as HTMLInputElement).value; updatePreview(); } }),
           el('select', { class: 'mikke-select', style: 'border:1px solid var(--line)',
             onchange: (e: Event) => { rule.op = (e.target as HTMLSelectElement).value as ConditionRule['op']; } },
             CONDITION_OPS.map((o) => el('option', { value: o.value, ...(o.value === rule.op ? { selected: 'selected' } : {}) }, [o.label]))),
           el('input', { class: 'mikke-input', style: 'border:1px solid var(--line)', placeholder: '値',
-            value: rule.value, oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; } }),
+            value: rule.value, oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } }),
           el('button', { class: 'mikke-iconbtn', 'aria-label': '削除',
-            onclick: () => { group.rules.splice(idx, 1); paintRules(); }, html: '✕' }),
+            onclick: () => { group.rules.splice(idx, 1); paintRules(); updatePreview(); }, html: '✕' }),
         ]);
         rulesBox.appendChild(row);
       });
     }
     paintRules();
+    updatePreview();
 
     detail.append(
       el('button', { class: 'mikke-btn mikke-btn--secondary', style: 'margin-top:var(--s-3)',
-        onclick: () => { group.rules.push({ field: '', op: 'equals', value: '' }); paintRules(); } }, ['+ 条件を追加']),
+        onclick: () => { group.rules.push({ field: '', op: 'equals', value: '' }); paintRules(); updatePreview(); } }, ['+ 条件を追加']),
+      previewLine,
       saveBtn(),
     );
   }

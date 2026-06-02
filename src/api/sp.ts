@@ -1,7 +1,7 @@
 // SharePoint REST リポジトリ。同一オリジン Cookie 認証。
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
-import type { Repository } from './repo';
+import type { Repository, ImportLogEntry } from './repo';
 import type { ManagedIssue, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
 import type { ImportOp } from '../lib/import';
 import {
@@ -283,6 +283,36 @@ export class SpRepository implements Repository {
       const j = await this.spGet(`/_api/web/currentuser?$select=Title,Email`);
       return { displayName: j.d.Title ?? '', email: j.d.Email ?? '' };
     } catch { return null; }
+  }
+
+  /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成。既存・型一致はスキップ。
+   *  列名は Scan_ + 元 CSV ヘッダ。SP 内部名は SP が自動でエスケープする。 */
+  async ensureScanColumns(columns: string[]): Promise<void> {
+    if (!columns.length) return;
+    const specs: FieldSpec[] = columns.map((c) => ({
+      name: c.startsWith('Scan_') ? c : `Scan_${c}`,
+      type: 'Note', // 値の長さ・記号に耐えるため Note (複数行) で作る
+    }));
+    await this.ensureFields(LIST_MANAGED, specs);
+  }
+
+  /** 取込履歴を MikkeImportLog に記録。 */
+  async writeImportLog(entry: ImportLogEntry): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_IMPORTLOG}')/items`,
+      {
+        __metadata: { type: 'SP.Data.MikkeImportLogListItem' },
+        Title: `取込 ${entry.importedAt}`,
+        ImportedAt: entry.importedAt,
+        FileName: entry.fileName,
+        Operator: entry.operator,
+        AddedCount: entry.added,
+        UpdatedCount: entry.updated,
+        UndetectedCount: entry.undetected,
+        SkippedCount: entry.skipped,
+        RowCount: entry.rowCount,
+      },
+    );
   }
 
   // ── row ↔ entity ──────────────────────────────────────────────────────────
