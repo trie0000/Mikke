@@ -68,7 +68,14 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         toast(root, '対象外にする場合は理由を入力してください', 'warn');
         throw new Error('reason required');
       }
-      await getRepo().updateIssue(issue.id, patch);
+      try {
+        await getRepo().updateIssue(issue.id, patch);
+      } catch (e) {
+        // モーダルは開いたまま (modal.ts が throw で残す) にして再試行できるよう、
+        // ここで失敗理由をトースト表示してから rethrow する。
+        toast(root, `保存に失敗しました: ${(e as Error).message}`, 'error');
+        throw e;
+      }
       toast(root, '保存しました', 'ok');
       onSaved();
     },

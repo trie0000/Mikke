@@ -11,6 +11,15 @@ import type { ManagedIssue } from '../types';
 
 type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
 
+// 詳細タブのフォーカス履歴 (表示した順)。アクティブタブを閉じたとき
+// 「前回開いていたタブ」へ戻すために使う。モジュールスコープで再描画を跨いで保持。
+const tabFocusHistory: number[] = [];
+function recordTabFocus(id: number): void {
+  const i = tabFocusHistory.indexOf(id);
+  if (i >= 0) tabFocusHistory.splice(i, 1);
+  tabFocusHistory.push(id);
+}
+
 export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   const wrap = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
   const tabStrip = el('div', { class: 'mikke-tabstrip' });
@@ -53,13 +62,21 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
 
   function closeTab(id: number): void {
     const ids = getState().openIssueIds.filter((x) => x !== id);
-    const sel = getState().selectedIssueId === id ? (ids[ids.length - 1] ?? null) : getState().selectedIssueId;
-    setState({ openIssueIds: ids, selectedIssueId: sel, view: ids.length ? 'issues' : 'issues' });
+    // 閉じた ID はフォーカス履歴からも除去。
+    const hi = tabFocusHistory.indexOf(id);
+    if (hi >= 0) tabFocusHistory.splice(hi, 1);
+    let sel = getState().selectedIssueId;
+    if (sel === id) {
+      // アクティブタブを閉じた → 直近に開いていた (履歴の新しい順) まだ開いているタブへ。
+      sel = [...tabFocusHistory].reverse().find((x) => ids.includes(x)) ?? ids[ids.length - 1] ?? null;
+    }
+    setState({ openIssueIds: ids, selectedIssueId: sel, view: 'issues' });
   }
 
   async function loadCurrent(): Promise<void> {
     const id = getState().selectedIssueId;
     if (id == null) { body.appendChild(el('div', { class: 'mikke-empty' }, ['Issue を選択してください'])); return; }
+    recordTabFocus(id);
     clear(body);
     body.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     current = await getRepo().getIssue(id);
@@ -86,12 +103,12 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     detailTabs.appendChild(el('button', {
       class: 'mikke-btn mikke-btn--secondary',
       onclick: () => void fetchLatest(),
-      html: icon('sync') + '<span style="margin-left:6px">最新状態を取得</span>',
+      html: icon('sync') + '<span>最新状態を取得</span>',
     }));
     detailTabs.appendChild(el('button', {
       class: 'mikke-btn mikke-btn--primary', style: 'margin-left:8px',
       onclick: () => { if (current) openEditModal(rootEl, current, () => void loadCurrent()); },
-      html: icon('edit') + '<span style="margin-left:6px">編集</span>',
+      html: icon('edit') + '<span>編集</span>',
     }));
   }
 

@@ -161,7 +161,7 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       el('button', {
         class: 'mikke-btn mikke-btn--primary',
         onclick: () => void commit(),
-        html: icon('check') + '<span style="margin-left:6px">この内容で取り込む</span>',
+        html: icon('check') + '<span>この内容で取り込む</span>',
       }),
     ]));
   }

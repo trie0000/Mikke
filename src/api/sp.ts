@@ -356,15 +356,16 @@ export class SpRepository implements Repository {
     if (p.isOutOfScope !== undefined) row.IsOutOfScope = p.isOutOfScope;
     if (p.outOfScopeReason !== undefined) row.OutOfScopeReason = p.outOfScopeReason;
     if (p.assignee !== undefined) row.Assignee = p.assignee;
-    if (p.dueDate !== undefined) row.DueDate = p.dueDate;
+    // DateTime 列は空文字 ('') だと SP が HTTP 400。クリアは null で送る。
+    if (p.dueDate !== undefined) row.DueDate = p.dueDate || null;
     if (p.mgmtNote !== undefined) row.MgmtNote = p.mgmtNote;
     if (p.scannerStatus !== undefined) row.ScannerStatus = p.scannerStatus;
     if (p.severity !== undefined) row.Severity = p.severity;
-    if (p.firstSeen !== undefined) row.FirstSeen = p.firstSeen;
-    if (p.lastSeen !== undefined) row.LastSeen = p.lastSeen;
-    if (p.firstUndetectedAt !== undefined) row.FirstUndetectedAt = p.firstUndetectedAt;
+    if (p.firstSeen !== undefined) row.FirstSeen = p.firstSeen || null;
+    if (p.lastSeen !== undefined) row.LastSeen = p.lastSeen || null;
+    if (p.firstUndetectedAt !== undefined) row.FirstUndetectedAt = p.firstUndetectedAt || null;
     if (p.addedReason !== undefined) row.AddedReason = p.addedReason;
-    if (p.lastSyncedAt !== undefined) row.LastSyncedAt = p.lastSyncedAt;
+    if (p.lastSyncedAt !== undefined) row.LastSyncedAt = p.lastSyncedAt || null;
     if (p.scanFields) for (const [k, v] of Object.entries(p.scanFields)) row[k] = v;
     return row;
   }
