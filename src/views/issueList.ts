@@ -5,21 +5,28 @@ import { getState, setState, setFilter } from '../state';
 import { getRepo } from '../api/repo';
 import { isUndetected } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
+import { DETECTION_STATUSES, MGMT_STATUSES } from '../types';
 import type { ManagedIssue } from '../types';
+
+type SortKey = 'id' | 'title' | 'detection' | 'mgmt' | 'severity' | 'assignee' | 'due' | 'synced';
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
+const MGMT_ORDER: Record<string, number> = {
+  '未通知': 7, '通知': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
+};
 
 export function renderIssueList(): HTMLElement {
   const root = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
-
-  // subbar (バルクバーは常設してレイアウトシフトを防ぐ)
   const subbar = el('div', { class: 'mikke-subbar' });
   const toolbar = el('div', { class: 'mikke-toolbar' });
   const tableWrap = el('div', { class: 'mikke-table-wrap' });
-
   root.append(subbar, toolbar, tableWrap);
 
-  void load();
+  let scanCols: string[] = [];
+  let cache: ManagedIssue[] = [];
 
-  let scanCols: string[] = []; // F6 でチェックした動的列 (Scan_*)
+  void load();
 
   async function load(): Promise<void> {
     clear(tableWrap);
@@ -27,8 +34,9 @@ export function renderIssueList(): HTMLElement {
     try {
       const [all, settings] = await Promise.all([getRepo().listIssues(), getRepo().getSettings()]);
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
+      cache = all;
       setState({ issueCount: all.length }, { silent: true });
-      paint(all);
+      paint();
     } catch (e) {
       clear(tableWrap);
       tableWrap.appendChild(el('div', { class: 'mikke-error' }, [
@@ -37,9 +45,9 @@ export function renderIssueList(): HTMLElement {
     }
   }
 
-  function paint(all: ManagedIssue[]): void {
+  function applyFilter(all: ManagedIssue[]): ManagedIssue[] {
     const f = getState().filter;
-    const filtered = all.filter((i) => {
+    return all.filter((i) => {
       if (!f.showHidden) {
         if (i.isOutOfScope) return false;
         if (i.mgmtStatus === '過検出' || i.mgmtStatus === '対象外') return false;
@@ -55,6 +63,88 @@ export function renderIssueList(): HTMLElement {
       }
       return true;
     });
+  }
+
+  function applySort(rows: ManagedIssue[]): ManagedIssue[] {
+    const { sortBy, sortDir } = getState();
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const key = (i: ManagedIssue): number | string => {
+      switch (sortBy as SortKey) {
+        case 'id': return i.id;
+        case 'title': return i.title ?? '';
+        case 'detection': return DETECTION_ORDER[i.detectionStatus] ?? 0;
+        case 'mgmt': return MGMT_ORDER[i.mgmtStatus] ?? 0;
+        case 'severity': return SEVERITY_ORDER[(i.severity ?? '').toLowerCase()] ?? -1;
+        case 'assignee': return i.assignee ?? '';
+        case 'due': return i.dueDate ?? '';
+        case 'synced': return i.lastSyncedAt ?? '';
+        default: return i.id;
+      }
+    };
+    return [...rows].sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      if (ka < kb) return -1 * dir;
+      if (ka > kb) return 1 * dir;
+      return (a.id - b.id) * dir;
+    });
+  }
+
+  function toggleSort(k: SortKey): void {
+    const s = getState();
+    if (s.sortBy === k) {
+      setState({ sortDir: s.sortDir === 'asc' ? 'desc' : 'asc' }, { silent: true });
+    } else {
+      setState({ sortBy: k, sortDir: 'asc' }, { silent: true });
+    }
+    paint();
+  }
+
+  function sortableTh(label: string, k: SortKey): HTMLElement {
+    const s = getState();
+    const active = s.sortBy === k;
+    const arrow = active ? (s.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return el('th', {
+      onclick: () => toggleSort(k),
+      style: active ? 'color:var(--accent-strong)' : '',
+    }, [label + arrow]);
+  }
+
+  /** 複数選択フィルタのドロップダウン (チェックボックス群)。 */
+  function multiFilter(label: string, options: string[], selected: string[], onChange: (next: string[]) => void): HTMLElement {
+    const count = selected.length;
+    const btn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary',
+      style: 'height:30px;font-size:var(--fs-sm)',
+    }, [count ? `${label} (${count})` : label, el('span', { html: icon('chevronDown'), style: 'display:inline-flex;width:14px;margin-left:4px' })]);
+    const menu = el('div', {
+      style: 'position:absolute;z-index:10;margin-top:2px;background:var(--paper);border:1px solid var(--line);' +
+        'border-radius:var(--r-2);box-shadow:var(--shadow-flyout);padding:var(--s-3);display:none;min-width:160px',
+    });
+    for (const opt of options) {
+      menu.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:var(--fs-sm)' }, [
+        el('input', {
+          type: 'checkbox', ...(selected.includes(opt) ? { checked: 'checked' } : {}),
+          onchange: (e: Event) => {
+            const on = (e.target as HTMLInputElement).checked;
+            const next = on ? [...selected, opt] : selected.filter((x) => x !== opt);
+            onChange(next);
+          },
+        }),
+        opt || '(空)',
+      ]));
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { menu.style.display = 'none'; }, { once: true });
+    return el('div', { style: 'position:relative;display:inline-block' }, [btn, menu]);
+  }
+
+  function paint(): void {
+    const all = cache;
+    const filtered = applySort(applyFilter(all));
+    const f = getState().filter;
 
     // subbar
     clear(subbar);
@@ -67,11 +157,16 @@ export function renderIssueList(): HTMLElement {
     clear(toolbar);
     const search = el('input', {
       class: 'mikke-input', type: 'text', placeholder: 'タイトル / ID / 担当で検索',
-      value: f.query, style: 'min-width:220px',
-      oninput: (e: Event) => { setFilter({ query: (e.target as HTMLInputElement).value }, { silent: true }); paint(all); },
+      value: f.query, style: 'min-width:200px;border:1px solid var(--line)',
+      oninput: (e: Event) => { setFilter({ query: (e.target as HTMLInputElement).value }, { silent: true }); paint(); },
     });
+    // 深刻度の候補 (データに出現する値)
+    const sevOptions = Array.from(new Set(all.map((i) => i.severity).filter((x): x is string => !!x)));
+    const detectFilter = multiFilter('検知', DETECTION_STATUSES, f.detection, (next) => { setFilter({ detection: next }, { silent: true }); paint(); });
+    const mgmtFilter = multiFilter('対応', MGMT_STATUSES, f.mgmt, (next) => { setFilter({ mgmt: next }, { silent: true }); paint(); });
+    const sevFilter = multiFilter('深刻度', sevOptions, f.severity, (next) => { setFilter({ severity: next }, { silent: true }); paint(); });
     const hiddenToggle = el('label', {
-      style: 'display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer',
+      style: 'display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;margin-left:auto',
     }, [
       el('input', {
         type: 'checkbox', ...(f.showHidden ? { checked: 'checked' } : {}),
@@ -79,7 +174,16 @@ export function renderIssueList(): HTMLElement {
       }),
       '対象外・過検出・未検出も表示',
     ]);
-    toolbar.append(el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }), search, hiddenToggle);
+    const clearBtn = (f.detection.length || f.mgmt.length || f.severity.length || f.query)
+      ? el('button', { class: 'mikke-btn mikke-btn--ghost', style: 'height:30px;font-size:var(--fs-sm)',
+          onclick: () => { setFilter({ detection: [], mgmt: [], severity: [], query: '' }); } }, ['クリア'])
+      : null;
+    toolbar.append(
+      el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
+      search, detectFilter, mgmtFilter, sevFilter,
+      ...(clearBtn ? [clearBtn] : []),
+      hiddenToggle,
+    );
 
     // table
     clear(tableWrap);
@@ -89,14 +193,14 @@ export function renderIssueList(): HTMLElement {
     }
     const headCells = [
       el('th', { class: 'mikke-check-col' }, ['']),
-      el('th', {}, ['Issue']),
-      el('th', {}, ['検知']),
-      el('th', {}, ['対応']),
-      el('th', {}, ['深刻度']),
-      el('th', {}, ['担当']),
-      el('th', {}, ['期限']),
+      sortableTh('Issue', 'title'),
+      sortableTh('検知', 'detection'),
+      sortableTh('対応', 'mgmt'),
+      sortableTh('深刻度', 'severity'),
+      sortableTh('担当', 'assignee'),
+      sortableTh('期限', 'due'),
       ...scanCols.map((c) => el('th', {}, [c.replace(/^Scan_/, '')])),
-      el('th', {}, ['最終同期']),
+      sortableTh('最終同期', 'synced'),
     ];
     const thead = el('thead', {}, [el('tr', {}, headCells)]);
     const tbody = el('tbody');
