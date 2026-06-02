@@ -1,0 +1,320 @@
+// 設定ハブ (Spira 準拠の master-detail モーダル)。右上の歯車から開く。
+// 大分類: 個人設定 / 共通設定 / その他。左ナビ + 右詳細 + 右下に単一保存ボタン。
+import { el, clear } from '../utils/dom';
+import { openModal } from '../components/modal';
+import { toast } from '../components/toast';
+import { getRepo } from '../api/repo';
+import { CONDITION_OPS } from '../lib/conditions';
+import type { ConditionRule, ConditionGroup } from '../types';
+
+interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
+interface SettingItem { key: string; label: string; danger?: boolean; render: (root: HTMLElement) => Promise<SettingPanel> | SettingPanel; }
+interface SubGroup { title: string; items: SettingItem[]; }
+interface MajorGroup { key: string; title: string; subtitle: string; groups: SubGroup[]; }
+
+const MAJOR_COLOR: Record<string, string> = {
+  personal: '#5a76a3',  // 淡いブルー(accent-strong)
+  shared:   '#2f6f5e',  // ok 系グリーン
+  other:    '#a08c70',  // ベージュブラウン
+};
+
+export function openSettingsModal(root: HTMLElement): void {
+  const majors = buildMajorGroups(root);
+
+  const sideNav = el('div', {
+    style: 'width:240px;flex-shrink:0;border-right:1px solid var(--line);' +
+      'background:var(--paper-2);overflow-y:auto;padding:var(--s-2) 0',
+  });
+  const detailPane = el('div', {
+    style: 'flex:1;padding:var(--s-5) var(--s-6);overflow:auto;background:var(--paper);min-width:0',
+  });
+
+  let activeKey = majors[0]!.groups[0]!.items[0]!.key;
+  let currentSave: (() => Promise<void> | void) | null = null;
+  const cache = new Map<string, SettingPanel>();
+  let token = 0;
+
+  const findItem = (key: string): SettingItem | null => {
+    for (const M of majors) for (const g of M.groups) for (const it of g.items) {
+      if (it.key === key) return it;
+    }
+    return null;
+  };
+
+  async function renderDetail(): Promise<void> {
+    const item = findItem(activeKey);
+    if (!item) return;
+    const myToken = ++token;
+    const myKey = activeKey;
+    const cached = cache.get(activeKey);
+    if (cached) {
+      currentSave = cached.save ?? null;
+      detailPane.replaceChildren(cached.body);
+      detailPane.scrollTop = 0;
+      return;
+    }
+    detailPane.replaceChildren(el('div', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, ['読み込み中…']));
+    const panel = await item.render(root);
+    if (myToken !== token || myKey !== activeKey) return;
+    cache.set(myKey, panel);
+    currentSave = panel.save ?? null;
+    detailPane.replaceChildren(panel.body);
+    detailPane.scrollTop = 0;
+  }
+
+  function renderNav(): void {
+    const children: HTMLElement[] = [];
+    for (const M of majors) {
+      const accent = MAJOR_COLOR[M.key] ?? 'var(--accent)';
+      const sec: HTMLElement[] = [];
+      sec.push(el('div', {
+        style: `padding:var(--s-2) var(--s-3) 2px var(--s-3);font-size:var(--fs-sm);` +
+          `font-weight:700;color:${accent};letter-spacing:0.03em`,
+      }, [M.title]));
+      sec.push(el('div', {
+        style: 'padding:0 var(--s-3) var(--s-3) var(--s-3);font-size:11px;color:var(--ink-3);line-height:1.5',
+      }, [M.subtitle]));
+      for (const g of M.groups) {
+        sec.push(el('div', {
+          style: 'padding:var(--s-2) var(--s-3) 2px var(--s-3);font-size:var(--fs-xs);' +
+            'color:var(--ink-3);text-transform:uppercase;letter-spacing:0.05em;font-weight:600',
+        }, [g.title]));
+        for (const it of g.items) {
+          const active = it.key === activeKey;
+          sec.push(el('div', {
+            style: `display:block;padding:6px 12px 6px 16px;cursor:pointer;font-size:var(--fs-sm);` +
+              `color:${active ? 'var(--ink)' : 'var(--ink-2)'};` +
+              `background:${active ? 'var(--accent-soft)' : 'transparent'};` +
+              `border-left:3px solid ${active ? 'var(--accent)' : 'transparent'};` +
+              (it.danger ? 'color:var(--danger);' : ''),
+            onclick: () => { activeKey = it.key; renderNav(); void renderDetail(); },
+          }, [it.label]));
+        }
+      }
+      children.push(el('div', {
+        style: `border-left:4px solid ${accent};margin:var(--s-2) var(--s-3) var(--s-4) var(--s-3)`,
+      }, sec));
+    }
+    clear(sideNav);
+    sideNav.append(...children);
+  }
+
+  renderNav();
+  void renderDetail();
+
+  const body = el('div', {
+    style: 'display:flex;height:100%;width:100%;margin:0;overflow:hidden;border-radius:var(--r-2)',
+  }, [sideNav, detailPane]);
+
+  openModal(root, {
+    title: '⚙ 設定',
+    body,
+    size: 'xl',
+    primaryLabel: '保存',
+    hideCancel: true,
+    onPrimary: async () => {
+      if (currentSave) {
+        try { await currentSave(); }
+        catch { throw new Error('validation-failed'); }
+      }
+    },
+  });
+}
+
+// ── 大分類定義 ──
+function buildMajorGroups(root: HTMLElement): MajorGroup[] {
+  return [
+    {
+      key: 'personal', title: '個人設定', subtitle: '端末ローカルに保存。自分にだけ反映。',
+      groups: [
+        { title: '表示', items: [{ key: 'theme', label: 'テーマ・外観', render: () => renderThemePanel(root) }] },
+      ],
+    },
+    {
+      key: 'shared', title: '共通設定', subtitle: 'SharePoint に保存。チーム全員に反映。',
+      groups: [
+        { title: '取込', items: [
+          { key: 'columns', label: '管理項目の選択 (F6)', render: () => renderColumnsPanel(root) },
+          { key: 'conditions', label: '管理対象条件 (F7)', render: () => renderConditionsPanel(root) },
+          { key: 'individual', label: '個別追加 (Issue ID)', render: () => renderIndividualPanel(root) },
+        ] },
+      ],
+    },
+    {
+      key: 'other', title: 'その他', subtitle: '接続先・運用情報。',
+      groups: [
+        { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
+      ],
+    },
+  ];
+}
+
+// 共通: 見出し + 説明
+function panelHead(title: string, desc: string): HTMLElement {
+  return el('div', { style: 'margin-bottom:var(--s-5)' }, [
+    el('h3', { style: 'margin:0 0 var(--s-2);font-size:var(--fs-lg)' }, [title]),
+    el('p', { style: 'margin:0;color:var(--ink-3);font-size:var(--fs-sm);line-height:1.6' }, [desc]),
+  ]);
+}
+
+// ── 個人設定: テーマ ──
+function renderThemePanel(root: HTMLElement): SettingPanel {
+  const cur = root.getAttribute('data-theme') ?? 'light';
+  const sel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line-strong)' }, [
+    el('option', { value: 'light', ...(cur === 'light' ? { selected: 'selected' } : {}) }, ['ライト']),
+    el('option', { value: 'dark', ...(cur === 'dark' ? { selected: 'selected' } : {}) }, ['ダーク']),
+  ]) as HTMLSelectElement;
+  const body = el('div', {}, [
+    panelHead('テーマ・外観', 'この端末での表示テーマを切り替えます。'),
+    el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['テーマ']), sel]),
+  ]);
+  return {
+    body,
+    save: () => {
+      root.setAttribute('data-theme', sel.value);
+      try { localStorage.setItem('mikke.theme', sel.value); } catch { /* noop */ }
+      toast(root, 'テーマを保存しました', 'ok');
+    },
+  };
+}
+
+// ── 共通設定: F6 管理項目の選択 ──
+async function renderColumnsPanel(root: HTMLElement): Promise<SettingPanel> {
+  const s = await getRepo().getSettings();
+  const headers = s.lastCsvHeaders ?? [];
+  const checked = new Set(s.managedColumns.map((c) => c.replace(/^Scan_/, '')));
+  const candidates = headers.length ? headers : Array.from(checked);
+  const body = el('div', {}, [
+    panelHead('管理項目の選択', '一覧・詳細に表示する検査ツール CSV 列をチェックします。外した列のデータは保持され、再チェックで復活します。'),
+  ]);
+  if (!candidates.length) {
+    body.appendChild(el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
+      'まだ CSV を取り込んでいないため列候補がありません。先に CSV を一度取り込んでください。',
+    ]));
+    return { body };
+  }
+  const next = new Set(s.managedColumns);
+  const list = el('div', { style: 'columns:2;max-width:560px' });
+  for (const col of candidates) {
+    const scanName = `Scan_${col}`;
+    list.appendChild(el('label', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;break-inside:avoid' }, [
+      el('input', { type: 'checkbox', ...(checked.has(col) ? { checked: 'checked' } : {}),
+        onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? next.add(scanName) : next.delete(scanName); } }),
+      col,
+    ]));
+  }
+  body.appendChild(list);
+  return {
+    body,
+    save: async () => {
+      await getRepo().saveSettings({ ...s, managedColumns: Array.from(next) });
+      toast(root, '管理項目を保存しました', 'ok');
+    },
+  };
+}
+
+// ── 共通設定: F7 管理対象条件 ──
+async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
+  const s = await getRepo().getSettings();
+  const group: ConditionGroup = s.matchConditions ?? { combinator: 'OR', rules: [] };
+  const headers = s.lastCsvHeaders ?? [];
+  const dlId = 'mikke-csv-headers-modal';
+  const body = el('div', {}, [
+    panelHead('管理対象条件', 'CSV 列に対する AND/OR 条件で管理対象を定義します。条件変更は次回取込から適用されます。'),
+  ]);
+  body.appendChild(el('datalist', { id: dlId }, headers.map((h) => el('option', { value: h }))));
+
+  const combSel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line-strong)',
+    onchange: (e: Event) => { group.combinator = (e.target as HTMLSelectElement).value as 'AND' | 'OR'; } }, [
+    el('option', { value: 'AND', ...(group.combinator === 'AND' ? { selected: 'selected' } : {}) }, ['すべて満たす (AND)']),
+    el('option', { value: 'OR', ...(group.combinator === 'OR' ? { selected: 'selected' } : {}) }, ['いずれか満たす (OR)']),
+  ]);
+  body.appendChild(el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['結合']), combSel]));
+
+  const rulesBox = el('div');
+  body.appendChild(rulesBox);
+  const preview = el('div', { style: 'margin-top:var(--s-4);font-size:var(--fs-sm);color:var(--ink-3)' });
+  function updatePreview(): void {
+    const flat = group.rules.filter((r) => !(r as ConditionGroup).combinator) as ConditionRule[];
+    const valid = flat.every((r) => r.field.trim() && r.value.trim());
+    preview.textContent = group.rules.length === 0
+      ? '条件が未設定です。'
+      : `${group.rules.length} 条件 / ${group.combinator}${valid ? '' : ' — ⚠ 未入力の条件があります'}`;
+  }
+  function paintRules(): void {
+    clear(rulesBox);
+    group.rules.forEach((r, idx) => {
+      if ((r as ConditionGroup).combinator) return;
+      const rule = r as ConditionRule;
+      rulesBox.appendChild(el('div', { class: 'mikke-cond-row' }, [
+        el('input', { class: 'mikke-input', list: dlId, style: 'border:1px solid var(--line)', placeholder: '列名',
+          value: rule.field, oninput: (e: Event) => { rule.field = (e.target as HTMLInputElement).value; updatePreview(); } }),
+        el('select', { class: 'mikke-select', style: 'border:1px solid var(--line)',
+          onchange: (e: Event) => { rule.op = (e.target as HTMLSelectElement).value as ConditionRule['op']; } },
+          CONDITION_OPS.map((o) => el('option', { value: o.value, ...(o.value === rule.op ? { selected: 'selected' } : {}) }, [o.label]))),
+        el('input', { class: 'mikke-input', style: 'border:1px solid var(--line)', placeholder: '値',
+          value: rule.value, oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } }),
+        el('button', { class: 'mikke-iconbtn', 'aria-label': '削除',
+          onclick: () => { group.rules.splice(idx, 1); paintRules(); updatePreview(); }, html: '✕' }),
+      ]));
+    });
+  }
+  paintRules(); updatePreview();
+  body.append(
+    el('button', { class: 'mikke-btn mikke-btn--secondary', style: 'margin-top:var(--s-3)',
+      onclick: () => { group.rules.push({ field: '', op: 'equals', value: '' }); paintRules(); updatePreview(); } }, ['+ 条件を追加']),
+    preview,
+  );
+  return {
+    body,
+    save: async () => {
+      await getRepo().saveSettings({ ...s, matchConditions: group });
+      toast(root, '条件を保存しました', 'ok');
+    },
+  };
+}
+
+// ── 共通設定: 個別追加 ──
+async function renderIndividualPanel(root: HTMLElement): Promise<SettingPanel> {
+  const s = await getRepo().getSettings();
+  const ta = el('textarea', {
+    style: 'width:100%;min-height:200px;padding:var(--s-3);border:1px solid var(--line-strong);border-radius:var(--r-2);font-family:var(--font-mono)',
+  }, [s.individualIds.join('\n')]) as HTMLTextAreaElement;
+  const body = el('div', {}, [
+    panelHead('個別追加 (Issue Instance ID)', '条件に関係なく管理対象に加える Issue Instance ID を 1 行 1 件で入力します。'),
+    ta,
+  ]);
+  return {
+    body,
+    save: async () => {
+      const ids = ta.value.split('\n').map((x) => x.trim()).filter(Boolean);
+      await getRepo().saveSettings({ ...s, individualIds: ids });
+      toast(root, `個別追加 ${ids.length} 件を保存しました`, 'ok');
+    },
+  };
+}
+
+// ── その他: 接続 ──
+function renderConnectionPanel(root: HTMLElement): SettingPanel {
+  let siteUrl = '';
+  let relayBase = '';
+  try { siteUrl = localStorage.getItem('mikke.selectedSiteUrl') || ''; } catch { /* noop */ }
+  try { relayBase = localStorage.getItem('mikke.relay.base') || 'http://127.0.0.1:18080/mikke'; } catch { /* noop */ }
+  const siteInput = el('input', { type: 'text', value: siteUrl, placeholder: 'https://<tenant>.sharepoint.com/sites/<site>' }) as HTMLInputElement;
+  const relayInput = el('input', { type: 'text', value: relayBase }) as HTMLInputElement;
+  const body = el('div', {}, [
+    panelHead('SP サイト / 中継サーバ', '管理 DB を置く SharePoint サイトと、CSV 解析・API 中継に使うローカル中継サーバの接続先。'),
+    el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['SP サイト URL']), siteInput]),
+    el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['中継サーバ ベース URL']), relayInput]),
+  ]);
+  return {
+    body,
+    save: () => {
+      try {
+        if (siteInput.value.trim()) localStorage.setItem('mikke.selectedSiteUrl', siteInput.value.trim().replace(/\/$/, ''));
+        localStorage.setItem('mikke.relay.base', relayInput.value.trim().replace(/\/+$/, ''));
+      } catch { /* noop */ }
+      toast(root, '接続設定を保存しました', 'ok');
+    },
+  };
+}

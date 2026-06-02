@@ -118,4 +118,4 @@ export interface SiteUser {
 }
 
 /** メイン画面のビュー。 */
-export type ViewName = 'issues' | 'import' | 'settings';
+export type ViewName = 'issues' | 'import';
