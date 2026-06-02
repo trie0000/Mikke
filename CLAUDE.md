@@ -67,8 +67,29 @@ build id は build.js が git SHA から生成し esbuild define で焼き込む
 
 ## 現状
 
-Phase 0 スキャフォールド完了（起動・画面表示・型チェック・ビルド OK）。
-F1〜F7 の本実装（特に CSV 取込の差分判定・$batch 書込）は Phase 1。
+Phase 1 まで完了。
+- スキャフォールド（起動・画面・型チェック・ビルド OK）
+- CSV 取込エンジン（`src/lib/import.ts`、差分判定・検知遷移）+ 50 ユニットテスト
+- SP REST 実機検証済み（n365 サイト）: ensureLists/ensureFields/CRUD/MERGE(後勝ち)/$batch
+- 中継サーバ CSV 解析（`/mikke/csv-parse`、5.1 互換、mac の pwsh で実 CSV 検証）
+- `applyImportOps`（SP=$batch / mock=逐次）で取込確定経路を接続
+- 実 SP で取込→$batch→一覧反映を実証
+
+### ⚠️ 実機で判明した制約（重要）
+- **$batch の Content-Length は UTF-8 バイト長**で算出（`TextEncoder().encode(body).length`）。
+  JS `.length`(UTF-16) だと日本語 body で SP が HTTP 400。`sp.ts batchWrite` に反映済み。
+- **SP ページ(https)→relay(http://127.0.0.1) の直接 fetch は CSP/Mixed Content で
+  ブロックされうる**。CSV 取込は「ブラウザでファイル選択→中継 csv-parse」だが、
+  この経路が塞がる環境では**ブラウザ側 csv.ts でパース**するフォールバックが効く
+  （importView は relayHealth 成否で自動切替）。書き込みは SP 同一オリジン $batch なので影響なし。
+- **動的列 `Scan_*` は ensureFields で事前作成が必要**。未作成の列を含む body を送ると
+  その行が 400 になる。F6 でチェック→列作成→取込、の順序を守る。
+
+### 残（Phase 2 以降）
+- 検査ツール API（F3）の実装（社内確認後。現状スタブ）
+- 条件エンジン UI の仕上げ、ImportLog 記録、saved views 等
+- bundle の SP ライブラリ配置は運用手順（install-loader.html から手動アップロード）
+
 mock リポジトリ（`src/api/mock.ts`）で UI 検証可能。
 
 ## テスト

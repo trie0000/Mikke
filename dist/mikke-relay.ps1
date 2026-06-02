@@ -122,19 +122,163 @@ function Send-Error {
     Send-Json -Response $Response -Status $Status -Body @{ ok = $false; error = @{ code = $Code; detail = $Detail } }
 }
 
-# ─── /mikke/csv-parse — 大容量 CSV 解析 (主経路・雛形) ──────────────────────
-# 入力: multipart (file=CSV, params=JSON)。
-# 出力: { summary, preview, headers, diff }。
-# ※ 差分判定 (検知ステータス遷移 / 条件評価 / 個別指定) の本実装は実装フェーズ。
-#    ここでは CSV をパースして件数とプレビューを返すスタブ。
+# ─── CSV パーサ (RFC4180、PowerShell 5.1 互換) ──────────────────────────────
+# 役割分担: 中継サーバは「CSV → 行配列(JSON)」のパースのみ担う。差分判定
+#   (検知ステータス遷移 / 条件評価 / 個別指定) はブラウザの import.ts で行う
+#   (ロジックの二重実装を避けるため)。100MB 級のメモリ負荷をサーバ側に逃がす
+#   のが目的。ConvertFrom-Csv を使わず手書きパーサにしているのは、クォート内
+#   改行・BOM・区切り推定を import.ts (csv.ts) と完全一致させるため。
+function ConvertFrom-CsvText {
+    param([string]$Text)
+    if (-not $Text) { return @{ headers = @(); rows = @() } }
+    # BOM 除去
+    if ($Text.Length -gt 0 -and [int]$Text[0] -eq 0xFEFF) { $Text = $Text.Substring(1) }
+
+    $records = New-Object System.Collections.ArrayList
+    $record = New-Object System.Collections.ArrayList
+    $field = New-Object System.Text.StringBuilder
+    $inQuotes = $false
+    $i = 0; $n = $Text.Length
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        if ($inQuotes) {
+            if ($c -eq '"') {
+                if (($i + 1) -lt $n -and $Text[$i + 1] -eq '"') { [void]$field.Append('"'); $i += 2; continue }
+                $inQuotes = $false; $i++; continue
+            }
+            [void]$field.Append($c); $i++; continue
+        }
+        if ($c -eq '"') { $inQuotes = $true; $i++; continue }
+        if ($c -eq ',') { [void]$record.Add($field.ToString()); [void]$field.Clear(); $i++; continue }
+        if ($c -eq "`r") {
+            if (($i + 1) -lt $n -and $Text[$i + 1] -eq "`n") { $i++ }
+            [void]$record.Add($field.ToString()); [void]$field.Clear()
+            [void]$records.Add($record.ToArray()); $record.Clear(); $i++; continue
+        }
+        if ($c -eq "`n") {
+            [void]$record.Add($field.ToString()); [void]$field.Clear()
+            [void]$records.Add($record.ToArray()); $record.Clear(); $i++; continue
+        }
+        [void]$field.Append($c); $i++
+    }
+    if ($field.Length -gt 0 -or $record.Count -gt 0) {
+        [void]$record.Add($field.ToString())
+        [void]$records.Add($record.ToArray())
+    }
+    # 空レコード (末尾改行由来) を除去
+    $nonEmpty = @($records | Where-Object { -not ($_.Count -eq 1 -and $_[0] -eq '') })
+    if ($nonEmpty.Count -eq 0) { return @{ headers = @(); rows = @() } }
+    $headers = @($nonEmpty[0] | ForEach-Object { $_.Trim() })
+    $rows = New-Object System.Collections.ArrayList
+    for ($r = 1; $r -lt $nonEmpty.Count; $r++) {
+        $cols = $nonEmpty[$r]
+        $obj = [ordered]@{}
+        for ($h = 0; $h -lt $headers.Count; $h++) {
+            $val = if ($h -lt $cols.Count) { [string]$cols[$h] } else { '' }
+            $obj[$headers[$h]] = $val.Trim()
+        }
+        [void]$rows.Add($obj)
+    }
+    return @{ headers = $headers; rows = $rows }
+}
+
+# multipart/form-data から最初のファイルパートの生バイトを取り出す。
+function Get-MultipartFileBytes {
+    param([byte[]]$Body, [string]$Boundary)
+    $enc = [System.Text.Encoding]::ASCII
+    $delim = $enc.GetBytes("--$Boundary")
+    # ヘッダ終端 (CRLFCRLF) を探す簡易実装
+    $crlf2 = [byte[]](13, 10, 13, 10)
+    # 最初の boundary 後のパート開始位置
+    $idx = (Find-Bytes -Haystack $Body -Needle $delim -Start 0)
+    if ($idx -lt 0) { return $null }
+    $headEnd = (Find-Bytes -Haystack $Body -Needle $crlf2 -Start $idx)
+    if ($headEnd -lt 0) { return $null }
+    $contentStart = $headEnd + 4
+    # 次の boundary 直前 (CRLF + --boundary) までが本体
+    $nextDelim = [byte[]]((13, 10) + $delim)
+    $contentEnd = (Find-Bytes -Haystack $Body -Needle $nextDelim -Start $contentStart)
+    if ($contentEnd -lt 0) { $contentEnd = $Body.Length }
+    $len = $contentEnd - $contentStart
+    if ($len -le 0) { return $null }
+    $out = New-Object byte[] $len
+    [Array]::Copy($Body, $contentStart, $out, 0, $len)
+    return $out
+}
+
+function Find-Bytes {
+    param([byte[]]$Haystack, [byte[]]$Needle, [int]$Start = 0)
+    $hl = $Haystack.Length; $nl = $Needle.Length
+    if ($nl -eq 0 -or $hl -lt $nl) { return -1 }
+    for ($i = $Start; $i -le ($hl - $nl); $i++) {
+        $match = $true
+        for ($j = 0; $j -lt $nl; $j++) { if ($Haystack[$i + $j] -ne $Needle[$j]) { $match = $false; break } }
+        if ($match) { return $i }
+    }
+    return -1
+}
+
+# バイト列の文字コードを推定してデコード (UTF-8 BOM / UTF-8 / CP932)。
+function ConvertTo-DecodedText {
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
+    # UTF-8 BOM
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        return [System.Text.Encoding]::UTF8.GetString($Bytes, 3, $Bytes.Length - 3)
+    }
+    # UTF-8 として厳密デコードを試み、失敗したら CP932 にフォールバック
+    try {
+        $strict = New-Object System.Text.UTF8Encoding($false, $true)
+        return $strict.GetString($Bytes)
+    } catch {
+        try {
+            $cp932 = [System.Text.Encoding]::GetEncoding(932)
+            return $cp932.GetString($Bytes)
+        } catch {
+            return [System.Text.Encoding]::UTF8.GetString($Bytes)
+        }
+    }
+}
+
+# ─── /mikke/csv-parse — 大容量 CSV 解析 (主経路) ────────────────────────────
+# 入力: multipart/form-data (file=CSV)。
+# 出力: { ok, headers, rows, rowCount }。差分判定はブラウザ側 import.ts が行う。
 function Invoke-CsvParse {
     param([System.Net.HttpListenerContext]$Context)
     $request = $Context.Request
     $response = $Context.Response
-    # NOTE: multipart 解析は実装フェーズで追加。雛形では未対応を明示。
-    Send-Json -Response $response -Status 501 -Body @{
-        ok = $false
-        error = @{ code = 'not_implemented'; detail = 'csv-parse はスキャフォールド段階では未実装です (I/F のみ確定)。' }
+
+    $ctype = $request.ContentType
+    if (-not $ctype -or $ctype -notmatch 'multipart/form-data') {
+        Send-Error $response 400 'bad_content_type' 'multipart/form-data が必要です'
+        return
+    }
+    $m = [regex]::Match($ctype, 'boundary=(?:"([^"]+)"|([^;]+))')
+    if (-not $m.Success) { Send-Error $response 400 'no_boundary' 'boundary がありません'; return }
+    $boundary = if ($m.Groups[1].Value) { $m.Groups[1].Value } else { $m.Groups[2].Value.Trim() }
+
+    # 生バイトを読む (テキスト化前に file パートを抽出する必要があるため)
+    $ms = New-Object System.IO.MemoryStream
+    $request.InputStream.CopyTo($ms)
+    $body = $ms.ToArray()
+    $ms.Dispose()
+
+    $fileBytes = Get-MultipartFileBytes -Body $body -Boundary $boundary
+    if ($null -eq $fileBytes) { Send-Error $response 400 'no_file' 'ファイルパートが見つかりません'; return }
+
+    $text = ConvertTo-DecodedText -Bytes $fileBytes
+    $parsed = ConvertFrom-CsvText -Text $text
+
+    if ($parsed.headers.Count -eq 0) {
+        Send-Error $response 400 'empty_csv' '空の CSV です'
+        return
+    }
+
+    Send-Json -Response $response -Status 200 -Body @{
+        ok = $true
+        headers = $parsed.headers
+        rows = $parsed.rows
+        rowCount = $parsed.rows.Count
         relayVersion = $MIKKE_RELAY_VERSION
     }
 }

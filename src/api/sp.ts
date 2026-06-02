@@ -3,6 +3,7 @@
 //       $batch 一括書き込み。
 import type { Repository } from './repo';
 import type { ManagedIssue, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
+import type { ImportOp } from '../lib/import';
 import {
   LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG,
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs,
@@ -231,6 +232,24 @@ export class SpRepository implements Repository {
   /** 取込確定用: ManagedIssue の create/update を $batch 行データに変換するヘルパ。 */
   rowForBatch(patch: Partial<ManagedIssue>): Record<string, unknown> {
     return this.issueToRow(patch);
+  }
+
+  /** 取込計画の ops を $batch で一括適用。add=POST / update・undetect=MERGE。 */
+  async applyImportOps(
+    ops: ImportOp[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const batchOps: { kind: 'add' | 'update'; id?: number; row: Record<string, unknown> }[] = [];
+    for (const op of ops) {
+      if (op.kind === 'add' && op.create) {
+        batchOps.push({ kind: 'add', row: this.issueToRow(op.create) });
+      } else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
+        batchOps.push({ kind: 'update', id: op.id, row: this.issueToRow(op.patch) });
+      }
+      // skip は何もしない
+    }
+    if (batchOps.length === 0) return { ok: 0, fail: 0 };
+    return this.batchWrite(batchOps, onProgress);
   }
 
   // ── Settings ──────────────────────────────────────────────────────────────

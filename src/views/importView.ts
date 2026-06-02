@@ -5,7 +5,7 @@ import { icon } from '../icons';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { setState } from '../state';
-import { relayHealth } from '../api/relay';
+import { relayHealth, relayCsvParse } from '../api/relay';
 import { parseCsv } from '../lib/csv';
 import { buildImportPlan, type ImportPlan } from '../lib/import';
 
@@ -51,19 +51,27 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
 
   async function handleFile(file: File): Promise<void> {
     fileName = file.name;
-    const h = await relayHealth();
-    if (!h.ok) {
-      toast(rootEl, '中継サーバ未起動 — ブラウザ側で解析します（大容量では重くなります）。', 'warn');
-    }
-    // 現状はクライアント側でパース → エンジンで差分判定。
-    // (中継サーバの /mikke/csv-parse 実装が入ったら h.ok 時にそちらへ切替)
     try {
-      const text = await file.text();
-      const parsed = parseCsv(text);
+      let headers: string[];
+      let rows: Record<string, string>[];
+
+      // 中継サーバ起動時はサーバ側パース (大容量対応)、未起動時はブラウザ側。
+      const h = await relayHealth();
+      if (h.ok) {
+        const res = await relayCsvParse(file);
+        headers = res.headers;
+        rows = res.rows;
+      } else {
+        toast(rootEl, '中継サーバ未起動 — ブラウザ側で解析します（大容量では重くなります）。', 'warn');
+        const parsed = parseCsv(await file.text());
+        headers = parsed.headers;
+        rows = parsed.rows;
+      }
+
       const existing = await getRepo().listIssues();
       const settings = await getRepo().getSettings();
       const nowIso = new Date().toISOString();
-      plan = buildImportPlan(parsed.rows, parsed.headers, existing, settings, nowIso);
+      plan = buildImportPlan(rows, headers, existing, settings, nowIso);
       step = 'preview';
       paint();
     } catch (e) {
@@ -128,17 +136,13 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
   async function commit(): Promise<void> {
     if (!plan) return;
     const repo = getRepo();
-    let ok = 0, fail = 0;
-    for (const op of plan.ops) {
-      try {
-        if (op.kind === 'add' && op.create) { await repo.createIssue(op.create); ok++; }
-        else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
-          await repo.updateIssue(op.id, op.patch); ok++;
-        }
-      } catch { fail++; }
+    try {
+      const { ok, fail } = await repo.applyImportOps(plan.ops);
+      toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
+    } catch (e) {
+      toast(rootEl, `取込に失敗しました: ${(e as Error).message}`, 'error');
+      return;
     }
-    toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
-    // 一覧へ
     setState({ view: 'issues', selectedIssueId: null });
   }
 

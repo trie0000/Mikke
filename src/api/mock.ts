@@ -2,6 +2,7 @@
 // localStorage に保存して再読込でも保持する。
 import type { Repository } from './repo';
 import type { ManagedIssue, MikkeSettings, SiteUser } from '../types';
+import type { ImportOp } from '../lib/import';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
@@ -91,5 +92,23 @@ export class MockRepository implements Repository {
 
   async getCurrentUser(): Promise<SiteUser | null> {
     return { displayName: 'テストユーザー', email: 'test@example.com' };
+  }
+
+  async applyImportOps(
+    ops: ImportOp[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    let ok = 0, fail = 0;
+    let done = 0;
+    for (const op of ops) {
+      try {
+        if (op.kind === 'add' && op.create) { await this.createIssue(op.create); ok++; }
+        else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
+          await this.updateIssue(op.id, op.patch); ok++;
+        }
+      } catch { fail++; }
+      onProgress?.(++done, ops.length);
+    }
+    return { ok, fail };
   }
 }

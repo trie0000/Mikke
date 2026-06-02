@@ -1,6 +1,5 @@
 // PowerShell 中継サーバ (localhost) クライアント。
 // 役割: 大容量 CSV 解析 (/mikke/csv-parse) と 検査ツール API 中継 (/mikke/issue・雛形)。
-import type { ImportSummary } from '../types';
 
 const DEFAULT_BASE = 'http://127.0.0.1:18080/mikke';
 
@@ -22,20 +21,19 @@ export async function relayHealth(): Promise<RelayHealth> {
 }
 
 export interface CsvParseResult {
-  summary: ImportSummary;
-  /** 先頭数十件のプレビュー行。 */
-  preview: Record<string, string>[];
-  /** SP 書き込み用の差分操作 (詳細は実装フェーズで確定)。 */
-  diff?: unknown[];
+  ok: boolean;
   headers: string[];
+  /** パース済み行 (連想配列)。差分判定はブラウザ側 import.ts が行う。 */
+  rows: Record<string, string>[];
+  rowCount: number;
 }
 
-/** /mikke/csv-parse — 大容量 CSV をサーバ側で解析 (主経路)。
- *  ※ 雛形: 実際のサーバ実装は Phase 1。ここでは I/F のみ固定。 */
-export async function relayCsvParse(file: File, params: unknown): Promise<CsvParseResult> {
+/** /mikke/csv-parse — 大容量 CSV をサーバ側でパース (主経路)。
+ *  役割分担: サーバは CSV→行配列 のパースのみ。差分判定は import.ts。
+ *  100MB 級のメモリ負荷をサーバ側に逃がす。 */
+export async function relayCsvParse(file: File): Promise<CsvParseResult> {
   const form = new FormData();
   form.append('file', file);
-  form.append('params', JSON.stringify(params));
   const r = await fetch(`${getRelayBase()}/csv-parse`, { method: 'POST', body: form });
   if (!r.ok) throw new Error(`csv-parse failed: HTTP ${r.status}`);
   return await r.json();

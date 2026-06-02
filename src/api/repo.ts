@@ -1,5 +1,6 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
 import type { ManagedIssue, MikkeSettings, SiteUser } from '../types';
+import type { ImportOp } from '../lib/import';
 
 export interface Repository {
   /** リスト自動作成 (ensureLists 相当)。 */
@@ -17,6 +18,8 @@ export interface Repository {
   saveSettings(s: MikkeSettings): Promise<void>;
   /** ログインユーザー。 */
   getCurrentUser(): Promise<SiteUser | null>;
+  /** 取込計画の ops を一括適用 (SP は $batch、mock は逐次)。 */
+  applyImportOps(ops: ImportOp[], onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
 }
 
 let repo: Repository | null = null;
