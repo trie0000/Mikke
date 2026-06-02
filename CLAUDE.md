@@ -73,5 +73,8 @@ mock リポジトリ（`src/api/mock.ts`）で UI 検証可能。
 
 ## テスト
 
+- `npm run test`（vitest）で純粋ロジックを検証。`test/` に detection / conditions / csv / import。
+  ロジックを変えたらまず `npm run test` を回す（回帰検出）。
 - `samples/` にダミー CSV（5月 / 6月）。差分テスト観点は `samples/README.md`
-- mock 起動: `dev/index.html` または `dist/index.html?mock=1`
+- UI は mock 起動で確認: `dev/index.html` または `dist/index.html?mock=1`
+- relay は `pwsh scripts/mikke-relay.ps1`（mac 開発）/ Windows は `mikke-relay.bat`

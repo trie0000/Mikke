@@ -25,11 +25,28 @@ SharePoint 上で動く**脆弱性管理ツール**。脆弱性検査ツール�
 ```sh
 npm install
 npm run type-check      # 型チェック
+npm run test            # ユニットテスト (vitest)
 npm run build           # 本番ビルド (dist/ 生成)
 npm run dev             # esbuild watch + dev サーバ (http://localhost:5177)
 ```
 
 dev は mock モードで起動する（`dev/index.html` が `?mock=1` を付与）。SharePoint なしで UI を検証できる。
+
+### テスト
+
+純粋ロジック（取込エンジン・条件エンジン・検知遷移・CSV パーサ）を vitest で検証する。`test/` 配下。
+
+```sh
+npm run test            # 1 回実行
+npm run test:watch      # watch モード
+```
+
+- `test/detection.test.ts` — 検知ステータス遷移（新規→継続→未検出→再検知→継続）
+- `test/conditions.test.ts` — AND/OR 条件評価・ネスト
+- `test/csv.test.ts` — CSV パース（クォート/改行/BOM/CRLF）
+- `test/import.test.ts` — 差分判定の全ライフサイクル（`samples/` の CSV を使用）
+
+UI / relay / SP 実機の手動確認は mock 起動・`pwsh scripts/mikke-relay.ps1`・SP サイトでのブックマークレット起動で行う。
 
 ### ビルド成果物（`dist/`）
 
