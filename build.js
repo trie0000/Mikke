@@ -118,7 +118,7 @@ if (watch || serve) {
     `if(!primary){alert('[Mikke] 起動できません: SharePoint サイト (/sites/<name>) 上で実行してください。');return;}` +
     `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / 配置 / CORS を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
     `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
-    `fetch(base+'/mikke.bundle.js',{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
+    `fetch(base+'/mikke.bundle.js',{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
     `load(primary);})();`;
   fs.writeFileSync('dist/mikke.loader.js', loader);
   const loaderHref = 'javascript:' + encodeURIComponent(loader);
