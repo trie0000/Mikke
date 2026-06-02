@@ -26,6 +26,10 @@ export class SpRepository implements Repository {
   private currentWebUrl(): string {
     const ctx = (window as unknown as { _spPageContextInfo?: { webAbsoluteUrl?: string } })._spPageContextInfo;
     if (ctx?.webAbsoluteUrl) return ctx.webAbsoluteUrl;
+    // モダン SP ページでは _spPageContextInfo が無いことがある。
+    // location.pathname の /sites/<x> or /teams/<x> から web 絶対 URL を組む。
+    const m = location.pathname.match(/^(\/(?:sites|teams)\/[^/]+)/i);
+    if (m) return location.origin + m[1];
     return location.origin;
   }
 

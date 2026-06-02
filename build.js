@@ -100,17 +100,26 @@ if (watch || serve) {
   //   毎回 fetch して最新の mikke.bundle.js?v=<ver> を読み込む (サイレント自動更新)。
   //   ローカル dev (localStorage mikke.dev.bundle-source=local) は fetch+eval、
   //   SP 配信は <script src> (同一オリジン)。
+  // ローダの base 解決:
+  //   1) _spPageContextInfo.webServerRelativeUrl があれば使う
+  //   2) 無ければ location.pathname の /sites/<x> or /teams/<x> から推定
+  //      (モダン SP ページでは _spPageContextInfo が無いことがあるため必須)
+  // bundle 読込は SP / ローカルとも fetch+eval に統一:
+  //   SP は `mikke.bundle.js?v=` のクエリ付き .js を 404 にすることがあるため、
+  //   クエリ無し URL を fetch してテキストを eval する (SP の CSP は unsafe-eval 可)。
   const loader =
     `(function(){var d=document,w=window;` +
-    `function SP(){try{var c=w._spPageContextInfo;if(c&&c.webServerRelativeUrl)return c.webServerRelativeUrl.replace(/\\/$/,'')+${JSON.stringify(libPath)};}catch(e){}return '';}` +
+    `function REL(){try{var c=w._spPageContextInfo;if(c&&c.webServerRelativeUrl)return c.webServerRelativeUrl.replace(/\\/$/,'');}catch(e){}` +
+    `try{var m=location.pathname.match(/^(\\/(?:sites|teams)\\/[^/]+)/i);if(m)return m[1];}catch(e){}return '';}` +
+    `function SP(){var r=REL();return r?r+${JSON.stringify(libPath)}:'';}` +
     `var sp=SP(),dev='';` +
     `try{if(w.localStorage&&localStorage.getItem('mikke.dev.bundle-source')==='local')dev=(localStorage.getItem('mikke.dev.local-base')||'http://127.0.0.1:18080/mikke').replace(/\\/+$/,'');}catch(e){}` +
     `var primary=dev||${overrideBase}||sp;var fb=(primary!==sp&&sp)?sp:'';var isLocal=!!dev;` +
-    `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / CORS / CSP を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
-    `function evalLoad(base,ver){fetch(base+'/mikke.bundle.js?v='+encodeURIComponent(ver),{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){var o=d.getElementById('mikke-script');if(o)o.remove();try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');});}` +
-    `function inject(base,ver){if(isLocal){evalLoad(base,ver);return;}var o=d.getElementById('mikke-script');if(o)o.remove();var s=d.createElement('script');s.id='mikke-script';s.src=base+'/mikke.bundle.js?v='+encodeURIComponent(ver);s.onerror=function(){fail(base,'script load error');if(fb){var x=fb;fb='';go(x);}};d.body.appendChild(s);}` +
-    `function go(base){fetch(base+'/version.txt?t='+Date.now(),{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){inject(base,(t||'').trim()||String(Date.now()));}).catch(function(e){fail(base,e&&e.message||'fetch error');if(isLocal)return;if(fb){var x=fb;fb='';go(x);}else{inject(base,String(Date.now()));}});}` +
-    `go(primary);})();`;
+    `if(!primary){alert('[Mikke] 起動できません: SharePoint サイト (/sites/<name>) 上で実行してください。');return;}` +
+    `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / 配置 / CORS を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
+    `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
+    `fetch(base+'/mikke.bundle.js',{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
+    `load(primary);})();`;
   fs.writeFileSync('dist/mikke.loader.js', loader);
   const loaderHref = 'javascript:' + encodeURIComponent(loader);
   fs.writeFileSync('dist/bookmarklet.txt', loaderHref);

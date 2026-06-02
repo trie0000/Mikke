@@ -22,6 +22,12 @@ export function resolveBundleBase(): string {
       return ctx.webServerRelativeUrl.replace(/\/$/, '') + LIB_PATH;
     }
   } catch { /* noop */ }
+  // _spPageContextInfo が無いモダン SP ページ向けフォールバック:
+  // location.pathname の /sites/<x> or /teams/<x> から web 相対を推定。
+  try {
+    const m = location.pathname.match(/^(\/(?:sites|teams)\/[^/]+)/i);
+    if (m) return m[1] + LIB_PATH;
+  } catch { /* noop */ }
   return '';
 }
 
