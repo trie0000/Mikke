@@ -1,22 +1,25 @@
-// F1: CSV 一括取込。約2万件/100MB のため中継サーバ側で解析 (技術設計書 §11)。
-// 骨組み: ファイル選択 → (中継 health 確認) → プレビュー → 確定 の 3 ステップ。
+// F1: CSV 一括取込。約2万件/100MB の本番は中継サーバ側で解析 (技術設計書 §11)。
+// クライアント側パースは小〜中規模の検証・mock 用フォールバック。
 import { el, clear } from '../utils/dom';
 import { icon } from '../icons';
 import { toast } from '../components/toast';
-import { relayHealth, relayCsvParse } from '../api/relay';
+import { getRepo } from '../api/repo';
+import { setState } from '../state';
+import { relayHealth } from '../api/relay';
 import { parseCsv } from '../lib/csv';
-import type { CsvParseResult } from '../api/relay';
+import { buildImportPlan, type ImportPlan } from '../lib/import';
 
 export function renderImportView(rootEl: HTMLElement): HTMLElement {
   const wrap = el('div', { class: 'mikke-main' });
   wrap.appendChild(el('div', { class: 'mikke-subbar' }, [
     el('span', { class: 'mikke-subbar-title' }, ['CSV 取込']),
   ]));
-  const area = el('div', { style: 'padding:var(--gutter);max-width:760px' });
+  const area = el('div', { style: 'padding:var(--gutter);max-width:860px' });
   wrap.appendChild(area);
 
   let step: 'select' | 'preview' = 'select';
-  let result: CsvParseResult | null = null;
+  let plan: ImportPlan | null = null;
+  let fileName = '';
 
   paint();
 
@@ -40,45 +43,40 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
         '脆弱性検査ツールからダウンロードした全件 CSV を選択してください。',
       ]),
       el('p', { style: 'color:var(--ink-4);font-size:var(--fs-sm)' }, [
-        '※ 大容量 CSV (約2万件/100MB) は中継サーバ側で解析します。中継サーバ (mikke-start.bat) を起動しておいてください。',
+        '※ 大容量 CSV (約2万件/100MB) は中継サーバ側で解析します。中継サーバ (mikke-launch) を起動しておいてください。中継未起動時はブラウザ側で解析します。',
       ]),
       el('div', { style: 'margin-top:var(--s-6)' }, [fileInput]),
     );
   }
 
   async function handleFile(file: File): Promise<void> {
+    fileName = file.name;
     const h = await relayHealth();
-    if (h.ok) {
-      try {
-        result = await relayCsvParse(file, { /* managedColumns/conditions/individualIds/existingKeys は実装フェーズ */ });
-        step = 'preview'; paint();
-        return;
-      } catch (e) {
-        toast(rootEl, `中継サーバでの解析に失敗しました: ${(e as Error).message}`, 'error');
-      }
-    } else {
-      toast(rootEl, '中継サーバが未起動のため、簡易プレビューのみ表示します（本番取込には中継サーバが必要）。', 'warn');
-      // フォールバック: 小規模 CSV のヘッダ/件数だけ簡易表示
-      try {
-        const text = await file.text();
-        const parsed = parseCsv(text);
-        result = {
-          headers: parsed.headers,
-          preview: parsed.rows.slice(0, 20),
-          summary: { added: 0, updated: 0, undetected: 0, skipped: parsed.rows.length, rowCount: parsed.rows.length },
-        };
-        step = 'preview'; paint();
-      } catch (e) {
-        toast(rootEl, `CSV の読み込みに失敗しました: ${(e as Error).message}`, 'error');
-      }
+    if (!h.ok) {
+      toast(rootEl, '中継サーバ未起動 — ブラウザ側で解析します（大容量では重くなります）。', 'warn');
+    }
+    // 現状はクライアント側でパース → エンジンで差分判定。
+    // (中継サーバの /mikke/csv-parse 実装が入ったら h.ok 時にそちらへ切替)
+    try {
+      const text = await file.text();
+      const parsed = parseCsv(text);
+      const existing = await getRepo().listIssues();
+      const settings = await getRepo().getSettings();
+      const nowIso = new Date().toISOString();
+      plan = buildImportPlan(parsed.rows, parsed.headers, existing, settings, nowIso);
+      step = 'preview';
+      paint();
+    } catch (e) {
+      toast(rootEl, `CSV の解析に失敗しました: ${(e as Error).message}`, 'error');
     }
   }
 
   function paintPreview(): void {
-    if (!result) { step = 'select'; paint(); return; }
-    const s = result.summary;
+    if (!plan) { step = 'select'; paint(); return; }
+    const s = plan.summary;
     area.append(
-      el('div', { style: 'display:flex;gap:var(--s-5);margin-bottom:var(--s-6)' }, [
+      el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [`ファイル: ${fileName}`]),
+      el('div', { style: 'display:flex;gap:var(--s-7);margin:var(--s-5) 0' }, [
         summaryChip('追加', s.added, 'accent'),
         summaryChip('更新', s.updated, ''),
         summaryChip('未検出', s.undetected, 'muted'),
@@ -87,32 +85,61 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       ]),
     );
 
-    // プレビュー表 (先頭数件)
-    if (result.preview.length) {
-      const cols = result.headers.slice(0, 6);
-      const thead = el('thead', {}, [el('tr', {}, cols.map((c) => el('th', {}, [c])))]);
-      const tbody = el('tbody', {}, result.preview.slice(0, 10).map((r) =>
-        el('tr', {}, cols.map((c) => el('td', {}, [r[c] ?? '']))),
-      ));
-      area.appendChild(el('div', { class: 'mikke-table-wrap', style: 'padding:0' }, [
+    // 差分プレビュー (追加・更新・未検出を抜粋表示)
+    const shown = plan.ops.filter((o) => o.kind !== 'skip').slice(0, 50);
+    if (shown.length) {
+      const thead = el('thead', {}, [el('tr', {}, [
+        el('th', {}, ['操作']), el('th', {}, ['Issue Instance ID']), el('th', {}, ['タイトル']), el('th', {}, ['備考']),
+      ])]);
+      const tbody = el('tbody', {}, shown.map((o) => {
+        const opLabel = { add: '追加', update: '更新', undetect: '未検出化', skip: 'スキップ' }[o.kind];
+        const variant = { add: 'accent', update: '', undetect: 'muted', skip: 'muted' }[o.kind];
+        let note = o.note ?? '';
+        if (o.kind === 'update' && o.patch?.detectionStatus) note = `検知→${o.patch.detectionStatus}`;
+        if (o.kind === 'undetect' && o.patch?.detectionStatus) note = `検知→${o.patch.detectionStatus}`;
+        if (o.kind === 'add' && o.create?.addedReason) note = o.create.addedReason;
+        return el('tr', {}, [
+          el('td', {}, [el('span', { class: variant ? `mikke-badge mikke-badge--${variant}` : 'mikke-badge' }, [opLabel])]),
+          el('td', {}, [o.issueInstanceId || '—']),
+          el('td', {}, [o.title || '(無題)']),
+          el('td', { style: 'color:var(--ink-3)' }, [note]),
+        ]);
+      }));
+      area.appendChild(el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:380px' }, [
         el('table', { class: 'mikke-table' }, [thead, tbody]),
       ]));
+    } else {
+      area.appendChild(el('div', { class: 'mikke-empty' }, ['追加・更新・未検出化の対象がありません（全行スキップ）。']));
     }
 
     area.appendChild(el('div', { style: 'margin-top:var(--s-7);display:flex;gap:var(--s-3)' }, [
       el('button', {
         class: 'mikke-btn mikke-btn--secondary',
-        onclick: () => { step = 'select'; result = null; paint(); },
+        onclick: () => { step = 'select'; plan = null; paint(); },
       }, ['戻る']),
       el('button', {
         class: 'mikke-btn mikke-btn--primary',
-        onclick: () => {
-          // 実際の SP 書き込み ($batch) は実装フェーズ。骨組みではトーストのみ。
-          toast(rootEl, '取込の確定処理は実装フェーズで接続します（骨組み）。', 'warn');
-        },
+        onclick: () => void commit(),
         html: icon('check') + '<span style="margin-left:6px">この内容で取り込む</span>',
       }),
     ]));
+  }
+
+  async function commit(): Promise<void> {
+    if (!plan) return;
+    const repo = getRepo();
+    let ok = 0, fail = 0;
+    for (const op of plan.ops) {
+      try {
+        if (op.kind === 'add' && op.create) { await repo.createIssue(op.create); ok++; }
+        else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
+          await repo.updateIssue(op.id, op.patch); ok++;
+        }
+      } catch { fail++; }
+    }
+    toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
+    // 一覧へ
+    setState({ view: 'issues', selectedIssueId: null });
   }
 
   function summaryChip(label: string, n: number, variant: string): HTMLElement {
