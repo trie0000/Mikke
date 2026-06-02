@@ -6,8 +6,33 @@
 
 const DEV_SOURCE_KEY = 'mikke.dev.bundle-source';   // 'local' | (未設定=sharepoint)
 const DEV_LOCAL_BASE_KEY = 'mikke.dev.local-base';  // 例: http://127.0.0.1:18080/mikke
-const DEFAULT_LOCAL_BASE = 'http://127.0.0.1:18080/mikke';
+export const DEFAULT_LOCAL_BASE = 'http://127.0.0.1:18080/mikke';
 const LIB_PATH = '/Shared%20Documents/Mikke';
+
+export type BundleSource = 'sharepoint' | 'local';
+
+/** バンドル読込元 (開発者モードのラジオ)。ローダと同じキーを参照。 */
+export function getBundleSource(): BundleSource {
+  try { return localStorage.getItem(DEV_SOURCE_KEY) === 'local' ? 'local' : 'sharepoint'; }
+  catch { return 'sharepoint'; }
+}
+export function setBundleSource(v: BundleSource): void {
+  try {
+    if (v === 'local') localStorage.setItem(DEV_SOURCE_KEY, 'local');
+    else localStorage.removeItem(DEV_SOURCE_KEY);
+  } catch { /* noop */ }
+}
+export function getLocalBase(): string {
+  try { return localStorage.getItem(DEV_LOCAL_BASE_KEY) || DEFAULT_LOCAL_BASE; }
+  catch { return DEFAULT_LOCAL_BASE; }
+}
+export function setLocalBase(url: string): void {
+  try {
+    const v = url.trim().replace(/\/+$/, '');
+    if (v && v !== DEFAULT_LOCAL_BASE) localStorage.setItem(DEV_LOCAL_BASE_KEY, v);
+    else localStorage.removeItem(DEV_LOCAL_BASE_KEY);
+  } catch { /* noop */ }
+}
 
 /** ローダと同じく、本体取得元の base を解決する。解決不可なら空文字。 */
 export function resolveBundleBase(): string {

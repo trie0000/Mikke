@@ -5,6 +5,10 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { CONDITION_OPS } from '../lib/conditions';
+import {
+  getBundleSource, setBundleSource, getLocalBase, setLocalBase,
+  currentBuildId, DEFAULT_LOCAL_BASE, type BundleSource,
+} from '../utils/bundleVersion';
 import type { ConditionRule, ConditionGroup } from '../types';
 
 interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
@@ -141,9 +145,10 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
       ],
     },
     {
-      key: 'other', title: 'その他', subtitle: '接続先・運用情報。',
+      key: 'other', title: 'その他', subtitle: '接続先・運用情報・開発者向け。',
       groups: [
         { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
+        { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel(root) }] },
       ],
     },
   ];
@@ -315,6 +320,56 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
         localStorage.setItem('mikke.relay.base', relayInput.value.trim().replace(/\/+$/, ''));
       } catch { /* noop */ }
       toast(root, '接続設定を保存しました', 'ok');
+    },
+  };
+}
+
+// ── その他: 開発 (バンドル読込元の切替) ──
+//  ローダは起動時に localStorage(mikke.dev.*) を見て本体取得先を決める。ここを
+//  変えると「次回リロード」で SharePoint / ローカル relay の dist が切り替わる。
+//  開発中は local にすれば SP へ毎回アップロードせずに反映できる。
+function renderDeveloperPanel(root: HTMLElement): SettingPanel {
+  const cur = getBundleSource();
+  const name = 'mikke-bundle-source';
+  const radioSP = el('input', { type: 'radio', name, value: 'sharepoint', style: 'cursor:pointer',
+    ...(cur === 'sharepoint' ? { checked: 'checked' } : {}) }) as HTMLInputElement;
+  const radioLocal = el('input', { type: 'radio', name, value: 'local', style: 'cursor:pointer',
+    ...(cur === 'local' ? { checked: 'checked' } : {}) }) as HTMLInputElement;
+  const baseInput = el('input', { type: 'text', value: getLocalBase(), placeholder: DEFAULT_LOCAL_BASE,
+    style: 'width:100%;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLInputElement;
+
+  const radioRow = (input: HTMLInputElement, label: string, hint: string) =>
+    el('label', { style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2);margin-bottom:var(--s-2)' }, [
+      el('span', { style: 'padding-top:2px' }, [input]),
+      el('span', { style: 'font-size:var(--fs-sm);color:var(--ink)' }, [
+        el('strong', {}, [label]), el('br'),
+        el('span', { style: 'color:var(--ink-3);font-size:var(--fs-xs)' }, [hint]),
+      ]),
+    ]);
+
+  const body = el('div', {}, [
+    panelHead('バンドル読込元 (開発者)',
+      'Mikke 本体 (mikke.bundle.js) をどこから読むかを切り替えます。開発中はローカル relay の dist を読ませると、SharePoint へ毎回アップロードせずに変更を反映できます。'),
+    el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-4)' }, [
+      `現在の起動 build: ${currentBuildId() || '(不明)'}`,
+    ]),
+    radioRow(radioSP, 'SharePoint (本番)', '実行中サイトの ドキュメント/Mikke から読む'),
+    radioRow(radioLocal, 'ローカル relay (開発)', '下記 base から読む。mikke-relay が GET /mikke/mikke.bundle.js で配信'),
+    el('div', { class: 'mikke-field', style: 'margin-top:var(--s-3)' }, [
+      el('label', { class: 'mikke-field-label' }, ['ローカル base URL']),
+      baseInput,
+    ]),
+    el('div', { style: 'margin-top:var(--s-4);padding:var(--s-3);background:var(--accent-soft);border-radius:var(--r-2);font-size:var(--fs-sm);color:var(--ink-2)' }, [
+      '※ 切替は「次回リロード」で反映されます（ローダは起動時に 1 度だけ参照先を決めるため）。保存後、右上の更新アイコンまたはブックマーク再クリックでリロードしてください。',
+    ]),
+  ]);
+  return {
+    body,
+    save: () => {
+      const src: BundleSource = radioLocal.checked ? 'local' : 'sharepoint';
+      setBundleSource(src);
+      setLocalBase(baseInput.value);
+      toast(root, `読込元を「${src === 'local' ? 'ローカル relay' : 'SharePoint'}」に保存しました。リロードで反映されます。`, 'ok', 6000);
     },
   };
 }
