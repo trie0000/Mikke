@@ -52,6 +52,13 @@ npm run dev           # watch + dev サーバ(:5177)、mock モード
 
 build id は build.js が git SHA から生成し esbuild define で焼き込む（`__MIKKE_BUILD_ID__`）。
 
+## ⚠️ PowerShell 互換（重要）
+
+- 委託先 PC は **Windows PowerShell 5.1**（Windows 標準）。Spira relay が同環境で稼働実績あり。
+- `mikke-relay.ps1` は **5.1 以上で動かす**（`#Requires -Version 5.1`）。**7 専用構文を使わない**：`?.` / `??` / 三項 `?:` / `ConvertFrom-Json -AsHashtable`。
+- `.bat` は `powershell.exe`（=5.1）を呼ぶ。開発時の mac は `pwsh`(7) で検証してよいが、機能は 5.1 で動く範囲に限定。
+- CSV/JSON の文字コード: 5.1 既定は CP932。CSV 読込時は `-Encoding` を明示、出力 JSON は UTF-8 で書く（Spira 踏襲）。
+
 ## 自動更新（Spira 同方式）
 
 - UI: ローダが起動時に `version.txt` を見て最新 `mikke.bundle.js` を取得（サイレント）
