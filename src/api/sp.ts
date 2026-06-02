@@ -173,6 +173,66 @@ export class SpRepository implements Repository {
     return j.d.Id as number;
   }
 
+  /**
+   * 一括書き込み ($batch)。取込 (約2万件) の create / update をまとめて送る。
+   * ops: kind=add は新規 POST、kind=update は MERGE (If-Match:* = 後勝ち)。
+   * 1 バッチ最大 BATCH_CHUNK 件でチャンクし、進捗を onProgress で通知。
+   *
+   * ★ 実機検証で判明した重要点 (n365 で確認):
+   *   各サブリクエストの Content-Length は **UTF-8 バイト長** で算出すること。
+   *   JS 文字列の .length (UTF-16 コード単位) を使うと、日本語を含む body で
+   *   SP が途中で切って HTTP 400 になる。TextEncoder().encode(body).length を使う。
+   */
+  async batchWrite(
+    ops: { kind: 'add' | 'update'; id?: number; row: Record<string, unknown> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const BATCH_CHUNK = 100;
+    const etype = 'SP.Data.MikkeManagedIssuesListItem';
+    const listUrl = `${this.webUrl}/_api/web/lists/getbytitle('${LIST_MANAGED}')/items`;
+    const enc = new TextEncoder();
+    let ok = 0, fail = 0;
+
+    for (let i = 0; i < ops.length; i += BATCH_CHUNK) {
+      const chunk = ops.slice(i, i + BATCH_CHUNK);
+      const digest = await this.getDigest();
+      // boundary は固定文字列で十分 (Math.random は使わない=決定性)。
+      const bg = `batch_${i}_${chunk.length}`;
+      const cg = `changeset_${i}_${chunk.length}`;
+      let cs = '';
+      for (const op of chunk) {
+        const target = op.kind === 'update' && op.id != null ? `${listUrl}(${op.id})` : listUrl;
+        const method = op.kind === 'update' ? 'MERGE' : 'POST';
+        const body = JSON.stringify({ __metadata: { type: etype }, ...op.row });
+        const blen = enc.encode(body).length; // ★ UTF-8 バイト長
+        cs += `--${cg}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\n`;
+        cs += `${method} ${target} HTTP/1.1\r\nAccept: ${V}\r\nContent-Type: ${V}\r\n`;
+        if (op.kind === 'update') cs += 'IF-MATCH: *\r\n';
+        cs += `Content-Length: ${blen}\r\n\r\n${body}\r\n`;
+      }
+      cs += `--${cg}--\r\n`;
+      const payload = `--${bg}\r\nContent-Type: multipart/mixed; boundary=${cg}\r\n\r\n${cs}--${bg}--\r\n`;
+
+      const r = await fetch(`${this.webUrl}/_api/$batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/mixed; boundary=${bg}`, 'X-RequestDigest': digest, Accept: V },
+        credentials: 'same-origin',
+        body: payload,
+      });
+      const text = await r.text();
+      const successes = (text.match(/HTTP\/1\.1 20\d/g) ?? []).length;
+      ok += successes;
+      fail += chunk.length - successes;
+      onProgress?.(Math.min(i + chunk.length, ops.length), ops.length);
+    }
+    return { ok, fail };
+  }
+
+  /** 取込確定用: ManagedIssue の create/update を $batch 行データに変換するヘルパ。 */
+  rowForBatch(patch: Partial<ManagedIssue>): Record<string, unknown> {
+    return this.issueToRow(patch);
+  }
+
   // ── Settings ──────────────────────────────────────────────────────────────
   async getSettings(): Promise<MikkeSettings> {
     const def: MikkeSettings = { managedColumns: [], matchConditions: null, individualIds: [] };
