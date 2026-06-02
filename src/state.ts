@@ -34,6 +34,8 @@ interface State {
     remoteVersion: string;
     files: string[];
   } | null;
+  /** バンドル本体の更新通知 (version.txt と起動中 build id の差)。最新 build id か null。 */
+  bundleUpdateAvailable: string | null;
 }
 
 type Listener = () => void;
@@ -104,6 +106,7 @@ const state: State = {
   ready: false,
   errorBanner: null,
   relayUpdateAvailable: null,
+  bundleUpdateAvailable: null,
 };
 
 const listeners = new Set<Listener>();
