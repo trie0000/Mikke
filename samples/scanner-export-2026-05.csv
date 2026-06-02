@@ -1,0 +1,11 @@
+Issue Instance ID,Title,Severity,Status,Asset,CVE,First Seen,Last Seen,CVSS,Category,Port
+IID-1001,TLS 1.0 が有効になっている,High,open,web01.example.com,CVE-2011-3389,2026-03-12,2026-05-01,7.4,Encryption,443
+IID-1002,管理画面が認証なしで外部公開,Critical,open,admin.example.com,,2026-04-20,2026-05-01,9.8,Exposure,443
+IID-1003,古いバージョンの jQuery を使用,Low,open,shop.example.com,CVE-2020-11023,2026-02-01,2026-05-01,6.1,Outdated Software,443
+IID-1004,SSH で脆弱な暗号スイートを許可,Medium,open,bastion.example.com,CVE-2023-48795,2026-01-15,2026-05-01,5.9,Encryption,22
+IID-1006,SQL インジェクションの可能性,Critical,open,api.example.com,,2026-04-28,2026-05-01,9.1,Injection,443
+IID-1007,自己署名証明書,Low,open,dev.example.com,,2026-03-30,2026-05-01,3.7,Certificate,8443
+IID-1008,ディレクトリ一覧が有効,Medium,open,files.example.com,,2026-04-05,2026-05-01,5.3,Misconfiguration,80
+IID-1009,期限切れの TLS 証明書,High,open,legacy.example.com,,2026-04-10,2026-05-01,7.5,Certificate,443
+IID-1010,既知の脆弱性のある Apache,High,open,web02.example.com,CVE-2021-41773,2026-03-22,2026-05-01,7.5,Outdated Software,80
+IID-1011,リモートデスクトップが外部公開,Critical,open,rdp.example.com,,2026-04-25,2026-05-01,9.0,Exposure,3389

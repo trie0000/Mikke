@@ -1,0 +1,21 @@
+{
+  "name": "mikke",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "SharePoint 上で動く脆弱性管理ツール (bookmarklet)。脆弱性検査ツールの全件CSVから管理対象を選別・追跡する。",
+  "scripts": {
+    "dev": "node build.js --watch --serve",
+    "build": "node build.js",
+    "build:prod": "node build.js --prod",
+    "build:bookmarklet": "node build.js --bookmarklet",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.1.0"
+  }
+}

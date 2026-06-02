@@ -1,0 +1,76 @@
+// F2: 既存管理対象の編集モーダル。MgmtStatus / 対象外 / 担当 / 期限 / メモ を編集。
+// DetectionStatus は読み取り専用 (取込が管理)。
+import { el } from '../utils/dom';
+import { openModal } from '../components/modal';
+import { toast } from '../components/toast';
+import { getRepo } from '../api/repo';
+import { MGMT_STATUSES } from '../types';
+import type { ManagedIssue, MgmtStatus } from '../types';
+
+export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: () => void): void {
+  const statusSel = el('select', {}, MGMT_STATUSES.map((s) =>
+    el('option', { value: s, ...(s === issue.mgmtStatus ? { selected: 'selected' } : {}) }, [s]),
+  )) as HTMLSelectElement;
+
+  const oosCheck = el('input', {
+    type: 'checkbox', ...(issue.isOutOfScope ? { checked: 'checked' } : {}),
+  }) as HTMLInputElement;
+
+  const oosReason = el('textarea', { placeholder: '対象外の理由' }, [issue.outOfScopeReason ?? '']) as HTMLTextAreaElement;
+  const assignee = el('input', { type: 'text', value: issue.assignee ?? '' }) as HTMLInputElement;
+  const due = el('input', { type: 'date', value: (issue.dueDate ?? '').slice(0, 10) }) as HTMLInputElement;
+  const note = el('textarea', { style: 'min-height:120px' }, [issue.mgmtNote ?? '']) as HTMLTextAreaElement;
+
+  // 対象外チェックと MgmtStatus=対象外 を連動
+  oosCheck.addEventListener('change', () => {
+    if (oosCheck.checked) statusSel.value = '対象外';
+  });
+
+  const field = (label: string, control: HTMLElement) =>
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, [label]),
+      control,
+    ]);
+
+  const body = el('div', {}, [
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['検知ステータス (取込が自動管理 / 編集不可)']),
+      el('div', {}, [issue.detectionStatus]),
+    ]),
+    field('対応ステータス', statusSel),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, [
+        oosCheck, el('span', { style: 'margin-left:6px' }, ['管理対象外にする']),
+      ]),
+    ]),
+    field('対象外の理由', oosReason),
+    field('担当者', assignee),
+    field('対応期限', due),
+    field('メモ', note),
+  ]);
+
+  openModal(root, {
+    title: `編集 — #${issue.id} ${issue.title}`,
+    body,
+    size: 'lg',
+    primaryLabel: '保存',
+    onPrimary: async () => {
+      const isOos = oosCheck.checked;
+      const patch: Partial<ManagedIssue> = {
+        mgmtStatus: statusSel.value as MgmtStatus,
+        isOutOfScope: isOos,
+        outOfScopeReason: isOos ? oosReason.value.trim() : '',
+        assignee: assignee.value.trim(),
+        dueDate: due.value ? new Date(due.value).toISOString() : '',
+        mgmtNote: note.value,
+      };
+      if (isOos && !patch.outOfScopeReason) {
+        toast(root, '対象外にする場合は理由を入力してください', 'warn');
+        throw new Error('reason required');
+      }
+      await getRepo().updateIssue(issue.id, patch);
+      toast(root, '保存しました', 'ok');
+      onSaved();
+    },
+  });
+}

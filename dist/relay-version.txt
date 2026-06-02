@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "buildTime": "2026-06-02T08:42:32Z",
+  "files": [
+    "mikke-relay.ps1",
+    "mikke-launch.ps1",
+    "mikke-relay.bat",
+    "mikke-launch.bat"
+  ]
+}

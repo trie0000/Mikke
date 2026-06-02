@@ -1,0 +1,310 @@
+/* =========================================================
+ * Mikke — single stylesheet (tokens + components)
+ * Spira のトークンを踏襲し、アクセントのみ淡いブルーに変更。
+ * 全コンポーネントは #mikke-root 配下、var() 経由でのみ色・寸法を参照。
+ * ========================================================= */
+
+#mikke-root {
+  /* ---------- text ---------- */
+  --ink:           #2a2a26;
+  --ink-2:         #4a4842;
+  --ink-3:         #7a766c;
+  --ink-4:         #a8a39a;
+
+  /* ---------- surface ---------- */
+  --paper:         #fafaf7;
+  --paper-2:       #f3f1ea;
+  --paper-2-strong:#ece8de;
+  --paper-3:       #e8e4d8;
+
+  /* ---------- line ---------- */
+  --line:          rgba(42, 42, 38, 0.12);
+  --line-strong:   rgba(42, 42, 38, 0.18);
+
+  /* ---------- accent (淡いブルー / Mikke) ---------- */
+  --accent:        #7b97c4;
+  --accent-soft:   rgba(123, 151, 196, 0.18);
+  --accent-strong: #5a76a3;
+
+  /* ---------- status ---------- */
+  --danger:        #b8534a;
+  --warn:          #c47f1c;
+  --ok:            #2f6f5e;
+  --hl:            rgba(196, 174, 96, 0.35);
+
+  /* ---------- type ---------- */
+  --font-sans: "Meiryo", "メイリオ", "Hiragino Sans", "Yu Gothic UI",
+               -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+
+  --fs-xs:   11px; --fs-sm:   12px; --fs-md:   13px; --fs-base: 15px;
+  --fs-lg:   16px; --fs-xl:   18px; --fs-h3:   22px; --fs-h2:   28px; --fs-h1: 36px;
+  --lh-base:  1.7; --lh-tight: 1.35;
+
+  /* ---------- spacing (4px base) ---------- */
+  --s-1:  4px;  --s-2:  6px;  --s-3:  8px;  --s-4:  10px; --s-5:  12px;
+  --s-6:  14px; --s-7:  18px; --s-8:  22px; --s-9:  28px; --s-10: 40px;
+  --gutter: 32px;
+
+  /* ---------- radius ---------- */
+  --r-1: 2px; --r-2: 4px; --r-3: 6px; --r-4: 8px;
+
+  /* ---------- shadow (warm, no blue) ---------- */
+  --shadow-flyout: 0 12px 30px rgba(42, 42, 38, 0.14);
+  --shadow-panel:  0 8px  20px rgba(42, 42, 38, 0.10);
+  --shadow-modal:  0 0 0 1px rgba(42, 42, 38, 0.06),
+                   0 4px  12px rgba(42, 42, 38, 0.10),
+                   0 16px 40px rgba(42, 42, 38, 0.18);
+
+  /* ---------- chrome metrics ---------- */
+  --topbar-h:  44px;
+  --side-w:    200px;
+  --toolbar-h: 38px;
+
+  /* ---------- z (numeric literals) ---------- */
+  --z-overlay: 2147483600;
+  --z-modal:   2147483700;
+  --z-toast:   2147483800;
+
+  /* ---------- base ---------- */
+  font-family: var(--font-sans);
+  font-size:   var(--fs-base);
+  line-height: var(--lh-base);
+  color:       var(--ink);
+  background:  var(--paper);
+  all: initial;            /* shield from SP host */
+  font-family: var(--font-sans);
+  color: var(--ink);
+
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+#mikke-root *,
+#mikke-root *::before,
+#mikke-root *::after { box-sizing: border-box; }
+
+#mikke-root[data-theme="dark"] {
+  --ink:        #e8e4d8;
+  --ink-2:      #cfc9bd;
+  --ink-3:      #a8a39a;
+  --ink-4:      #7a766c;
+  --paper:      #1d1b18;
+  --paper-2:    #25231f;
+  --paper-2-strong: #2c2a25;
+  --paper-3:    #3a3731;
+  --line:       rgba(232, 228, 216, 0.14);
+  --line-strong:rgba(232, 228, 216, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #mikke-root * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- shell ---------- */
+#mikke-root .mikke-shell { display: flex; flex-direction: column; height: 100%; }
+#mikke-root .mikke-body { display: flex; flex: 1; min-height: 0; }
+#mikke-root .mikke-main { flex: 1; min-width: 0; overflow: auto; display: flex; flex-direction: column; }
+
+/* ---------- topbar ---------- */
+#mikke-root .mikke-topbar {
+  display: flex; align-items: center; gap: var(--s-3);
+  height: var(--topbar-h); padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--line); background: var(--paper-2);
+  flex-shrink: 0;
+}
+#mikke-root .mikke-topbar-brand {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  font-weight: 700; font-size: var(--fs-lg); color: var(--ink); letter-spacing: -0.01em;
+}
+#mikke-root .mikke-brand-mark { width: 22px; height: 22px; color: var(--accent); display: inline-flex; }
+#mikke-root .mikke-brand-mark svg { width: 100%; height: 100%; }
+#mikke-root .mikke-topbar-spacer { flex: 1; }
+#mikke-root .mikke-topbar-actions { display: inline-flex; align-items: center; gap: var(--s-2); }
+#mikke-root .mikke-topbar-site {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: 4px 10px; background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-2); color: var(--ink-2); font-size: var(--fs-xs);
+  text-decoration: none; max-width: 280px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- sidebar ---------- */
+#mikke-root .mikke-side {
+  width: var(--side-w); flex-shrink: 0; border-right: 1px solid var(--line);
+  background: var(--paper-2); display: flex; flex-direction: column;
+  padding: var(--s-4) 0;
+}
+#mikke-root .mikke-nav-item {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-5); margin: 1px var(--s-3);
+  border-radius: var(--r-2); cursor: pointer; color: var(--ink-2);
+  font-size: var(--fs-md); border-left: 2px solid transparent;
+}
+#mikke-root .mikke-nav-item:hover { background: var(--paper-2-strong); }
+#mikke-root .mikke-nav-item.is-active {
+  background: var(--accent-soft); color: var(--ink); border-left-color: var(--accent);
+}
+#mikke-root .mikke-nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+#mikke-root .mikke-side-foot {
+  margin-top: auto; padding: var(--s-4) var(--s-5); font-size: var(--fs-xs); color: var(--ink-4);
+}
+
+/* ---------- buttons ---------- */
+#mikke-root .mikke-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2);
+  height: 34px; padding: 0 var(--s-7); border: 1px solid transparent;
+  border-radius: var(--r-2); font-family: var(--font-sans); font-size: var(--fs-md);
+  cursor: pointer; white-space: nowrap;
+}
+#mikke-root .mikke-btn--primary { background: var(--accent); color: #fff; }
+#mikke-root .mikke-btn--primary:hover { background: var(--accent-strong); }
+#mikke-root .mikke-btn--secondary { background: var(--paper-2); color: var(--ink); border-color: var(--line); }
+#mikke-root .mikke-btn--secondary:hover { background: var(--paper-2-strong); }
+#mikke-root .mikke-btn--ghost { background: transparent; color: var(--ink-3); }
+#mikke-root .mikke-btn--ghost:hover { background: var(--paper-2); }
+#mikke-root .mikke-btn--danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+#mikke-root .mikke-btn[disabled] { opacity: 0.4; cursor: default; }
+#mikke-root .mikke-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 0; background: transparent; cursor: pointer;
+  border-radius: var(--r-2); color: var(--ink-2);
+}
+#mikke-root .mikke-iconbtn:hover { background: var(--paper-2-strong); }
+#mikke-root .mikke-iconbtn svg { width: 18px; height: 18px; }
+
+/* ---------- subbar / toolbar ---------- */
+#mikke-root .mikke-subbar {
+  display: flex; align-items: center; gap: var(--s-3);
+  min-height: 42px; padding: var(--s-3) var(--gutter);
+  border-bottom: 1px solid var(--line);
+}
+#mikke-root .mikke-subbar-title { font-size: var(--fs-lg); font-weight: 600; }
+#mikke-root .mikke-subbar-count { color: var(--ink-3); font-size: var(--fs-sm); }
+#mikke-root .mikke-toolbar {
+  display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
+  min-height: var(--toolbar-h); padding: var(--s-2) var(--gutter);
+  border-bottom: 1px solid var(--line); background: var(--paper);
+}
+#mikke-root .mikke-input, #mikke-root .mikke-select {
+  height: 30px; padding: 0 var(--s-3); border: 1px solid transparent;
+  background: transparent; border-radius: var(--r-2); color: var(--ink);
+  font-family: var(--font-sans); font-size: var(--fs-md);
+}
+#mikke-root .mikke-input:focus, #mikke-root .mikke-select:focus {
+  outline: none; background: var(--paper); border-color: var(--line-strong);
+}
+#mikke-root .mikke-input::placeholder { color: var(--ink-4); }
+
+/* ---------- table ---------- */
+#mikke-root .mikke-table-wrap { flex: 1; overflow: auto; padding: 0 var(--gutter) var(--gutter); }
+#mikke-root .mikke-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+#mikke-root .mikke-table th {
+  position: sticky; top: 0; z-index: 1; background: var(--paper-2);
+  text-align: left; padding: var(--s-3) var(--s-5); font-weight: 600;
+  color: var(--ink-2); border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+  cursor: pointer; user-select: none;
+}
+#mikke-root .mikke-table td {
+  padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--line); vertical-align: middle;
+}
+#mikke-root .mikke-table tbody tr { cursor: pointer; }
+#mikke-root .mikke-table tbody tr:hover { background: var(--paper-2); }
+#mikke-root .mikke-table tbody tr.is-selected { background: var(--accent-soft); }
+#mikke-root .mikke-check-col { width: 38px; text-align: center; }
+
+/* ---------- badges ---------- */
+#mikke-root .mikke-badge {
+  display: inline-flex; align-items: center; padding: 2px var(--s-3);
+  border-radius: 999px; font-size: var(--fs-xs); font-weight: 600;
+  background: var(--paper-2-strong); color: var(--ink-3); white-space: nowrap;
+}
+#mikke-root .mikke-badge--accent { background: var(--accent-soft); color: var(--accent-strong); }
+#mikke-root .mikke-badge--ok     { background: rgba(47,111,94,0.15); color: var(--ok); }
+#mikke-root .mikke-badge--warn   { background: rgba(196,127,28,0.15); color: var(--warn); }
+#mikke-root .mikke-badge--danger { background: rgba(184,83,74,0.15); color: var(--danger); }
+#mikke-root .mikke-badge--muted  { background: var(--paper-2-strong); color: var(--ink-4); }
+
+/* ---------- tab strip (detail) ---------- */
+#mikke-root .mikke-tabstrip { display: flex; gap: 2px; padding: var(--s-2) var(--gutter) 0; border-bottom: 1px solid var(--line); }
+#mikke-root .mikke-tab {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-4); border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--r-2) var(--r-2) 0 0; cursor: pointer; font-size: var(--fs-md); color: var(--ink-3);
+}
+#mikke-root .mikke-tab.is-active { background: var(--paper); border-color: var(--line); color: var(--ink); }
+#mikke-root .mikke-detail-tabs { display: flex; gap: var(--s-2); padding: var(--s-3) var(--gutter) 0; }
+#mikke-root .mikke-detail-tab { padding: var(--s-2) var(--s-4); cursor: pointer; color: var(--ink-3); border-bottom: 2px solid transparent; }
+#mikke-root .mikke-detail-tab.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+#mikke-root .mikke-detail-body { padding: var(--gutter); overflow: auto; }
+
+/* ---------- meta grid (detail / overview) ---------- */
+#mikke-root .mikke-meta { display: grid; grid-template-columns: 140px 1fr; gap: var(--s-3) var(--s-5); max-width: 720px; }
+#mikke-root .mikke-meta-label { color: var(--ink-3); font-size: var(--fs-sm); }
+#mikke-root .mikke-meta-value { color: var(--ink); }
+
+/* ---------- modal ---------- */
+#mikke-root .mikke-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(15,15,15,0.45);
+  backdrop-filter: blur(2px); z-index: 2147483700;
+  display: flex; align-items: center; justify-content: center;
+}
+#mikke-root .mikke-modal {
+  background: var(--paper); border-radius: var(--r-4); box-shadow: var(--shadow-modal);
+  width: min(640px, calc(100vw - 80px)); max-height: calc(100vh - 80px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#mikke-root .mikke-modal--lg { width: min(820px, calc(100vw - 80px)); }
+#mikke-root .mikke-modal--xl { width: min(1000px, calc(100vw - 80px)); height: calc(100vh - 80px); resize: both; }
+#mikke-root .mikke-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--s-5) var(--s-7); border-bottom: 1px solid var(--line);
+}
+#mikke-root .mikke-modal-title { margin: 0; font-size: var(--fs-xl); font-weight: 600; }
+#mikke-root .mikke-modal-body { padding: var(--s-7); overflow: auto; flex: 1; }
+#mikke-root .mikke-modal-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--s-3);
+  padding: var(--s-5) var(--s-7); border-top: 1px solid var(--line);
+}
+
+/* ---------- form field ---------- */
+#mikke-root .mikke-field { margin-bottom: var(--s-6); }
+#mikke-root .mikke-field-label { display: block; margin-bottom: var(--s-2); font-size: var(--fs-sm); color: var(--ink-2); }
+#mikke-root .mikke-field input[type="text"], #mikke-root .mikke-field input[type="date"],
+#mikke-root .mikke-field select, #mikke-root .mikke-field textarea {
+  width: 100%; padding: var(--s-3); border: 1px solid var(--line-strong);
+  border-radius: var(--r-2); background: var(--paper); color: var(--ink);
+  font-family: var(--font-sans); font-size: var(--fs-md);
+}
+#mikke-root .mikke-field textarea { min-height: 80px; resize: vertical; }
+
+/* ---------- empty / loading / error ---------- */
+#mikke-root .mikke-empty { text-align: center; padding: var(--s-10); color: var(--ink-3); }
+#mikke-root .mikke-empty-title { font-size: var(--fs-lg); color: var(--ink-2); margin-bottom: var(--s-3); }
+#mikke-root .mikke-error {
+  margin: var(--s-4) var(--gutter); padding: var(--s-4); border: 1px solid var(--danger);
+  border-radius: var(--r-2); color: var(--danger); background: rgba(184,83,74,0.08); user-select: text;
+}
+
+/* ---------- toast ---------- */
+#mikke-root .mikke-toast-stack {
+  position: fixed; top: var(--s-6); right: var(--s-6); z-index: 2147483800;
+  display: flex; flex-direction: column; gap: var(--s-3); max-width: 360px;
+}
+#mikke-root .mikke-toast {
+  padding: var(--s-4) var(--s-5); border-radius: var(--r-3);
+  background: var(--paper); box-shadow: var(--shadow-flyout);
+  border: 1px solid var(--line); font-size: var(--fs-md); color: var(--ink);
+}
+#mikke-root .mikke-toast--ok     { border-left: 3px solid var(--ok); }
+#mikke-root .mikke-toast--warn   { border-left: 3px solid var(--warn); }
+#mikke-root .mikke-toast--error  { border-left: 3px solid var(--danger); }
+
+/* ---------- settings (master-detail) ---------- */
+#mikke-root .mikke-settings { display: flex; height: 100%; }
+#mikke-root .mikke-settings-nav { width: 200px; border-right: 1px solid var(--line); padding: var(--s-4) 0; }
+#mikke-root .mikke-settings-detail { flex: 1; padding: var(--gutter); overflow: auto; }
+#mikke-root .mikke-cond-row { display: flex; gap: var(--s-2); align-items: center; margin-bottom: var(--s-3); }

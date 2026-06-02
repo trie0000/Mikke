@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mikke (dev / mock)</title>
+<style>html,body{margin:0;padding:0;background:#fafaf7}</style>
+</head>
+<body>
+<!-- dev: mock モードで起動 (?mock=1 は main.ts が検知)。esbuild watch が dist/mikke.js を生成 -->
+<script>
+  // mock を強制
+  if (!location.search.includes('mock')) {
+    history.replaceState(null, '', location.pathname + '?mock=1');
+  }
+</script>
+<script src="../dist/mikke.js"></script>
+</body>
+</html>
