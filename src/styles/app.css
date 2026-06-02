@@ -303,6 +303,26 @@
 #mikke-root .mikke-toast--warn   { border-left: 3px solid var(--warn); }
 #mikke-root .mikke-toast--error  { border-left: 3px solid var(--danger); }
 
+/* ---------- CSV import dropzone (F1) ---------- */
+#mikke-root .mikke-dropzone-input { display: none; }
+#mikke-root .mikke-dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--s-4); text-align: center;
+  padding: var(--s-9) var(--s-7);
+  border: 2px dashed var(--line-strong); border-radius: var(--r-4);
+  background: var(--paper-2); cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+#mikke-root .mikke-dropzone:hover { border-color: var(--accent); background: var(--paper); }
+#mikke-root .mikke-dropzone.is-dragover {
+  border-style: solid; border-color: var(--accent); background: var(--accent-soft);
+}
+#mikke-root .mikke-dropzone-icon { color: var(--accent); display: inline-flex; }
+#mikke-root .mikke-dropzone-icon svg { width: var(--s-10); height: var(--s-10); }
+#mikke-root .mikke-dropzone-title { font-size: var(--fs-base); color: var(--ink); }
+#mikke-root .mikke-dropzone-title b { color: var(--accent-strong); font-weight: 600; }
+#mikke-root .mikke-dropzone-hint { font-size: var(--fs-sm); color: var(--ink-4); }
+
 /* ---------- settings (master-detail) ---------- */
 #mikke-root .mikke-settings { display: flex; height: 100%; }
 #mikke-root .mikke-settings-nav { width: 200px; border-right: 1px solid var(--line); padding: var(--s-4) 0; }

@@ -31,12 +31,45 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
 
   function paintSelect(): void {
     const fileInput = el('input', {
-      type: 'file', accept: '.csv,text/csv',
+      type: 'file', accept: '.csv,text/csv', class: 'mikke-dropzone-input',
       onchange: (e: Event) => {
         const f = (e.target as HTMLInputElement).files?.[0];
         if (f) void handleFile(f);
       },
     }) as HTMLInputElement;
+
+    const dropzone = el('div', {
+      class: 'mikke-dropzone',
+      onclick: () => fileInput.click(),
+      ondragenter: (e: Event) => { e.preventDefault(); dropzone.classList.add('is-dragover'); },
+      ondragover: (e: Event) => { e.preventDefault(); dropzone.classList.add('is-dragover'); },
+      ondragleave: (e: Event) => {
+        // 子要素間の移動では外さない (relatedTarget が dropzone 内なら維持)
+        if (!dropzone.contains((e as DragEvent).relatedTarget as Node)) {
+          dropzone.classList.remove('is-dragover');
+        }
+      },
+      ondrop: (e: Event) => {
+        e.preventDefault();
+        dropzone.classList.remove('is-dragover');
+        const f = (e as DragEvent).dataTransfer?.files?.[0];
+        if (!f) return;
+        if (!/\.csv$/i.test(f.name)) {
+          toast(rootEl, 'CSV ファイル（.csv）を選択してください。', 'warn');
+          return;
+        }
+        void handleFile(f);
+      },
+    }, [
+      el('div', { class: 'mikke-dropzone-icon', html: icon('upload') }),
+      el('div', { class: 'mikke-dropzone-title', html: 'ここに CSV を<b>ドラッグ &amp; ドロップ</b>' }),
+      el('div', { class: 'mikke-dropzone-hint' }, ['または']),
+      el('button', {
+        class: 'mikke-btn mikke-btn--primary', type: 'button',
+        onclick: (e: Event) => { e.stopPropagation(); fileInput.click(); },
+      }, ['ファイルを選択']),
+      fileInput,
+    ]);
 
     area.append(
       el('p', { style: 'color:var(--ink-2)' }, [
@@ -45,7 +78,7 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       el('p', { style: 'color:var(--ink-4);font-size:var(--fs-sm)' }, [
         '※ 大容量 CSV (約2万件/100MB) は中継サーバ側で解析します。中継サーバ (mikke-launch) を起動しておいてください。中継未起動時はブラウザ側で解析します。',
       ]),
-      el('div', { style: 'margin-top:var(--s-6)' }, [fileInput]),
+      el('div', { style: 'margin-top:var(--s-6)' }, [dropzone]),
     );
   }
 
