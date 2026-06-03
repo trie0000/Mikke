@@ -86,8 +86,12 @@ if (watch || serve) {
   console.log(`[html] dist/index.html: ${sizeKb('dist/index.html')} KB`);
 
   // install.html: バンドル丸ごと埋込型 (オフライン用)
-  const inlined = js;
-  const inlineHref = 'javascript:' + encodeURIComponent(inlined);
+  // ⚠ バンドルは esbuild の IIFE 形式 = `"use strict";var Mikke=(()=>{...})();`。
+  //   これを生で javascript: URL にすると、末尾の `var Mikke=...`(完了値=empty)
+  //   の手前にある "use strict"(ExpressionStatement) が完了値として残り、
+  //   ブックマークレット実行時にページが "use strict" に置換される。
+  //   ローダ同様 IIFE で包んで完了値を undefined にする (= 画面遷移しない)。
+  const inlineHref = 'javascript:' + encodeURIComponent('(function(){' + js + '})();');
   fs.writeFileSync('dist/install.html', renderInstallHtml(inlineHref, true));
   console.log(`[install] dist/install.html: ${sizeKb('dist/install.html')} KB (bundle inlined)`);
 
