@@ -12,6 +12,8 @@ import {
   currentBuildId, DEFAULT_LOCAL_BASE, type BundleSource,
 } from '../utils/bundleVersion';
 import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
+import { performRelayUpdate } from '../utils/relayUpdate';
+import { getState, setState } from '../state';
 import type { ConditionRule, ConditionGroup, ColumnType, MikkeSettings } from '../types';
 
 interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
@@ -378,6 +380,36 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
     el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['SP サイト URL']), siteInput]),
     el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['中継サーバ ベース URL']), relayInput]),
   ]);
+
+  // relay スクリプト更新がある場合の適用ボタン (起動時チェックで検知済み)。
+  const ru = getState().relayUpdateAvailable;
+  if (ru) {
+    const btn = el('button', { class: 'mikke-btn mikke-btn--primary', type: 'button' },
+      ['中継サーバを今すぐ更新']) as HTMLButtonElement;
+    btn.addEventListener('click', () => void (async () => {
+      btn.setAttribute('disabled', '');
+      toast(root, '中継サーバを更新しています…', 'default');
+      try {
+        await performRelayUpdate(ru.files);
+        setState({ relayUpdateAvailable: null });
+        toast(root, '更新を送信しました。中継サーバが再起動します（数秒）。再起動後に有効になります。', 'ok', 6000);
+        box.remove();
+      } catch (e) {
+        btn.removeAttribute('disabled');
+        toast(root, `中継サーバの更新に失敗: ${(e as Error).message}`, 'error', 6000);
+      }
+    })());
+    const box = el('div', { style: 'margin-top:var(--s-5);padding:var(--s-4);background:var(--accent-soft);border-radius:var(--r-2)' }, [
+      el('div', { style: 'font-size:var(--fs-sm);color:var(--ink);margin-bottom:var(--s-3)' }, [
+        `中継サーバの更新があります: v${ru.localVersion} → v${ru.remoteVersion}`,
+      ]),
+      el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-3);line-height:1.6' }, [
+        'SharePoint 上の最新 relay スクリプトを取得して中継サーバに送信し、自動で入れ替え＆再起動します。',
+      ]),
+      btn,
+    ]);
+    body.appendChild(box);
+  }
   return {
     body,
     save: () => {

@@ -39,6 +39,34 @@ export async function relayCsvParse(file: File): Promise<CsvParseResult> {
   return await r.json();
 }
 
+export interface RelayVersionInfo { version: string; files: string[]; }
+
+/** GET /mikke/relay/version — 動作中 relay スクリプトの版と管理ファイル一覧。
+ *  relay 未起動なら null。 */
+export async function relayGetVersion(): Promise<RelayVersionInfo | null> {
+  try {
+    const r = await fetch(`${getRelayBase()}/relay/version`, { method: 'GET' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { version: String(j.version ?? ''), files: Array.isArray(j.files) ? (j.files as string[]) : [] };
+  } catch { return null; }
+}
+
+/** POST /mikke/relay/self-update — 新しい relay ファイル (base64) を送って
+ *  relay 自身に入れ替え＆再起動させる。relay は 200 応答後 ~1 秒で exit する。 */
+export async function relaySelfUpdate(files: { name: string; contentBase64: string }[]): Promise<void> {
+  const r = await fetch(`${getRelayBase()}/relay/self-update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    throw new Error(detail);
+  }
+}
+
 export interface RelayBundleDir { ok: boolean; dir: string; bundleExists?: boolean; }
 
 /** GET /mikke/bundle-dir — relay が mikke.bundle.js / version.txt を読む現在の

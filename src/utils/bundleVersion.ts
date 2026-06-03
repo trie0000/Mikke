@@ -34,13 +34,10 @@ export function setLocalBase(url: string): void {
   } catch { /* noop */ }
 }
 
-/** ローダと同じく、本体取得元の base を解決する。解決不可なら空文字。 */
-export function resolveBundleBase(): string {
-  try {
-    if (localStorage.getItem(DEV_SOURCE_KEY) === 'local') {
-      return (localStorage.getItem(DEV_LOCAL_BASE_KEY) || DEFAULT_LOCAL_BASE).replace(/\/+$/, '');
-    }
-  } catch { /* noop */ }
+/** SharePoint 上の配布フォルダ (ドキュメント/Mikke) の base を解決する。
+ *  dev-local の有無に関係なく「SP 側」を返す。relay 配布ファイル
+ *  (relay-version.txt / *.ps1 / *.bat) は常にここに置かれる。解決不可なら空文字。 */
+export function resolveSpBase(): string {
   try {
     const ctx = (window as unknown as { _spPageContextInfo?: { webServerRelativeUrl?: string } })._spPageContextInfo;
     if (ctx?.webServerRelativeUrl) {
@@ -54,6 +51,17 @@ export function resolveBundleBase(): string {
     if (m) return m[1] + LIB_PATH;
   } catch { /* noop */ }
   return '';
+}
+
+/** ローダと同じく、本体 (bundle/version.txt) 取得元の base を解決する。
+ *  dev-local 指定時はローカル relay、それ以外は SP。解決不可なら空文字。 */
+export function resolveBundleBase(): string {
+  try {
+    if (localStorage.getItem(DEV_SOURCE_KEY) === 'local') {
+      return (localStorage.getItem(DEV_LOCAL_BASE_KEY) || DEFAULT_LOCAL_BASE).replace(/\/+$/, '');
+    }
+  } catch { /* noop */ }
+  return resolveSpBase();
 }
 
 /** 配信元の version.txt を取得 (= 最新 build id)。失敗時 null。

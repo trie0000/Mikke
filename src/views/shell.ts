@@ -10,6 +10,7 @@ import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { toast } from '../components/toast';
 import { checkBundleUpdate, stableBuildId } from '../utils/bundleVersion';
+import { checkRelayUpdate } from '../utils/relayUpdate';
 
 export function renderShell(): HTMLElement {
   const root = el('div', { id: 'mikke-root', class: 'mikke-root', 'data-theme': 'light' });
@@ -38,6 +39,8 @@ export function renderShell(): HTMLElement {
 
   // バンドル更新の定期ポーリング (dist / SP の version.txt を監視)。
   startBundleUpdatePolling(root);
+  // relay スクリプト更新の検知 (起動時 1 回)。
+  checkRelayUpdateOnStartup(root);
 
   return root;
 }
@@ -76,6 +79,20 @@ function startBundleUpdatePolling(root: HTMLElement): void {
   // 起動 5 秒後に初回、以降 60 秒ごと (キャッシュ温存と検知性のバランス)。
   window.setTimeout(() => { void check(); }, 5000);
   bundlePollTimer = window.setInterval(() => { void check(); }, 60_000);
+}
+
+/** 起動後 1 回、relay スクリプトの更新を確認し、あれば通知。
+ *  適用は 設定→接続「中継サーバを今すぐ更新」ボタンから (relay 再起動を伴うため手動)。 */
+function checkRelayUpdateOnStartup(root: HTMLElement): void {
+  window.setTimeout(async () => {
+    if (!root.isConnected) return;
+    try {
+      const info = await checkRelayUpdate();
+      if (!info) return;
+      setState({ relayUpdateAvailable: info });
+      toast(root, `中継サーバの更新があります (v${info.localVersion} → v${info.remoteVersion})。設定 → 接続 から更新できます。`, 'warn', 0);
+    } catch { /* noop */ }
+  }, 6500);
 }
 
 /** 更新アイコンクリック時: 更新があれば再読込、無ければ手動チェック。
