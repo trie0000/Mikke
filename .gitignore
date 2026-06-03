@@ -30,3 +30,6 @@ dist/*
 # relay の個人設定 (テンプレートは .example として残す)
 scripts/mikke-relay.env
 .claude/
+
+# 開発専用の指示書。pull 同期対象外 (リポジトリで配布しない / 各自ローカル管理)。
+CLAUDE.md
