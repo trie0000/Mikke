@@ -11,6 +11,8 @@ import { openSiteSelectionModal } from './siteSelectionModal';
 import { toast } from '../components/toast';
 import { checkBundleUpdate, stableBuildId } from '../utils/bundleVersion';
 import { checkRelayUpdate } from '../utils/relayUpdate';
+import { currentBuildId } from '../utils/bundleVersion';
+import { LATEST_RELEASE } from '../lib/releaseNotes';
 
 export function renderShell(): HTMLElement {
   const root = el('div', { id: 'mikke-root', class: 'mikke-root', 'data-theme': 'light' });
@@ -41,6 +43,8 @@ export function renderShell(): HTMLElement {
   startBundleUpdatePolling(root);
   // relay スクリプト更新の検知 (起動時 1 回)。
   checkRelayUpdateOnStartup(root);
+  // 更新後の「変更点」通知 (build id が前回起動から変わっていたら)。
+  notifyIfUpdated(root);
 
   return root;
 }
@@ -74,11 +78,29 @@ function startBundleUpdatePolling(root: HTMLElement): void {
     if (stableBuildId(latest) === getAckVersion()) return;
     notified = true;
     setState({ bundleUpdateAvailable: latest }); // 右上アイコンが強調される
-    toast(root, '新しいバージョンがあります。右上の更新アイコンをクリックすると最新版に更新されます。', 'warn', 0);
+    toast(root, '新しいバージョンがあります。右上の更新アイコンで最新版に更新できます。更新後、設定 → 更新履歴 で変更内容を確認できます。', 'warn', 0);
   };
   // 起動 5 秒後に初回、以降 60 秒ごと (キャッシュ温存と検知性のバランス)。
   window.setTimeout(() => { void check(); }, 5000);
   bundlePollTimer = window.setInterval(() => { void check(); }, 60_000);
+}
+
+// 前回起動時の build id を覚えておき、更新後の初回起動で「変更点」を案内する。
+const LAST_SEEN_BUILD_KEY = 'mikke.bundle.lastSeenBuild';
+
+/** build id が前回起動から変わっていたら「更新されました」を通知 (更新内容は
+ *  設定→更新履歴 で確認できる)。初回起動 (記録なし) では出さない。 */
+function notifyIfUpdated(root: HTMLElement): void {
+  let prev = '';
+  try { prev = localStorage.getItem(LAST_SEEN_BUILD_KEY) || ''; } catch { /* noop */ }
+  const cur = currentBuildId();
+  try { if (cur) localStorage.setItem(LAST_SEEN_BUILD_KEY, cur); } catch { /* noop */ }
+  if (!prev || !cur || prev === cur) return;   // 初回 / 変化なし → 通知しない
+  const title = LATEST_RELEASE?.title ? `（${LATEST_RELEASE.title}）` : '';
+  window.setTimeout(() => {
+    if (!root.isConnected) return;
+    toast(root, `Mikke を更新しました${title}。変更内容は 設定 → 更新履歴 で確認できます。`, 'ok', 8000);
+  }, 1500);
 }
 
 /** 起動後 1 回、relay スクリプトの更新を確認し、あれば通知。

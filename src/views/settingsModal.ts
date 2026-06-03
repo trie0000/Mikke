@@ -13,6 +13,7 @@ import {
 } from '../utils/bundleVersion';
 import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
 import { performRelayUpdate } from '../utils/relayUpdate';
+import { RELEASE_NOTES, type ReleaseNote } from '../lib/releaseNotes';
 import { getState, setState } from '../state';
 import type { ConditionRule, ConditionGroup, ColumnType, MikkeSettings } from '../types';
 
@@ -153,6 +154,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
       key: 'other', title: 'その他', subtitle: '接続先・運用情報・開発者向け。',
       groups: [
         { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
+        { title: '情報', items: [{ key: 'releaseNotes', label: '更新履歴', render: () => renderReleaseNotesPanel() }] },
         { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel(root) }] },
 
       ],
@@ -470,6 +472,34 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
       toast(root, '接続設定を保存しました', 'ok');
     },
   };
+}
+
+// ── その他: 更新履歴 (バンドル同梱のリリースノート) ──
+function renderReleaseNotesPanel(): SettingPanel {
+  const renderNote = (n: ReleaseNote): HTMLElement => {
+    const head = el('div', { style: 'display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2);margin-bottom:var(--s-2)' }, [
+      el('span', { style: 'font-weight:600;color:var(--ink);font-size:var(--fs-md)' }, [n.version]),
+      el('span', { style: 'font-size:var(--fs-xs);color:var(--ink-3)' }, [n.date]),
+      ...(n.breaking ? [el('span', { class: 'mikke-badge mikke-badge--danger', style: 'font-size:11px' }, ['破壊的変更'])] : []),
+      ...(n.title ? [el('span', { style: 'flex:1;min-width:0;color:var(--ink-2);font-size:var(--fs-sm)' }, [n.title])] : []),
+    ]);
+    const items = n.changes.map((c) => el('li', { style: 'margin:0 0 var(--s-1);line-height:1.65' }, [c]));
+    const meta = n.relayMin
+      ? [el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2)' }, [`（推奨 relay: v${n.relayMin} 以降）`])]
+      : [];
+    return el('article', {
+      style: 'background:var(--paper);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4) var(--s-5);margin-bottom:var(--s-3)',
+    }, [head, el('ul', { style: 'margin:0;padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink)' }, items), ...meta]);
+  };
+
+  const body = el('div', {}, [
+    panelHead('更新履歴', 'リリースごとの更新内容です（最新が一番上）。新しいバージョンに更新すると、ここに変更点が追加されます。'),
+    el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-4)' }, [
+      `現在の起動 build: ${currentBuildId() || '(不明)'}`,
+    ]),
+    ...RELEASE_NOTES.map(renderNote),
+  ]);
+  return { body };
 }
 
 // ── その他: 開発 (バンドル読込元の切替) ──
