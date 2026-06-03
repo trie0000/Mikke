@@ -4,7 +4,7 @@ import { el, clear } from '../utils/dom';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
-import { CONDITION_OPS } from '../lib/conditions';
+import { opsForType, opLabel, opNeedsValue2 } from '../lib/conditions';
 import { parseCsv } from '../lib/csv';
 import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
 import {
@@ -286,62 +286,112 @@ async function renderColumnsPanel(root: HTMLElement): Promise<SettingPanel> {
   };
 }
 
-// ── 共通設定: F7 管理対象条件 ──
+// ── 共通設定: F7 管理対象条件 (型対応の演算子 + AND/OR ネスト) ──
 async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
   const s = await getRepo().getSettings();
-  const group: ConditionGroup = s.matchConditions ?? { combinator: 'OR', rules: [] };
+  const rootGroup: ConditionGroup = s.matchConditions ?? { combinator: 'OR', rules: [] };
   const headers = s.lastCsvHeaders ?? [];
+  const types = s.columnTypes ?? {};
   const dlId = 'mikke-csv-headers-modal';
+
   const body = el('div', {}, [
-    panelHead('管理対象条件', 'CSV 列に対する AND/OR 条件で管理対象を定義します。条件変更は次回取込から適用されます。'),
+    panelHead('管理対象条件',
+      'CSV 列に対する条件で管理対象を定義します。AND/OR はグループでネストでき、数値は以上/以下、日付は期間で指定できます（F6 でテンプレ読込すると型が反映されます）。条件変更は次回取込から適用されます。'),
   ]);
   body.appendChild(el('datalist', { id: dlId }, headers.map((h) => el('option', { value: h }))));
 
-  const combSel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line-strong)',
-    onchange: (e: Event) => { group.combinator = (e.target as HTMLSelectElement).value as 'AND' | 'OR'; } }, [
-    el('option', { value: 'AND', ...(group.combinator === 'AND' ? { selected: 'selected' } : {}) }, ['すべて満たす (AND)']),
-    el('option', { value: 'OR', ...(group.combinator === 'OR' ? { selected: 'selected' } : {}) }, ['いずれか満たす (OR)']),
-  ]);
-  body.appendChild(el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['結合']), combSel]));
-
-  const rulesBox = el('div');
-  body.appendChild(rulesBox);
+  const tree = el('div');
+  body.appendChild(tree);
   const preview = el('div', { style: 'margin-top:var(--s-4);font-size:var(--fs-sm);color:var(--ink-3)' });
+  body.appendChild(preview);
+
+  const isGroupNode = (r: ConditionRule | ConditionGroup): r is ConditionGroup =>
+    (r as ConditionGroup).combinator !== undefined;
+  const fieldType = (field: string): ColumnType | undefined => types[field.trim()];
+
+  function countRules(g: ConditionGroup): { count: number; invalid: number } {
+    let count = 0; let invalid = 0;
+    for (const r of g.rules) {
+      if (isGroupNode(r)) { const c = countRules(r); count += c.count; invalid += c.invalid; }
+      else {
+        count++;
+        const needV2 = opNeedsValue2(r.op);
+        if (!r.field.trim() || !r.value.trim() || (needV2 && !(r.value2 ?? '').trim())) invalid++;
+      }
+    }
+    return { count, invalid };
+  }
   function updatePreview(): void {
-    const flat = group.rules.filter((r) => !(r as ConditionGroup).combinator) as ConditionRule[];
-    const valid = flat.every((r) => r.field.trim() && r.value.trim());
-    preview.textContent = group.rules.length === 0
-      ? '条件が未設定です。'
-      : `${group.rules.length} 条件 / ${group.combinator}${valid ? '' : ' — ⚠ 未入力の条件があります'}`;
+    const { count, invalid } = countRules(rootGroup);
+    preview.textContent = count === 0 ? '条件が未設定です。'
+      : `${count} 条件${invalid ? ` — ⚠ ${invalid} 件未入力` : ''}`;
   }
-  function paintRules(): void {
-    clear(rulesBox);
-    group.rules.forEach((r, idx) => {
-      if ((r as ConditionGroup).combinator) return;
-      const rule = r as ConditionRule;
-      rulesBox.appendChild(el('div', { class: 'mikke-cond-row' }, [
-        el('input', { class: 'mikke-input', list: dlId, style: 'border:1px solid var(--line)', placeholder: '列名',
-          value: rule.field, oninput: (e: Event) => { rule.field = (e.target as HTMLInputElement).value; updatePreview(); } }),
-        el('select', { class: 'mikke-select', style: 'border:1px solid var(--line)',
-          onchange: (e: Event) => { rule.op = (e.target as HTMLSelectElement).value as ConditionRule['op']; } },
-          CONDITION_OPS.map((o) => el('option', { value: o.value, ...(o.value === rule.op ? { selected: 'selected' } : {}) }, [o.label]))),
-        el('input', { class: 'mikke-input', style: 'border:1px solid var(--line)', placeholder: '値',
-          value: rule.value, oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } }),
-        el('button', { class: 'mikke-iconbtn', 'aria-label': '削除',
-          onclick: () => { group.rules.splice(idx, 1); paintRules(); updatePreview(); }, html: '✕' }),
-      ]));
+
+  function paint(): void { clear(tree); tree.appendChild(renderGroup(rootGroup, null, -1)); updatePreview(); }
+
+  function smallBtn(label: string, onclick: () => void): HTMLElement {
+    return el('button', { class: 'mikke-btn mikke-btn--secondary', type: 'button',
+      style: 'height:28px;padding:0 var(--s-4);font-size:var(--fs-sm)', onclick }, [label]);
+  }
+
+  function renderRule(parent: ConditionGroup, idx: number, rule: ConditionRule): HTMLElement {
+    const t = fieldType(rule.field);
+    const ops = opsForType(t);
+    if (!ops.includes(rule.op)) rule.op = 'equals';   // 型に合わない演算子はリセット
+    const inputType = t === 'number' ? 'number' : (t === 'date' || t === 'datetime') ? 'date' : 'text';
+
+    const fieldInput = el('input', { class: 'mikke-input', list: dlId, style: 'border:1px solid var(--line);min-width:140px',
+      placeholder: '列名', value: rule.field,
+      onchange: (e: Event) => { rule.field = (e.target as HTMLInputElement).value; paint(); } });
+
+    const opSel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line)',
+      onchange: (e: Event) => { rule.op = (e.target as HTMLSelectElement).value as ConditionRule['op']; paint(); } },
+      ops.map((op) => el('option', { value: op, ...(op === rule.op ? { selected: 'selected' } : {}) }, [opLabel(op, t)])));
+
+    const valInput = el('input', { class: 'mikke-input', type: inputType, style: 'border:1px solid var(--line);min-width:110px',
+      placeholder: '値', value: rule.value,
+      oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } });
+
+    const cells: (Node | string)[] = [fieldInput, opSel, valInput];
+    if (opNeedsValue2(rule.op)) {
+      cells.push(el('span', { style: 'color:var(--ink-3)' }, ['〜']));
+      cells.push(el('input', { class: 'mikke-input', type: inputType, style: 'border:1px solid var(--line);min-width:110px',
+        placeholder: '上限', value: rule.value2 ?? '',
+        oninput: (e: Event) => { rule.value2 = (e.target as HTMLInputElement).value; updatePreview(); } }));
+    }
+    cells.push(el('button', { class: 'mikke-iconbtn', 'aria-label': '削除', html: '✕',
+      onclick: () => { parent.rules.splice(idx, 1); paint(); } }));
+    return el('div', { class: 'mikke-cond-row' }, cells);
+  }
+
+  function renderGroup(group: ConditionGroup, parent: ConditionGroup | null, idx: number): HTMLElement {
+    const combSel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line-strong)',
+      onchange: (e: Event) => { group.combinator = (e.target as HTMLSelectElement).value as 'AND' | 'OR'; updatePreview(); } }, [
+      el('option', { value: 'AND', ...(group.combinator === 'AND' ? { selected: 'selected' } : {}) }, ['すべて満たす (AND)']),
+      el('option', { value: 'OR', ...(group.combinator === 'OR' ? { selected: 'selected' } : {}) }, ['いずれか満たす (OR)']),
+    ]);
+    const header = el('div', { style: 'display:flex;gap:var(--s-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s-3)' }, [
+      combSel,
+      smallBtn('＋条件', () => { group.rules.push({ field: '', op: 'equals', value: '' }); paint(); }),
+      smallBtn('＋グループ', () => { group.rules.push({ combinator: 'AND', rules: [] }); paint(); }),
+      ...(parent ? [el('button', { class: 'mikke-iconbtn', 'aria-label': 'グループ削除', html: '✕',
+        onclick: () => { parent.rules.splice(idx, 1); paint(); } })] : []),
+    ]);
+    const childrenBox = el('div');
+    group.rules.forEach((r, i) => {
+      childrenBox.appendChild(isGroupNode(r) ? renderGroup(r, group, i) : renderRule(group, i, r));
     });
+    const nestStyle = parent
+      ? 'border-left:2px solid var(--accent-soft);padding:var(--s-3) 0 var(--s-3) var(--s-4);margin:var(--s-2) 0'
+      : '';
+    return el('div', { style: nestStyle }, [header, childrenBox]);
   }
-  paintRules(); updatePreview();
-  body.append(
-    el('button', { class: 'mikke-btn mikke-btn--secondary', style: 'margin-top:var(--s-3)',
-      onclick: () => { group.rules.push({ field: '', op: 'equals', value: '' }); paintRules(); updatePreview(); } }, ['+ 条件を追加']),
-    preview,
-  );
+
+  paint();
   return {
     body,
     save: async () => {
-      await getRepo().saveSettings({ ...s, matchConditions: group });
+      await getRepo().saveSettings({ ...s, matchConditions: rootGroup });
       toast(root, '条件を保存しました', 'ok');
     },
   };

@@ -75,12 +75,16 @@ export interface ConditionRule {
   field: string;   // CSV ヘッダ名
   op: ConditionOp;
   value: string;
+  /** between (範囲/期間) の上限値。op='between' のときのみ使用。 */
+  value2?: string;
 }
 
 export type ConditionOp =
   | 'equals' | 'not_equals'
   | 'contains' | 'not_contains'
-  | 'starts_with' | 'in';
+  | 'starts_with' | 'in'
+  | 'gte' | 'lte' | 'gt' | 'lt'   // 以上 / 以下 / より大 / より小 (数値・日付)
+  | 'between';                    // 範囲 / 期間 (value 〜 value2)
 
 /** F7 条件グループ (ネスト可)。 */
 export interface ConditionGroup {
