@@ -384,18 +384,22 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
     g.addEventListener('dragstart', (e) => {
       const dt = (e as DragEvent).dataTransfer;
       dragSrc = { group, node };
+      const box = (e.target as HTMLElement).closest('.mikke-cond-row, .mikke-cond-group') as HTMLElement | null;
       if (dt) {
         dt.effectAllowed = 'move';
         dt.setData('text/plain', 'mikke-cond');
-        const row = (e.target as HTMLElement).closest('.mikke-cond-row, .mikke-cond-group') as HTMLElement | null;
-        if (row && dt.setDragImage) dt.setDragImage(row, 12, 12);
+        if (box && dt.setDragImage) dt.setDragImage(box, 12, 12);
       }
       tree.classList.add('is-dragging');
+      // グループをドラッグ中は、その内部のドロップゾーンを隠す (自分自身の中へは
+      // 落とせない＝無効ゾーンが領域を占めて外側に落としづらいのを防ぐ)。
+      if (isGroupNode(node) && box) box.classList.add('is-drag-src');
     });
     g.addEventListener('dragend', () => {
       dragSrc = null;
       tree.classList.remove('is-dragging');
       tree.querySelectorAll('.mikke-cond-drop.is-over').forEach((d) => d.classList.remove('is-over'));
+      tree.querySelectorAll('.mikke-cond-group.is-drag-src').forEach((d) => d.classList.remove('is-drag-src'));
     });
     return g;
   }
