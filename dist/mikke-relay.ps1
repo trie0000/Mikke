@@ -19,13 +19,14 @@
 #     -Encoding を明示し、出力 JSON は UTF-8 で書き出すこと (Spira 踏襲)。
 # ============================================================================
 param(
-    [int]$Port = 18080,
+    # 0 = 未指定。優先順位 = -Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18080。
+    [int]$Port = 0,
     [string]$EnvFile
 )
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.3'
+$MIKKE_RELAY_VERSION = '1.0.4'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -60,6 +61,13 @@ function Import-EnvFile {
 }
 if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot 'mikke-relay.env' }
 Import-EnvFile -Path $EnvFile | Out-Null
+
+# ポート決定: -Port 引数 (>0) > .env/OS env(MIKKE_RELAY_PORT) > 既定 18080。
+if ($Port -le 0) {
+    $Port = 18080
+    $envPort = [Environment]::GetEnvironmentVariable('MIKKE_RELAY_PORT')
+    if ($envPort) { $p = 0; if ([int]::TryParse($envPort, [ref]$p) -and $p -gt 0) { $Port = $p } }
+}
 
 # 検査ツール API の接続先 (社内確認後に設定)。雛形では未設定でも起動する。
 $script:ScannerApiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')

@@ -7,20 +7,26 @@
 #     (従来は -WindowStyle Minimized で隠れて起動失敗が確認できなかった)
 #   - 起動前に /health を確認し、既に起動済みなら二重起動しない (ポート競合回避)
 #   - .bat 側の pause で、このウィンドウも自動では閉じない
-param([int]$Port = 18080)
+param([int]$Port = 0)  # 0 = 未指定。-Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18080
 
 $scriptDir = $PSScriptRoot
 $envFile = Join-Path $scriptDir 'mikke-relay.env'
 
-# ─── SP サイト URL を env から取得 (なければプロンプト → env に保存) ──────────
+# ─── SP サイト URL / ポートを env から取得 (なければプロンプト → env に保存) ───
 $siteUrl = $null
+$envPort = 0
 if (Test-Path -LiteralPath $envFile) {
     foreach ($line in (Get-Content -LiteralPath $envFile -Encoding UTF8)) {
         if ($line -match '^\s*MIKKE_SITE_URL\s*=\s*(.+)$') {
             $siteUrl = $Matches[1].Trim().Trim('"').Trim("'")
+        } elseif ($line -match '^\s*MIKKE_RELAY_PORT\s*=\s*(\d+)') {
+            $envPort = [int]$Matches[1]
         }
     }
 }
+# ポート優先順位: -Port 引数 (>0) > .env(MIKKE_RELAY_PORT) > 既定 18080
+if ($Port -le 0) { $Port = if ($envPort -gt 0) { $envPort } else { 18080 } }
+
 if (-not $siteUrl) {
     $siteUrl = Read-Host 'Mikke を開く SharePoint サイト URL を入力してください (空 Enter でスキップ)'
     if ($siteUrl) { Add-Content -LiteralPath $envFile -Value "MIKKE_SITE_URL=$siteUrl" -Encoding UTF8 }
