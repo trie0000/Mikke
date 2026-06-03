@@ -191,9 +191,11 @@
   border-bottom: 1px solid var(--line); background: var(--paper);
 }
 #mikke-root .mikke-input, #mikke-root .mikke-select {
-  height: 30px; padding: 0 var(--s-3); border: 1px solid transparent;
+  /* min-height にすることで、.mikke-field select の縦 padding と固定 height が
+     衝突しても内容領域が潰れない (border-box で文字が縦に切れる不具合の修正)。 */
+  min-height: 30px; padding: 0 var(--s-3); border: 1px solid transparent;
   background: transparent; border-radius: var(--r-2); color: var(--ink);
-  font-family: var(--font-sans); font-size: var(--fs-md);
+  font-family: var(--font-sans); font-size: var(--fs-md); line-height: 1.4;
 }
 #mikke-root .mikke-input:focus, #mikke-root .mikke-select:focus {
   outline: none; background: var(--paper); border-color: var(--line-strong);
@@ -310,7 +312,12 @@
 #mikke-root .mikke-toast--error  { border-left: 3px solid var(--danger); }
 
 /* ---------- CSV import dropzone (F1) ---------- */
-#mikke-root .mikke-dropzone-input { display: none; }
+/* display:none だと一部ブラウザ/環境で input.click() がファイルダイアログを
+   開かないことがあるため、レイアウトには残す「視覚的非表示」にする。 */
+#mikke-root .mikke-dropzone-input {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 #mikke-root .mikke-dropzone {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--s-4); text-align: center;

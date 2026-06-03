@@ -84,21 +84,38 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
 
   async function handleFile(file: File): Promise<void> {
     fileName = file.name;
+    // 解析には時間がかかる (大容量 CSV / 中継サーバ往復) ので、まず「解析中」を
+    // 表示する。これが無いと押下後に画面が無反応に見えて「何も起きない」と誤認する。
+    showBusy(`「${file.name}」を解析中…`);
+    // eslint-disable-next-line no-console
+    console.log('[mikke] import: handleFile start', { name: file.name, size: file.size });
     try {
       let headers: string[];
       let rows: Record<string, string>[];
 
       // 中継サーバ起動時はサーバ側パース (大容量対応)、未起動時はブラウザ側。
       const h = await relayHealth();
+      // eslint-disable-next-line no-console
+      console.log('[mikke] import: relayHealth', h);
       if (h.ok) {
+        showBusy(`「${file.name}」を中継サーバで解析中…`);
         const res = await relayCsvParse(file);
         headers = res.headers;
         rows = res.rows;
+        // eslint-disable-next-line no-console
+        console.log('[mikke] import: relay parsed', { rows: rows.length, cols: headers.length });
       } else {
         toast(rootEl, '中継サーバ未起動 — ブラウザ側で解析します（大容量では重くなります）。', 'warn');
+        showBusy(`「${file.name}」をブラウザで解析中…`);
         const parsed = parseCsv(await file.text());
         headers = parsed.headers;
         rows = parsed.rows;
+        // eslint-disable-next-line no-console
+        console.log('[mikke] import: browser parsed', { rows: rows.length, cols: headers.length });
+      }
+
+      if (!headers.length) {
+        throw new Error('ヘッダを検出できませんでした（空の CSV か区切り文字が不正の可能性）。');
       }
 
       const existing = await getRepo().listIssues();
@@ -108,8 +125,18 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       step = 'preview';
       paint();
     } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[mikke] import: failed', e);
       toast(rootEl, `CSV の解析に失敗しました: ${(e as Error).message}`, 'error');
+      step = 'select';
+      paint();
     }
+  }
+
+  /** 解析中の一時表示（押下後の無反応を防ぐ）。 */
+  function showBusy(msg: string): void {
+    clear(area);
+    area.appendChild(el('div', { class: 'mikke-empty' }, [msg]));
   }
 
   function paintPreview(): void {

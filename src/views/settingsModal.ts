@@ -9,6 +9,7 @@ import {
   getBundleSource, setBundleSource, getLocalBase, setLocalBase,
   currentBuildId, DEFAULT_LOCAL_BASE, type BundleSource,
 } from '../utils/bundleVersion';
+import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
 import type { ConditionRule, ConditionGroup } from '../types';
 
 interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
@@ -149,6 +150,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
       groups: [
         { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
         { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel(root) }] },
+
       ],
     },
   ];
@@ -328,7 +330,7 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
 //  ローダは起動時に localStorage(mikke.dev.*) を見て本体取得先を決める。ここを
 //  変えると「次回リロード」で SharePoint / ローカル relay の dist が切り替わる。
 //  開発中は local にすれば SP へ毎回アップロードせずに反映できる。
-function renderDeveloperPanel(root: HTMLElement): SettingPanel {
+async function renderDeveloperPanel(root: HTMLElement): Promise<SettingPanel> {
   const cur = getBundleSource();
   const name = 'mikke-bundle-source';
   const radioSP = el('input', { type: 'radio', name, value: 'sharepoint', style: 'cursor:pointer',
@@ -337,6 +339,22 @@ function renderDeveloperPanel(root: HTMLElement): SettingPanel {
     ...(cur === 'local' ? { checked: 'checked' } : {}) }) as HTMLInputElement;
   const baseInput = el('input', { type: 'text', value: getLocalBase(), placeholder: DEFAULT_LOCAL_BASE,
     style: 'width:100%;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLInputElement;
+
+  // relay の配信ディレクトリ (mikke.bundle.js / version.txt の読込元) を照会。
+  // relay 未起動なら空のまま (保存時に POST して反映)。
+  let originalDir = '';
+  let relayReachable = false;
+  try {
+    const bd = await relayGetBundleDir();
+    originalDir = bd.dir || '';
+    relayReachable = true;
+  } catch { /* relay 未起動 / 未到達 */ }
+  const dirInput = el('input', { type: 'text', value: originalDir,
+    placeholder: relayReachable ? '' : '(relay 未起動 — 起動後に再度開くと現在値を取得)',
+    style: 'width:100%;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLInputElement;
+  const dirStatus = el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2)' }, [
+    relayReachable ? `現在の relay 配信元: ${originalDir || '(未設定)'}` : '※ relay に接続できません（中継サーバを起動してください）。',
+  ]);
 
   const radioRow = (input: HTMLInputElement, label: string, hint: string) =>
     el('label', { style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2);margin-bottom:var(--s-2)' }, [
@@ -359,16 +377,39 @@ function renderDeveloperPanel(root: HTMLElement): SettingPanel {
       el('label', { class: 'mikke-field-label' }, ['ローカル base URL']),
       baseInput,
     ]),
+    el('div', { class: 'mikke-field', style: 'margin-top:var(--s-4)' }, [
+      el('label', { class: 'mikke-field-label' }, ['relay の配信ディレクトリ (新しいコードの読込元)']),
+      dirInput,
+      dirStatus,
+      el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2);line-height:1.6' }, [
+        'ローカル relay が mikke.bundle.js / version.txt を読むフォルダの絶対パス。',
+        '開発時はビルド先 dist（例: C:\\Users\\…\\Mikke\\dist）を指定すると、ビルドし直すだけで反映されます。',
+        '保存時に relay へ送信し、relay 側でフォルダの存在を確認します。',
+      ]),
+    ]),
     el('div', { style: 'margin-top:var(--s-4);padding:var(--s-3);background:var(--accent-soft);border-radius:var(--r-2);font-size:var(--fs-sm);color:var(--ink-2)' }, [
-      '※ 切替は「次回リロード」で反映されます（ローダは起動時に 1 度だけ参照先を決めるため）。保存後、右上の更新アイコンまたはブックマーク再クリックでリロードしてください。',
+      '※ 読込元(SharePoint/ローカル)の切替は「次回リロード」で反映されます（ローダは起動時に 1 度だけ参照先を決めるため）。保存後、右上の更新アイコンまたはブックマーク再クリックでリロードしてください。配信ディレクトリの変更は relay に即時反映されます。',
     ]),
   ]);
   return {
     body,
-    save: () => {
+    save: async () => {
       const src: BundleSource = radioLocal.checked ? 'local' : 'sharepoint';
       setBundleSource(src);
       setLocalBase(baseInput.value);
+
+      // relay 配信ディレクトリの変更があれば POST。relay 未到達/失敗は警告に留め、
+      // ローカル設定の保存自体は止めない。
+      const dir = dirInput.value.trim();
+      if (dir && dir !== originalDir) {
+        try {
+          const res = await relaySetBundleDir(dir);
+          toast(root, `relay 配信ディレクトリを設定しました: ${res.dir}${res.bundleExists ? '' : '（⚠ そのフォルダに mikke.bundle.js が見つかりません）'}`, res.bundleExists ? 'ok' : 'warn', 6000);
+        } catch (e) {
+          toast(root, `relay 配信ディレクトリの設定に失敗: ${(e as Error).message}`, 'error', 6000);
+        }
+      }
+
       toast(root, `読込元を「${src === 'local' ? 'ローカル relay' : 'SharePoint'}」に保存しました。リロードで反映されます。`, 'ok', 6000);
     },
   };

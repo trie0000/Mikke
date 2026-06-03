@@ -39,6 +39,32 @@ export async function relayCsvParse(file: File): Promise<CsvParseResult> {
   return await r.json();
 }
 
+export interface RelayBundleDir { ok: boolean; dir: string; bundleExists?: boolean; }
+
+/** GET /mikke/bundle-dir — relay が mikke.bundle.js / version.txt を読む現在の
+ *  ディレクトリを照会。 */
+export async function relayGetBundleDir(): Promise<RelayBundleDir> {
+  const r = await fetch(`${getRelayBase()}/bundle-dir`, { method: 'GET' });
+  if (!r.ok) throw new Error(`bundle-dir get failed: HTTP ${r.status}`);
+  return await r.json();
+}
+
+/** POST /mikke/bundle-dir — relay の配信ディレクトリを変更 (開発用)。
+ *  relay 側で存在チェックし、存在しなければ 400 を返す。 */
+export async function relaySetBundleDir(dir: string): Promise<RelayBundleDir> {
+  const r = await fetch(`${getRelayBase()}/bundle-dir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dir }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    throw new Error(detail);
+  }
+  return await r.json();
+}
+
 export interface RelayIssueResult {
   scannerStatus?: string;
   severity?: string;

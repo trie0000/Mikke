@@ -25,7 +25,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.1'
+$MIKKE_RELAY_VERSION = '1.0.3'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -274,12 +274,47 @@ function Invoke-CsvParse {
         return
     }
 
+    Write-Host ("[csv-parse] {0} rows / {1} cols 解析完了" -f $parsed.rows.Count, $parsed.headers.Count) -ForegroundColor Green
+
     Send-Json -Response $response -Status 200 -Body @{
         ok = $true
         headers = $parsed.headers
         rows = $parsed.rows
         rowCount = $parsed.rows.Count
         relayVersion = $MIKKE_RELAY_VERSION
+    }
+}
+
+# ─── /mikke/bundle-dir — 配信ディレクトリの照会(GET)/変更(POST) ──────────────
+# UI(設定→開発者) から、relay が mikke.bundle.js / version.txt を読むフォルダを
+# 指定できるようにする。開発中にビルド先(dist 等)を差し替えて即反映する用途。
+function Invoke-BundleDir {
+    param([System.Net.HttpListenerContext]$Context)
+    $request = $Context.Request
+    $response = $Context.Response
+
+    if ($request.HttpMethod -eq 'POST') {
+        $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+        $bodyText = $reader.ReadToEnd(); $reader.Close()
+        $payload = $null
+        try { if ($bodyText) { $payload = $bodyText | ConvertFrom-Json } }
+        catch { Send-Error $response 400 'bad_json' $_.Exception.Message; return }
+        $dir = if ($payload) { [string]$payload.dir } else { '' }
+        $dir = $dir.Trim()
+        if (-not $dir) { Send-Error $response 400 'no_dir' 'dir を指定してください'; return }
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+            Send-Error $response 400 'not_found' "ディレクトリが存在しません: $dir"
+            return
+        }
+        $script:BundleDir = (Resolve-Path -LiteralPath $dir).Path
+        Write-Host "[bundle-dir] -> $script:BundleDir" -ForegroundColor Green
+    }
+
+    $bundlePath = Join-Path $script:BundleDir 'mikke.bundle.js'
+    Send-Json -Response $response -Status 200 -Body @{
+        ok = $true
+        dir = $script:BundleDir
+        bundleExists = (Test-Path -LiteralPath $bundlePath -PathType Leaf)
     }
 }
 
@@ -404,6 +439,10 @@ while ($listener.IsListening) {
     $res = $context.Response
     $path = $req.Url.AbsolutePath
 
+    # リクエストログ (健全性確認・診断用)。これが無いと「取り込んでも relay の
+    # コンソールに何も出ない」= 届いてるのか判別できず原因切り分けができない。
+    Write-Host ("[{0}] {1} {2}  (origin: {3})" -f (Get-Date -Format 'HH:mm:ss'), $req.HttpMethod, $path, $req.Headers['Origin']) -ForegroundColor DarkGray
+
     try {
         if ($req.HttpMethod -eq 'OPTIONS') {
             Add-CorsHeaders -Response $res; $res.StatusCode = 204; $res.OutputStream.Close(); continue
@@ -413,6 +452,7 @@ while ($listener.IsListening) {
             '^/mikke/relay/version$'       { Send-Json -Response $res -Body @{ version = $MIKKE_RELAY_VERSION; files = $MIKKE_RELAY_MANAGED_FILES }; break }
             '^/mikke/relay/self-update$'   { Invoke-RelaySelfUpdate -Context $context; break }
             '^/mikke/csv-parse$'           { Invoke-CsvParse -Context $context; break }
+            '^/mikke/bundle-dir$'          { Invoke-BundleDir -Context $context; break }
             '^/mikke/issue$'               { Invoke-IssueFetch -Context $context; break }
             '^/mikke/mikke\.bundle\.js$'   { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'mikke.bundle.js') -ContentType 'application/javascript; charset=utf-8'; break }
             '^/mikke/version\.txt$'        { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'version.txt') -ContentType 'text/plain; charset=utf-8'; break }
