@@ -76,10 +76,21 @@ export function currentBuildId(): string {
   try { return __MIKKE_BUILD_ID__; } catch { return ''; }
 }
 
-/** 最新版が出ているか確認。出ていれば最新 build id を、無ければ null。 */
+/** build id から安定識別子 (version-sha) を取り出す。末尾の dirty マーカー `+` と
+ *  `(buildTime)` は除く。これらは同一コミットでもビルド毎に変わるため、比較に
+ *  含めると「同じ版なのに毎回更新あり」と誤検知してループする原因になる。
+ *  例: "0.0.1-5847d15+ (2026-06-03T04:57:23Z)" → "0.0.1-5847d15" */
+export function stableBuildId(id: string): string {
+  if (!id) return '';
+  const beforeTime = id.split(' (')[0] ?? id;   // buildTime を落とす
+  return beforeTime.replace(/\+$/, '').trim();   // dirty マーカーを落とす
+}
+
+/** 最新版が出ているか確認。出ていれば最新 build id を、無ければ null。
+ *  比較は安定識別子 (version-sha) で行う (buildTime/dirty の揺れを無視)。 */
 export async function checkBundleUpdate(): Promise<string | null> {
   const latest = await fetchLatestBuildId();
   const cur = currentBuildId();
-  if (latest && cur && latest !== cur) return latest;
+  if (latest && cur && stableBuildId(latest) !== stableBuildId(cur)) return latest;
   return null;
 }

@@ -9,7 +9,7 @@ import { renderImportView } from './importView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { toast } from '../components/toast';
-import { checkBundleUpdate } from '../utils/bundleVersion';
+import { checkBundleUpdate, stableBuildId } from '../utils/bundleVersion';
 
 export function renderShell(): HTMLElement {
   const root = el('div', { id: 'mikke-root', class: 'mikke-root', 'data-theme': 'light' });
@@ -44,6 +44,17 @@ export function renderShell(): HTMLElement {
 
 let bundlePollTimer: number | null = null;
 
+// 更新を試みた版 (安定 id) を記録するキー。再読込しても build id が変わらない
+// = 自己更新できない配布形態 (install.html 埋込版 / 単体 HTML) で、同じ版を
+// 延々と「更新あり」と通知し続けるループを防ぐ。
+const BUNDLE_ACK_KEY = 'mikke.bundle.ackVersion';
+function getAckVersion(): string {
+  try { return localStorage.getItem(BUNDLE_ACK_KEY) || ''; } catch { return ''; }
+}
+function setAckVersion(stable: string): void {
+  try { localStorage.setItem(BUNDLE_ACK_KEY, stable); } catch { /* noop */ }
+}
+
 /** 起動後に version.txt を定期チェックし、更新があれば右上アイコン強調＋トースト。 */
 function startBundleUpdatePolling(root: HTMLElement): void {
   if (bundlePollTimer != null) { window.clearInterval(bundlePollTimer); bundlePollTimer = null; }
@@ -54,28 +65,35 @@ function startBundleUpdatePolling(root: HTMLElement): void {
       return;
     }
     const latest = await checkBundleUpdate();
-    if (latest && !notified) {
-      notified = true;
-      setState({ bundleUpdateAvailable: latest }); // 右上アイコンが強調される
-      toast(root, '新しいバージョンがあります。右上の更新アイコンをクリックすると最新版に更新されます。', 'warn', 0);
-    }
+    if (!latest || notified) return;
+    // 既に更新を試みた版なら再通知しない (リロードで変わらない = 埋込版等)。
+    // より新しい版が出れば ack と異なるので改めて通知される。
+    if (stableBuildId(latest) === getAckVersion()) return;
+    notified = true;
+    setState({ bundleUpdateAvailable: latest }); // 右上アイコンが強調される
+    toast(root, '新しいバージョンがあります。右上の更新アイコンをクリックすると最新版に更新されます。', 'warn', 0);
   };
   // 起動 5 秒後に初回、以降 60 秒ごと (キャッシュ温存と検知性のバランス)。
   window.setTimeout(() => { void check(); }, 5000);
   bundlePollTimer = window.setInterval(() => { void check(); }, 60_000);
 }
 
-/** 更新アイコンクリック時: 更新があればリロード、無ければ手動チェック。 */
+/** 更新アイコンクリック時: 更新があれば再読込、無ければ手動チェック。
+ *  ※ ブックマークレットは再読込でホストページが消える (オーバーレイも消える)。
+ *    ローダ版は再読込後にブックマークを再クリックすると最新 bundle を取得する。 */
 async function onSync(root: HTMLElement): Promise<void> {
-  if (getState().bundleUpdateAvailable) {
-    toast(root, '最新版に更新しています…', 'ok');
-    setTimeout(() => location.reload(), 400); // ローダが最新 bundle を再取得
+  const latest = getState().bundleUpdateAvailable;
+  if (latest) {
+    // この版は「更新を試みた」と記録 → 再読込後も同じ版なら再通知しない。
+    setAckVersion(stableBuildId(latest));
+    toast(root, 'ページを再読込します。Mikke が消えたらブックマークの「Mikke」を再クリックして最新版を読み込んでください。', 'ok', 5000);
+    setTimeout(() => location.reload(), 1200);
     return;
   }
   toast(root, '更新を確認中…', 'default');
-  const latest = await checkBundleUpdate();
-  if (latest) {
-    setState({ bundleUpdateAvailable: latest });
+  const found = await checkBundleUpdate();
+  if (found) {
+    setState({ bundleUpdateAvailable: found });
     toast(root, '新しいバージョンが見つかりました。もう一度クリックで更新します。', 'warn', 0);
   } else {
     toast(root, '最新版です。', 'ok');
