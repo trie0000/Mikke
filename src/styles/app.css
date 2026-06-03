@@ -343,12 +343,22 @@
 #mikke-root .mikke-cond-row { display: flex; gap: var(--s-2); align-items: center; margin-bottom: var(--s-3); }
 /* F7 条件のドラッグ並べ替え */
 #mikke-root .mikke-cond-grip {
-  cursor: grab; color: var(--ink-4); padding: 0 var(--s-1); user-select: none;
-  font-size: var(--fs-md); line-height: 1; align-self: center;
+  cursor: grab; color: var(--ink-3); user-select: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  align-self: stretch; min-width: 26px; padding: 0 var(--s-2);
+  font-size: var(--fs-lg); line-height: 1; border-radius: var(--r-2);
+  border: 1px solid var(--line); background: var(--paper-2);
 }
+#mikke-root .mikke-cond-grip:hover { background: var(--paper-2-strong); color: var(--ink); }
 #mikke-root .mikke-cond-grip:active { cursor: grabbing; }
-#mikke-root .mikke-cond-drop { height: 4px; border-radius: 999px; margin: 1px 0; }
+/* ドロップ位置 (挿入点)。ドラッグ中は全候補を破線トラックで可視化し、
+   ホバー中の位置をアクセント色のバーで明示する。 */
+#mikke-root .mikke-cond-drop { height: 4px; border-radius: 999px; margin: 2px 0; }
 #mikke-root .mikke-cond-tree.is-dragging .mikke-cond-drop {
-  height: 12px; background: var(--paper-2-strong); outline: 1px dashed var(--line-strong); outline-offset: -1px;
+  height: 14px; margin: var(--s-2) 0; border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2); background: var(--paper-2);
 }
-#mikke-root .mikke-cond-drop.is-over { height: 14px; background: var(--accent); outline: none; }
+#mikke-root .mikke-cond-tree.is-dragging .mikke-cond-drop.is-over {
+  background: var(--accent); border: 1px solid var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
