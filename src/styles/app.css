@@ -341,3 +341,14 @@
 #mikke-root .mikke-settings-nav { width: 200px; border-right: 1px solid var(--line); padding: var(--s-4) 0; }
 #mikke-root .mikke-settings-detail { flex: 1; padding: var(--gutter); overflow: auto; }
 #mikke-root .mikke-cond-row { display: flex; gap: var(--s-2); align-items: center; margin-bottom: var(--s-3); }
+/* F7 条件のドラッグ並べ替え */
+#mikke-root .mikke-cond-grip {
+  cursor: grab; color: var(--ink-4); padding: 0 var(--s-1); user-select: none;
+  font-size: var(--fs-md); line-height: 1; align-self: center;
+}
+#mikke-root .mikke-cond-grip:active { cursor: grabbing; }
+#mikke-root .mikke-cond-drop { height: 4px; border-radius: 999px; margin: 1px 0; }
+#mikke-root .mikke-cond-tree.is-dragging .mikke-cond-drop {
+  height: 12px; background: var(--paper-2-strong); outline: 1px dashed var(--line-strong); outline-offset: -1px;
+}
+#mikke-root .mikke-cond-drop.is-over { height: 14px; background: var(--accent); outline: none; }

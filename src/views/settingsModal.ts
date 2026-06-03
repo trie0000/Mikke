@@ -298,11 +298,11 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
 
   const body = el('div', {}, [
     panelHead('管理対象条件',
-      'CSV 列に対する条件で管理対象を定義します。AND/OR はグループでネストでき、数値は以上/以下、日付は期間で指定できます（F6 でテンプレ読込すると型が反映されます）。条件変更は次回取込から適用されます。'),
+      'CSV 列に対する条件で管理対象を定義します。AND/OR はグループでネストでき、数値は以上/以下、日付は期間で指定できます（F6 でテンプレ読込すると型が反映されます）。左の ⠿ をドラッグすると条件・グループを並べ替え／別グループやグループ外へ移動できます。条件変更は次回取込から適用されます。'),
   ]);
   body.appendChild(el('datalist', { id: dlId }, headers.map((h) => el('option', { value: h }))));
 
-  const tree = el('div');
+  const tree = el('div', { class: 'mikke-cond-tree' });
   body.appendChild(tree);
   const preview = el('div', { style: 'margin-top:var(--s-4);font-size:var(--fs-sm);color:var(--ink-3)' });
   body.appendChild(preview);
@@ -329,6 +329,30 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       : `${count} 条件${invalid ? ` — ⚠ ${invalid} 件未入力` : ''}`;
   }
 
+  type CondNode = ConditionRule | ConditionGroup;
+  // ドラッグ中のノード (グリップ dragstart 〜 dragend / drop の間だけ有効)。
+  let dragSrc: { group: ConditionGroup; node: CondNode } | null = null;
+
+  // group が node 自身またはその子孫を含むか (グループを自分の中へ落とす循環を防ぐ)。
+  function containsNode(group: ConditionGroup, node: CondNode): boolean {
+    if (group === node) return true;
+    for (const r of group.rules) {
+      if (r === node) return true;
+      if (isGroupNode(r) && containsNode(r, node)) return true;
+    }
+    return false;
+  }
+  function moveNode(node: CondNode, srcGroup: ConditionGroup, dstGroup: ConditionGroup, dstIndex: number): void {
+    const si = srcGroup.rules.indexOf(node);
+    if (si < 0) return;
+    srcGroup.rules.splice(si, 1);
+    let di = dstIndex;
+    if (srcGroup === dstGroup && si < dstIndex) di -= 1;   // 自分を抜いた分の補正
+    if (di < 0) di = 0;
+    if (di > dstGroup.rules.length) di = dstGroup.rules.length;
+    dstGroup.rules.splice(di, 0, node);
+  }
+
   function paint(): void { clear(tree); tree.appendChild(renderGroup(rootGroup, null, -1)); updatePreview(); }
 
   function smallBtn(label: string, onclick: () => void): HTMLElement {
@@ -336,7 +360,47 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       style: 'height:28px;padding:0 var(--s-4);font-size:var(--fs-sm)', onclick }, [label]);
   }
 
-  function renderRule(parent: ConditionGroup, idx: number, rule: ConditionRule): HTMLElement {
+  // 挿入位置のドロップゾーン (group の index 位置へ落とす)。
+  function dropZone(group: ConditionGroup, index: number): HTMLElement {
+    const dz = el('div', { class: 'mikke-cond-drop' });
+    dz.addEventListener('dragover', (e) => { if (dragSrc) { e.preventDefault(); dz.classList.add('is-over'); } });
+    dz.addEventListener('dragleave', () => dz.classList.remove('is-over'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault(); dz.classList.remove('is-over');
+      if (!dragSrc) return;
+      const { node, group: srcGroup } = dragSrc;
+      dragSrc = null;
+      // グループを自分自身/子孫の中へは落とせない。
+      if (isGroupNode(node) && containsNode(node, group)) return;
+      moveNode(node, srcGroup, group, index);
+      paint();
+    });
+    return dz;
+  }
+
+  // ドラッグ用グリップ (このハンドルだけ draggable。入力欄の選択を邪魔しない)。
+  function grip(group: ConditionGroup, node: CondNode): HTMLElement {
+    const g = el('span', { class: 'mikke-cond-grip', draggable: 'true', title: 'ドラッグで移動', 'aria-label': '並べ替え' }, ['⠿']);
+    g.addEventListener('dragstart', (e) => {
+      const dt = (e as DragEvent).dataTransfer;
+      dragSrc = { group, node };
+      if (dt) {
+        dt.effectAllowed = 'move';
+        dt.setData('text/plain', 'mikke-cond');
+        const row = (e.target as HTMLElement).closest('.mikke-cond-row, .mikke-cond-group') as HTMLElement | null;
+        if (row && dt.setDragImage) dt.setDragImage(row, 12, 12);
+      }
+      tree.classList.add('is-dragging');
+    });
+    g.addEventListener('dragend', () => {
+      dragSrc = null;
+      tree.classList.remove('is-dragging');
+      tree.querySelectorAll('.mikke-cond-drop.is-over').forEach((d) => d.classList.remove('is-over'));
+    });
+    return g;
+  }
+
+  function renderRule(parent: ConditionGroup, rule: ConditionRule): HTMLElement {
     const t = fieldType(rule.field);
     const ops = opsForType(t);
     if (!ops.includes(rule.op)) rule.op = 'equals';   // 型に合わない演算子はリセット
@@ -354,7 +418,7 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       placeholder: '値', value: rule.value,
       oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } });
 
-    const cells: (Node | string)[] = [fieldInput, opSel, valInput];
+    const cells: (Node | string)[] = [grip(parent, rule), fieldInput, opSel, valInput];
     if (opNeedsValue2(rule.op)) {
       cells.push(el('span', { style: 'color:var(--ink-3)' }, ['〜']));
       cells.push(el('input', { class: 'mikke-input', type: inputType, style: 'border:1px solid var(--line);min-width:110px',
@@ -362,31 +426,34 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
         oninput: (e: Event) => { rule.value2 = (e.target as HTMLInputElement).value; updatePreview(); } }));
     }
     cells.push(el('button', { class: 'mikke-iconbtn', 'aria-label': '削除', html: '✕',
-      onclick: () => { parent.rules.splice(idx, 1); paint(); } }));
-    return el('div', { class: 'mikke-cond-row' }, cells);
+      onclick: () => { const i = parent.rules.indexOf(rule); if (i >= 0) parent.rules.splice(i, 1); paint(); } }));
+    return el('div', { class: 'mikke-cond-row' }, cells as (Node | string)[]);
   }
 
-  function renderGroup(group: ConditionGroup, parent: ConditionGroup | null, idx: number): HTMLElement {
+  function renderGroup(group: ConditionGroup, parent: ConditionGroup | null, _idx: number): HTMLElement {
     const combSel = el('select', { class: 'mikke-select', style: 'border:1px solid var(--line-strong)',
       onchange: (e: Event) => { group.combinator = (e.target as HTMLSelectElement).value as 'AND' | 'OR'; updatePreview(); } }, [
       el('option', { value: 'AND', ...(group.combinator === 'AND' ? { selected: 'selected' } : {}) }, ['すべて満たす (AND)']),
       el('option', { value: 'OR', ...(group.combinator === 'OR' ? { selected: 'selected' } : {}) }, ['いずれか満たす (OR)']),
     ]);
     const header = el('div', { style: 'display:flex;gap:var(--s-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s-3)' }, [
+      ...(parent ? [grip(parent, group)] : []),
       combSel,
       smallBtn('＋条件', () => { group.rules.push({ field: '', op: 'equals', value: '' }); paint(); }),
       smallBtn('＋グループ', () => { group.rules.push({ combinator: 'AND', rules: [] }); paint(); }),
       ...(parent ? [el('button', { class: 'mikke-iconbtn', 'aria-label': 'グループ削除', html: '✕',
-        onclick: () => { parent.rules.splice(idx, 1); paint(); } })] : []),
+        onclick: () => { const i = parent.rules.indexOf(group); if (i >= 0) parent.rules.splice(i, 1); paint(); } })] : []),
     ]);
     const childrenBox = el('div');
+    childrenBox.appendChild(dropZone(group, 0));
     group.rules.forEach((r, i) => {
-      childrenBox.appendChild(isGroupNode(r) ? renderGroup(r, group, i) : renderRule(group, i, r));
+      childrenBox.appendChild(isGroupNode(r) ? renderGroup(r, group, i) : renderRule(group, r));
+      childrenBox.appendChild(dropZone(group, i + 1));
     });
     const nestStyle = parent
       ? 'border-left:2px solid var(--accent-soft);padding:var(--s-3) 0 var(--s-3) var(--s-4);margin:var(--s-2) 0'
       : '';
-    return el('div', { style: nestStyle }, [header, childrenBox]);
+    return el('div', { class: 'mikke-cond-group', style: nestStyle }, [header, childrenBox]);
   }
 
   paint();
