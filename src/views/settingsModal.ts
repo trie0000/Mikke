@@ -383,30 +383,44 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
     return dz;
   }
 
-  // ドラッグ用グリップ (このハンドルだけ draggable。入力欄の選択を邪魔しない)。
-  function grip(group: ConditionGroup, node: CondNode): HTMLElement {
-    const g = el('span', { class: 'mikke-cond-grip', draggable: 'true', title: 'ドラッグで移動', 'aria-label': '並べ替え' }, ['⠿']);
-    g.addEventListener('dragstart', (e) => {
+  // ⠿ は「掴める位置」の目印。実際の draggable は行/ヘッダ全体に付ける (下記 attachDrag)。
+  function gripIcon(): HTMLElement {
+    return el('span', { class: 'mikke-cond-grip', 'aria-hidden': 'true', title: 'ドラッグで移動' }, ['⠿']);
+  }
+
+  // 行 / グループヘッダ「全体」をドラッグ可能にする。入力欄 (input/select/textarea/
+  // button) の上で mousedown した時だけ draggable を一時 false にして、編集操作
+  // (フォーカス・テキスト選択・クリック) を邪魔しない。これで ⠿ だけでなく行の
+  // 余白や ⠿ を掴めば、どの条件・どのグループでも確実にドラッグできる。
+  function clearDragState(): void {
+    dragSrc = null;
+    tree.classList.remove('is-dragging');
+    tree.querySelectorAll('.mikke-cond-drop.is-over').forEach((d) => d.classList.remove('is-over'));
+    tree.querySelectorAll('.mikke-cond-group.is-drag-src').forEach((d) => d.classList.remove('is-drag-src'));
+  }
+  function attachDrag(elm: HTMLElement, group: ConditionGroup, node: CondNode): void {
+    elm.setAttribute('draggable', 'true');
+    elm.addEventListener('mousedown', (e) => {
+      const t = e.target as HTMLElement;
+      elm.draggable = !t.closest('input, select, textarea, button, a, [contenteditable]');
+    });
+    elm.addEventListener('dragstart', (e) => {
+      if (!elm.draggable) return;
+      e.stopPropagation();   // 親 (グループ) へバブルさせない (内側の行/グループを優先)
       const dt = (e as DragEvent).dataTransfer;
       dragSrc = { group, node };
-      const box = (e.target as HTMLElement).closest('.mikke-cond-row, .mikke-cond-group') as HTMLElement | null;
       if (dt) {
         dt.effectAllowed = 'move';
         dt.setData('text/plain', 'mikke-cond');
-        if (box && dt.setDragImage) dt.setDragImage(box, 12, 12);
+        if (dt.setDragImage) dt.setDragImage(elm, 12, 12);
       }
       tree.classList.add('is-dragging');
-      // グループをドラッグ中は、その内部のドロップゾーンを隠す (自分自身の中へは
-      // 落とせない＝無効ゾーンが領域を占めて外側に落としづらいのを防ぐ)。
-      if (isGroupNode(node) && box) box.classList.add('is-drag-src');
+      if (isGroupNode(node)) {
+        const gx = elm.closest('.mikke-cond-group');
+        if (gx) gx.classList.add('is-drag-src');
+      }
     });
-    g.addEventListener('dragend', () => {
-      dragSrc = null;
-      tree.classList.remove('is-dragging');
-      tree.querySelectorAll('.mikke-cond-drop.is-over').forEach((d) => d.classList.remove('is-over'));
-      tree.querySelectorAll('.mikke-cond-group.is-drag-src').forEach((d) => d.classList.remove('is-drag-src'));
-    });
-    return g;
+    elm.addEventListener('dragend', () => clearDragState());
   }
 
   function renderRule(parent: ConditionGroup, rule: ConditionRule): HTMLElement {
@@ -427,7 +441,7 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       placeholder: '値', value: rule.value,
       oninput: (e: Event) => { rule.value = (e.target as HTMLInputElement).value; updatePreview(); } });
 
-    const cells: (Node | string)[] = [grip(parent, rule), fieldInput, opSel, valInput];
+    const cells: (Node | string)[] = [gripIcon(), fieldInput, opSel, valInput];
     if (opNeedsValue2(rule.op)) {
       cells.push(el('span', { style: 'color:var(--ink-3)' }, ['〜']));
       cells.push(el('input', { class: 'mikke-input', type: inputType, style: 'border:1px solid var(--line);min-width:110px',
@@ -436,7 +450,9 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
     }
     cells.push(el('button', { class: 'mikke-iconbtn', 'aria-label': '削除', html: '✕',
       onclick: () => { const i = parent.rules.indexOf(rule); if (i >= 0) parent.rules.splice(i, 1); paint(); } }));
-    return el('div', { class: 'mikke-cond-row' }, cells as (Node | string)[]);
+    const row = el('div', { class: 'mikke-cond-row' }, cells as (Node | string)[]);
+    attachDrag(row, parent, rule);   // 行全体をドラッグ可能 (入力欄の上では抑止)
+    return row;
   }
 
   function renderGroup(group: ConditionGroup, parent: ConditionGroup | null, _idx: number): HTMLElement {
@@ -446,13 +462,14 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       el('option', { value: 'OR', ...(group.combinator === 'OR' ? { selected: 'selected' } : {}) }, ['いずれか満たす (OR)']),
     ]);
     const header = el('div', { style: 'display:flex;gap:var(--s-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s-3)' }, [
-      ...(parent ? [grip(parent, group)] : []),
+      ...(parent ? [gripIcon()] : []),
       combSel,
       smallBtn('＋条件', () => { group.rules.push({ field: '', op: 'equals', value: '' }); paint(); }),
       smallBtn('＋グループ', () => { group.rules.push({ combinator: 'AND', rules: [] }); paint(); }),
       ...(parent ? [el('button', { class: 'mikke-iconbtn', 'aria-label': 'グループ削除', html: '✕',
         onclick: () => { const i = parent.rules.indexOf(group); if (i >= 0) parent.rules.splice(i, 1); paint(); } })] : []),
     ]);
+    if (parent) attachDrag(header, parent, group);   // グループはヘッダ全体でドラッグ可能
     const childrenBox = el('div');
     childrenBox.appendChild(dropZone(group, 0));
     group.rules.forEach((r, i) => {
