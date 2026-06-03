@@ -88,6 +88,10 @@ export interface ConditionGroup {
   rules: (ConditionRule | ConditionGroup)[];
 }
 
+/** 管理項目のデータ型 (F6 テンプレ読込で推定)。SP 動的列は Note 保存のまま、
+ *  これは表示整形・バリデーション・将来用途のためのメタdata。 */
+export type ColumnType = 'text' | 'longtext' | 'number' | 'date' | 'datetime' | 'boolean';
+
 /** ツール設定 (SP リスト MikkeSettings に JSON で保存)。 */
 export interface MikkeSettings {
   /** F6: 取り込む CSV 列 (チェック状態)。 */
@@ -98,6 +102,8 @@ export interface MikkeSettings {
   individualIds: string[];
   /** 直近取込 CSV のヘッダ一覧 (F6/F7 の列候補サジェストに使う)。 */
   lastCsvHeaders?: string[];
+  /** F6: 各管理項目の推定データ型 (キー = 列名、Scan_ 接頭辞なし)。 */
+  columnTypes?: Record<string, ColumnType>;
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
 }

@@ -5,12 +5,14 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { CONDITION_OPS } from '../lib/conditions';
+import { parseCsv } from '../lib/csv';
+import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
 import {
   getBundleSource, setBundleSource, getLocalBase, setLocalBase,
   currentBuildId, DEFAULT_LOCAL_BASE, type BundleSource,
 } from '../utils/bundleVersion';
 import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
-import type { ConditionRule, ConditionGroup } from '../types';
+import type { ConditionRule, ConditionGroup, ColumnType, MikkeSettings } from '../types';
 
 interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
 interface SettingItem { key: string; label: string; danger?: boolean; render: (root: HTMLElement) => Promise<SettingPanel> | SettingPanel; }
@@ -185,37 +187,99 @@ function renderThemePanel(root: HTMLElement): SettingPanel {
   };
 }
 
-// ── 共通設定: F6 管理項目の選択 ──
+// ── 共通設定: F6 管理項目の選択 (＋テンプレ読込で型推定) ──
+interface ColCand { name: string; sample: string; type: ColumnType; checked: boolean; }
+
 async function renderColumnsPanel(root: HTMLElement): Promise<SettingPanel> {
   const s = await getRepo().getSettings();
-  const headers = s.lastCsvHeaders ?? [];
-  const checked = new Set(s.managedColumns.map((c) => c.replace(/^Scan_/, '')));
-  const candidates = headers.length ? headers : Array.from(checked);
+  const checkedSet = new Set(s.managedColumns.map((c) => c.replace(/^Scan_/, '')));
+  const typeMap = s.columnTypes ?? {};
+  const headers = (s.lastCsvHeaders && s.lastCsvHeaders.length) ? s.lastCsvHeaders : Array.from(checkedSet);
+  let cands: ColCand[] = headers.map((h) => ({
+    name: h, sample: '', type: typeMap[h] ?? 'text', checked: checkedSet.has(h),
+  }));
+
   const body = el('div', {}, [
-    panelHead('管理項目の選択', '一覧・詳細に表示する検査ツール CSV 列をチェックします。外した列のデータは保持され、再チェックで復活します。'),
+    panelHead('管理項目の選択',
+      '一覧・詳細に表示する検査ツール列をチェックします。テンプレート CSV（ヘッダ＋サンプル1行）を読み込むと、列とデータ型を自動推定して項目を設定できます。外した列のデータは保持され、再チェックで復活します。'),
   ]);
-  if (!candidates.length) {
-    body.appendChild(el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
-      'まだ CSV を取り込んでいないため列候補がありません。先に CSV を一度取り込んでください。',
-    ]));
-    return { body };
+
+  // テンプレート読込
+  const fileInput = el('input', {
+    type: 'file', accept: '.csv,text/csv', class: 'mikke-dropzone-input',
+    onchange: (e: Event) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) void loadTemplate(f); },
+  }) as HTMLInputElement;
+  body.append(el('div', { style: 'margin-bottom:var(--s-4)' }, [
+    el('button', { class: 'mikke-btn mikke-btn--secondary', type: 'button', onclick: () => fileInput.click() },
+      ['テンプレートCSVを読み込む（ヘッダ＋サンプル1行）']),
+    fileInput,
+    el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2);line-height:1.6' }, [
+      '1 行目=列名、2 行目=各列のサンプル値。サンプル値から型（テキスト/数値/日付/日時/真偽/長文）を推定します。型は推定結果を編集できます。',
+    ]),
+  ]));
+
+  const tableWrap = el('div');
+  body.append(tableWrap);
+  paintTable();
+
+  async function loadTemplate(file: File): Promise<void> {
+    try {
+      const parsed = parseCsv(await file.text());
+      if (!parsed.headers.length) { toast(root, 'テンプレートにヘッダ（1行目）がありません。', 'warn'); return; }
+      cands = inferTemplate(parsed.headers, parsed.rows[0]).map((c) => ({
+        name: c.name, sample: c.sample, type: c.type, checked: true,
+      }));
+      paintTable();
+      toast(root, `テンプレートから ${cands.length} 列を読み込みました（全て管理対象に設定）。型を確認して保存してください。`, 'ok', 5000);
+    } catch (e) {
+      toast(root, `テンプレートの読込に失敗: ${(e as Error).message}`, 'error');
+    }
   }
-  const next = new Set(s.managedColumns);
-  const list = el('div', { style: 'columns:2;max-width:560px' });
-  for (const col of candidates) {
-    const scanName = `Scan_${col}`;
-    list.appendChild(el('label', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;break-inside:avoid' }, [
-      el('input', { type: 'checkbox', ...(checked.has(col) ? { checked: 'checked' } : {}),
-        onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? next.add(scanName) : next.delete(scanName); } }),
-      col,
+
+  function paintTable(): void {
+    clear(tableWrap);
+    if (!cands.length) {
+      tableWrap.appendChild(el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
+        'まだ列候補がありません。テンプレート CSV を読み込むか、先に実データ CSV を一度取り込んでください。',
+      ]));
+      return;
+    }
+    const thead = el('thead', {}, [el('tr', {}, [
+      el('th', { style: 'width:48px' }, ['管理']),
+      el('th', {}, ['列名']),
+      el('th', {}, ['サンプル']),
+      el('th', { style: 'width:128px' }, ['データ型']),
+    ])]);
+    const tbody = el('tbody', {}, cands.map((c) => el('tr', {}, [
+      el('td', { style: 'text-align:center' }, [
+        el('input', { type: 'checkbox', ...(c.checked ? { checked: 'checked' } : {}),
+          onchange: (e: Event) => { c.checked = (e.target as HTMLInputElement).checked; } }),
+      ]),
+      el('td', {}, [c.name]),
+      el('td', { style: 'color:var(--ink-3);font-family:var(--font-mono);font-size:var(--fs-sm);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, [c.sample || '—']),
+      el('td', {}, [
+        el('select', { class: 'mikke-select', style: 'border:1px solid var(--line)',
+          onchange: (e: Event) => { c.type = (e.target as HTMLSelectElement).value as ColumnType; } },
+          COLUMN_TYPES.map((t) => el('option', { value: t.value, ...(t.value === c.type ? { selected: 'selected' } : {}) }, [t.label]))),
+      ]),
+    ])));
+    tableWrap.appendChild(el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:420px;max-width:640px' }, [
+      el('table', { class: 'mikke-table' }, [thead, tbody]),
     ]));
   }
-  body.appendChild(list);
+
   return {
     body,
     save: async () => {
-      await getRepo().saveSettings({ ...s, managedColumns: Array.from(next) });
-      toast(root, '管理項目を保存しました', 'ok');
+      const managed = cands.filter((c) => c.checked).map((c) => `Scan_${c.name}`);
+      const columnTypes: Record<string, ColumnType> = { ...(s.columnTypes ?? {}) };
+      for (const c of cands) columnTypes[c.name] = c.type;
+      const next: MikkeSettings = {
+        ...s, managedColumns: managed, columnTypes,
+        lastCsvHeaders: cands.length ? cands.map((c) => c.name) : s.lastCsvHeaders,
+      };
+      await getRepo().saveSettings(next);
+      toast(root, `管理項目 ${managed.length} 件を保存しました`, 'ok');
     },
   };
 }
