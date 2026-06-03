@@ -366,7 +366,12 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
     dz.addEventListener('dragover', (e) => { if (dragSrc) { e.preventDefault(); dz.classList.add('is-over'); } });
     dz.addEventListener('dragleave', () => dz.classList.remove('is-over'));
     dz.addEventListener('drop', (e) => {
-      e.preventDefault(); dz.classList.remove('is-over');
+      e.preventDefault();
+      // ドロップ後は paint() で元のグリップが DOM から外れ dragend が発火しない
+      // ことがあるため、ここでドラッグ状態を明示的にクリアする (is-dragging 残留防止)。
+      tree.classList.remove('is-dragging');
+      tree.querySelectorAll('.mikke-cond-drop.is-over').forEach((d) => d.classList.remove('is-over'));
+      tree.querySelectorAll('.mikke-cond-group.is-drag-src').forEach((d) => d.classList.remove('is-drag-src'));
       if (!dragSrc) return;
       const { node, group: srcGroup } = dragSrc;
       dragSrc = null;

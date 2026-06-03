@@ -342,14 +342,16 @@
 #mikke-root .mikke-settings-detail { flex: 1; padding: var(--gutter); overflow: auto; }
 #mikke-root .mikke-cond-row { display: flex; gap: var(--s-2); align-items: center; margin-bottom: var(--s-3); }
 /* F7 条件のドラッグ並べ替え */
-/* ハンドルは控えめな ⠿ (枠/背景なし)。掴みやすさのため当たり判定だけ行高に拡げる。 */
+/* ハンドルは控えめな ⠿ (枠/背景なし)。掴みやすさのため当たり判定を行高×幅広に
+   取り、hover で薄く背景を出して「掴める場所」を明示する (常時の枠は付けない)。 */
 #mikke-root .mikke-cond-grip {
-  cursor: grab; color: var(--ink-4); user-select: none;
+  cursor: grab; color: var(--ink-3); user-select: none;
   display: inline-flex; align-items: center; justify-content: center;
-  align-self: stretch; padding: 0 var(--s-2);
-  font-size: var(--fs-md); line-height: 1;
+  align-self: stretch; min-width: 26px; padding: 0 var(--s-2);
+  font-size: var(--fs-md); line-height: 1; border-radius: var(--r-2);
+  flex-shrink: 0;
 }
-#mikke-root .mikke-cond-grip:hover { color: var(--ink-2); }
+#mikke-root .mikke-cond-grip:hover { background: var(--paper-2-strong); color: var(--ink); }
 #mikke-root .mikke-cond-grip:active { cursor: grabbing; }
 /* ドロップ位置 (挿入点)。ドラッグ中は全候補を破線トラックで可視化し、
    ホバー中の位置をアクセント色のバーで明示する。 */
