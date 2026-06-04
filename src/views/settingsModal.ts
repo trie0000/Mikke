@@ -501,7 +501,8 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
         onclick: () => { const i = parent.rules.indexOf(group); if (i >= 0) parent.rules.splice(i, 1); removeIfEmpty(parent); paint(); } })] : []),
     ]);
     if (parent) attachPointerDrag(header, parent, group);   // グループはヘッダ全体でドラッグ可能
-    const childrenBox = el('div');
+    // 各条件・子グループは、このグループの AND/OR ヘッダより一段インデントを下げる。
+    const childrenBox = el('div', { style: 'padding-left:var(--s-6)' });
     childrenBox.appendChild(dropZone(group, 0));
     group.rules.forEach((r, i) => {
       childrenBox.appendChild(isGroupNode(r) ? renderGroup(r, group, i) : renderRule(group, r));
