@@ -351,6 +351,26 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
     dstGroup.rules.splice(di, 0, node);
   }
 
+  // target を子に持つグループを探す。
+  function findParent(group: ConditionGroup, target: CondNode): ConditionGroup | null {
+    for (const r of group.rules) {
+      if (r === target) return group;
+      if (isGroupNode(r)) { const f = findParent(r, target); if (f) return f; }
+    }
+    return null;
+  }
+  // 中身が空になったグループを親から削除 (root は残す)。親も空になれば連鎖削除。
+  // ※ 操作 (移動 / 削除) で空になったグループだけを対象にする。新規追加直後の
+  //   空グループは別経路 (paint) なので消えない。
+  function removeIfEmpty(g: ConditionGroup): void {
+    if (g === rootGroup || g.rules.length > 0) return;
+    const parent = findParent(rootGroup, g);
+    if (!parent) return;
+    const i = parent.rules.indexOf(g);
+    if (i >= 0) parent.rules.splice(i, 1);
+    removeIfEmpty(parent);
+  }
+
   function paint(): void { clear(tree); tree.appendChild(renderGroup(rootGroup, null, -1)); updatePreview(); }
 
   function smallBtn(label: string, onclick: () => void): HTMLElement {
@@ -423,6 +443,7 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
         if (active && meta) {
           if (isGroupNode(node) && containsNode(node, meta.g)) { paint(); return; }
           moveNode(node, group, meta.g, meta.i);
+          removeIfEmpty(group);   // 移動元グループが空になったら削除
           paint();
         }
       };
@@ -459,7 +480,7 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
         oninput: (e: Event) => { rule.value2 = (e.target as HTMLInputElement).value; updatePreview(); } }));
     }
     cells.push(el('button', { class: 'mikke-iconbtn', 'aria-label': '削除', html: '✕',
-      onclick: () => { const i = parent.rules.indexOf(rule); if (i >= 0) parent.rules.splice(i, 1); paint(); } }));
+      onclick: () => { const i = parent.rules.indexOf(rule); if (i >= 0) parent.rules.splice(i, 1); removeIfEmpty(parent); paint(); } }));
     const row = el('div', { class: 'mikke-cond-row' }, cells as (Node | string)[]);
     attachPointerDrag(row, parent, rule);   // 行全体をドラッグ可能 (入力欄の上では抑止)
     return row;
@@ -477,7 +498,7 @@ async function renderConditionsPanel(root: HTMLElement): Promise<SettingPanel> {
       smallBtn('＋条件', () => { group.rules.push({ field: '', op: 'equals', value: '' }); paint(); }),
       smallBtn('＋グループ', () => { group.rules.push({ combinator: 'AND', rules: [] }); paint(); }),
       ...(parent ? [el('button', { class: 'mikke-iconbtn', 'aria-label': 'グループ削除', html: '✕',
-        onclick: () => { const i = parent.rules.indexOf(group); if (i >= 0) parent.rules.splice(i, 1); paint(); } })] : []),
+        onclick: () => { const i = parent.rules.indexOf(group); if (i >= 0) parent.rules.splice(i, 1); removeIfEmpty(parent); paint(); } })] : []),
     ]);
     if (parent) attachPointerDrag(header, parent, group);   // グループはヘッダ全体でドラッグ可能
     const childrenBox = el('div');
