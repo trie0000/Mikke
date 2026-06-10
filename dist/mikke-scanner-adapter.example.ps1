@@ -47,9 +47,35 @@ function Invoke-MikkeScannerFetch {
     if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)' }
 
     # ── TODO: ここに実 API 呼び出しを実装する (以下は骨組みの例) ──────────────
+    # ★ 診断ログ規約 (SPEC §5-1): リクエスト URL を呼び出し前にログし、失敗時は
+    #   HTTP status と応答ボディ (先頭500文字) をログすること。404 等の「理由」は
+    #   応答ボディに入っていることが多い。Authorization 等の秘密はログに出さない。
+    #
     # $headers = @{ Authorization = "Bearer $apiKey" }
-    # $r = Invoke-RestMethod -Uri "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))" `
-    #         -Headers $headers -TimeoutSec 30
+    # $url = "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))"
+    # Write-Host "[adapter] GET $url" -ForegroundColor DarkGray
+    # try {
+    #     $r = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -TimeoutSec 30
+    # } catch {
+    #     # HTTP status と応答ボディを取り出してログ (原因特定の要)
+    #     $status = $null
+    #     if ($_.Exception.Response) { try { $status = [int]$_.Exception.Response.StatusCode } catch { } }
+    #     $respBody = ''
+    #     if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $respBody = $_.ErrorDetails.Message }
+    #     elseif ($_.Exception.Response) {
+    #         try {
+    #             $sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+    #             $respBody = $sr.ReadToEnd(); $sr.Close()
+    #         } catch { }
+    #     }
+    #     if ($respBody.Length -gt 500) { $respBody = $respBody.Substring(0, 500) + '…' }
+    #     Write-Host "[adapter] -> HTTP $status" -ForegroundColor Yellow
+    #     if ($respBody) { Write-Host "[adapter] response: $respBody" -ForegroundColor Yellow }
+    #
+    #     if ($status -eq 401 -or $status -eq 403) { throw "検査ツール API の認証に失敗しました (HTTP $status)" }
+    #     if ($status -eq 404) { throw "Issue が見つかりません (HTTP 404): $IssueInstanceId / API応答: $respBody" }
+    #     throw "検査ツール API の呼び出しに失敗 (HTTP $status): $($_.Exception.Message)"
+    # }
     # return @{
     #     scannerStatus = [string]$r.status
     #     severity      = [string]$r.severity

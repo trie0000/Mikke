@@ -121,7 +121,18 @@ $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
 
 - **ホットリロード**: relay は毎リクエスト dot-source するため、アダプタを保存すれば次の呼び出しから反映される（relay 再起動不要）。
 - **呼び出し頻度**: 詳細画面でユーザが 1 件ずつ手動実行する想定（低頻度・単発）。一括同期は別機能なので考慮不要。
-- **ログ**: `Write-Host` は relay のコンソールに出る。デバッグに使ってよいが、**API キー等の秘密情報は出力しないこと**。
+### 5-1. 診断ログ規約（必須）
+
+`Write-Host` の出力は relay のコンソールにそのまま出る。失敗時の原因特定のため、以下を**必ず**実装すること:
+
+1. **API 呼び出しの直前**に、リクエストの URL（メソッド付き）をログする。
+   `Write-Host "[adapter] GET $url"`（**Authorization 等の秘密はログに出さない**）
+2. **失敗時**に、HTTP ステータスコードと**応答ボディ（先頭 500 文字）**をログする。
+   404 や 400 の「理由」（ID 形式違い・エンドポイント違い等）は応答ボディに入っていることが多く、これが無いと原因を特定できない。
+   - PS5.1 での取り出し方: まず `$_.ErrorDetails.Message`、無ければ `$_.Exception.Response.GetResponseStream()` を StreamReader で読む（§6 の雛形参照）。
+3. **throw メッセージに HTTP ステータスを含める**（例: `"Issue が見つかりません (HTTP 404): <ID> / API応答: <body抜粋>"`）。このメッセージはそのまま UI のトーストに表示される。
+
+なお relay 本体も例外の型・発生箇所（アダプタの行番号）・スタックをコンソールに出すが、アダプタ内で元の例外を catch して文字列を throw し直すと HTTP 詳細は relay 側では取れない。**HTTP の詳細ログはアダプタの責務**。
 - relay 側のエンドポイント仕様（参考。アダプタ実装には直接関係しない）:
   - `POST /mikke/issue`、入力 `{"issueInstanceId": "<ID>"}`
   - 成功: `200 {"ok":true, "scannerStatus":..., "severity":..., "lastSeen":..., "scanFields":{...}}`
@@ -149,16 +160,30 @@ function Invoke-MikkeScannerFetch {
 
     # ── API 呼び出し (実際のエンドポイント/認証方式に合わせて実装) ──
     $headers = @{ Authorization = "Bearer $apiKey" }
+    $url = "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))"
+    Write-Host "[adapter] GET $url" -ForegroundColor DarkGray    # 診断ログ §5-1 (秘密は出さない)
     try {
-        $r = Invoke-RestMethod `
-            -Uri "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))" `
-            -Headers $headers -Method Get -TimeoutSec 30
+        $r = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -TimeoutSec 30
     } catch {
+        # 診断ログ §5-1: HTTP status と応答ボディ (先頭500文字) を必ず出す。
+        # 404/400 の「理由」は応答ボディに入っていることが多い。
         $status = $null
-        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
-        if ($status -eq 401 -or $status -eq 403) { throw '検査ツール API の認証に失敗しました (API キーを確認してください)' }
-        if ($status -eq 404) { throw "Issue が見つかりません: $IssueInstanceId" }
-        throw "検査ツール API に接続できません: $($_.Exception.Message)"
+        if ($_.Exception.Response) { try { $status = [int]$_.Exception.Response.StatusCode } catch { } }
+        $respBody = ''
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $respBody = $_.ErrorDetails.Message }
+        elseif ($_.Exception.Response) {
+            try {
+                $sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $respBody = $sr.ReadToEnd(); $sr.Close()
+            } catch { }
+        }
+        if ($respBody.Length -gt 500) { $respBody = $respBody.Substring(0, 500) + '…' }
+        Write-Host "[adapter] -> HTTP $status" -ForegroundColor Yellow
+        if ($respBody) { Write-Host "[adapter] response: $respBody" -ForegroundColor Yellow }
+
+        if ($status -eq 401 -or $status -eq 403) { throw "検査ツール API の認証に失敗しました (HTTP $status)" }
+        if ($status -eq 404) { throw "Issue が見つかりません (HTTP 404): $IssueInstanceId / API応答: $respBody" }
+        throw "検査ツール API の呼び出しに失敗 (HTTP $status): $($_.Exception.Message)"
     }
 
     # ── 正規化して返す (フィールド名は実際のレスポンスに合わせる) ──

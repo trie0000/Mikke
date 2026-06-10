@@ -26,7 +26,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.5'
+$MIKKE_RELAY_VERSION = '1.0.6'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -377,7 +377,25 @@ function Invoke-IssueFetch {
             scanFields = $scanFields
         }
     } catch {
+        # 原因特定のため、例外の詳細 (型 / 発生箇所 / HTTP 情報 / 応答ボディ) を出す。
+        # ※ アダプタが元の WebException を握りつぶして文字列 throw した場合、HTTP
+        #   詳細はここでは取れない (アダプタ側の診断ログ規約 = SPEC §5-1 を参照)。
         Write-Host "[issue] $iid -> ERROR: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  type : $($_.Exception.GetType().FullName)" -ForegroundColor DarkGray
+        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptName) {
+            Write-Host ("  at   : {0}:{1}" -f (Split-Path -Leaf $_.InvocationInfo.ScriptName), $_.InvocationInfo.ScriptLineNumber) -ForegroundColor DarkGray
+        }
+        if ($_.ScriptStackTrace) {
+            Write-Host "  stack: $($_.ScriptStackTrace -replace "`r?`n", ' <- ')" -ForegroundColor DarkGray
+        }
+        if ($_.Exception.Response) {
+            try { Write-Host ("  http : {0}" -f [int]$_.Exception.Response.StatusCode) -ForegroundColor DarkGray } catch { }
+        }
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            $snip = $_.ErrorDetails.Message
+            if ($snip.Length -gt 500) { $snip = $snip.Substring(0, 500) + '…' }
+            Write-Host "  body : $snip" -ForegroundColor DarkGray
+        }
         Send-Error $response 502 'adapter_error' $_.Exception.Message
     }
 }
