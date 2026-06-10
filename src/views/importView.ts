@@ -4,10 +4,34 @@ import { el, clear } from '../utils/dom';
 import { icon } from '../icons';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
-import { setState } from '../state';
+import { getState, setState } from '../state';
 import { relayHealth, relayCsvParse } from '../api/relay';
 import { parseCsv } from '../lib/csv';
 import { buildImportPlan, type ImportPlan } from '../lib/import';
+
+// ── 取込の進行状態 (モジュールスコープ) ──────────────────────────────────────
+// ビュー切替 (一覧⇄取込) でビューは作り直されるため、ローカル state だと
+// 「プレビューまで進めたのにメニューを切り替えたら消える」事故になる。
+// step / plan / 進捗をモジュールスコープに保持し、再マウント時に復元する。
+type ImportStep = 'select' | 'parsing' | 'preview' | 'committing';
+let step: ImportStep = 'select';
+let plan: ImportPlan | null = null;
+let fileName = '';
+let parsingMsg = '';
+let progress: { done: number; total: number } | null = null;
+// 非同期完了 (解析/取込) 時に「現在マウント中の」ビューを再描画するためのフック。
+// 古いインスタンスの paint を呼ぶと detached DOM を更新するだけになるため。
+let repaintCurrent: (() => void) | null = null;
+// 進捗のみの軽量更新 (committing 表示中のラベル/バー)。
+let progressNotify: (() => void) | null = null;
+
+function resetImportState(): void {
+  step = 'select';
+  plan = null;
+  fileName = '';
+  parsingMsg = '';
+  progress = null;
+}
 
 export function renderImportView(rootEl: HTMLElement): HTMLElement {
   const wrap = el('div', { class: 'mikke-main' });
@@ -17,16 +41,19 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
   const area = el('div', { style: 'padding:var(--gutter);max-width:860px' });
   wrap.appendChild(area);
 
-  let step: 'select' | 'preview' = 'select';
-  let plan: ImportPlan | null = null;
-  let fileName = '';
-
+  repaintCurrent = paint;
   paint();
 
   function paint(): void {
     clear(area);
     if (step === 'select') paintSelect();
-    else paintPreview();
+    else if (step === 'parsing') paintParsing();
+    else if (step === 'preview') paintPreview();
+    else paintCommitting();
+  }
+
+  function paintParsing(): void {
+    area.appendChild(el('div', { class: 'mikke-empty' }, [parsingMsg || '解析中…']));
   }
 
   function paintSelect(): void {
@@ -123,20 +150,21 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       const nowIso = new Date().toISOString();
       plan = buildImportPlan(rows, headers, existing, settings, nowIso);
       step = 'preview';
-      paint();
+      repaintCurrent?.();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[mikke] import: failed', e);
       toast(rootEl, `CSV の解析に失敗しました: ${(e as Error).message}`, 'error');
       step = 'select';
-      paint();
+      repaintCurrent?.();
     }
   }
 
-  /** 解析中の一時表示（押下後の無反応を防ぐ）。 */
+  /** 解析中の一時表示（押下後の無反応を防ぐ）。ビュー切替後も復元される。 */
   function showBusy(msg: string): void {
-    clear(area);
-    area.appendChild(el('div', { class: 'mikke-empty' }, [msg]));
+    step = 'parsing';
+    parsingMsg = msg;
+    repaintCurrent?.();
   }
 
   function paintPreview(): void {
@@ -183,7 +211,7 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
     area.appendChild(el('div', { style: 'margin-top:var(--s-7);display:flex;gap:var(--s-3)' }, [
       el('button', {
         class: 'mikke-btn mikke-btn--secondary',
-        onclick: () => { step = 'select'; plan = null; paint(); },
+        onclick: () => { resetImportState(); paint(); },
       }, ['戻る']),
       el('button', {
         class: 'mikke-btn mikke-btn--primary',
@@ -193,9 +221,46 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
     ]));
   }
 
+  /** 取込確定中: 「N / 合計 件」の進捗を表示。ビュー切替後も復元される。 */
+  function paintCommitting(): void {
+    const text = (): string => {
+      const d = progress?.done ?? 0;
+      const t = progress?.total ?? 0;
+      const pct = t ? Math.round((d / t) * 100) : 0;
+      return `${d} / ${t} 件を書き込み中… (${pct}%)`;
+    };
+    const pctWidth = (): string => {
+      const d = progress?.done ?? 0;
+      const t = progress?.total ?? 0;
+      return t ? `${Math.round((d / t) * 100)}%` : '0%';
+    };
+    const label = el('div', { style: 'color:var(--ink-2);font-size:var(--fs-base);margin-bottom:var(--s-4)' }, [text()]);
+    const bar = el('div', { class: 'mikke-progress-bar' });
+    bar.style.width = pctWidth();   // 動的状態 (進捗) のためここだけ style 直接更新
+    area.append(
+      el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [`ファイル: ${fileName}`]),
+      el('div', { style: 'text-align:center;padding:var(--s-10) 0' }, [
+        label,
+        el('div', { class: 'mikke-progress' }, [bar]),
+        el('div', { style: 'margin-top:var(--s-4);color:var(--ink-4);font-size:var(--fs-sm)' }, [
+          '画面を切り替えても取込は継続します。',
+        ]),
+      ]),
+    );
+    progressNotify = () => {
+      if (!label.isConnected) return;   // 別ビュー表示中は更新不要 (再表示時に復元)
+      label.textContent = text();
+      bar.style.width = pctWidth();
+    };
+  }
+
   async function commit(): Promise<void> {
     if (!plan) return;
     const repo = getRepo();
+    const myPlan = plan;
+    step = 'committing';
+    progress = { done: 0, total: myPlan.ops.filter((o) => o.kind !== 'skip').length };
+    repaintCurrent?.();
     try {
       // F6: 取込前に、設定でチェックした動的列 (Scan_*) を SP に作成しておく。
       const settings = await repo.getSettings();
@@ -203,28 +268,39 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
         await repo.ensureScanColumns(settings.managedColumns);
       }
       // F6/F7 の列候補サジェスト用に、今回の CSV ヘッダを設定に保存。
-      if (plan.headers.length) {
-        await repo.saveSettings({ ...settings, lastCsvHeaders: plan.headers }).catch(() => { /* noop */ });
+      if (myPlan.headers.length) {
+        await repo.saveSettings({ ...settings, lastCsvHeaders: myPlan.headers }).catch(() => { /* noop */ });
       }
-      const { ok, fail } = await repo.applyImportOps(plan.ops);
+      const { ok, fail } = await repo.applyImportOps(myPlan.ops, (done, total) => {
+        progress = { done, total };
+        progressNotify?.();
+      });
       // ImportLog 記録
       const user = await repo.getCurrentUser();
       await repo.writeImportLog({
         fileName,
         operator: user?.displayName ?? user?.email ?? '',
-        added: plan.summary.added,
-        updated: plan.summary.updated,
-        undetected: plan.summary.undetected,
-        skipped: plan.summary.skipped,
-        rowCount: plan.summary.rowCount,
+        added: myPlan.summary.added,
+        updated: myPlan.summary.updated,
+        undetected: myPlan.summary.undetected,
+        skipped: myPlan.summary.skipped,
+        rowCount: myPlan.summary.rowCount,
         importedAt: new Date().toISOString(),
       }).catch(() => { /* ログ失敗は取込自体を止めない */ });
       toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
+      resetImportState();
+      // 取込ビューを見ている時だけ一覧へ移動 (別ビュー閲覧中に画面を奪わない)。
+      if (getState().view === 'import') {
+        setState({ view: 'issues', selectedIssueId: null });
+      } else {
+        repaintCurrent?.();
+      }
     } catch (e) {
       toast(rootEl, `取込に失敗しました: ${(e as Error).message}`, 'error');
-      return;
+      step = 'preview';
+      progress = null;
+      repaintCurrent?.();
     }
-    setState({ view: 'issues', selectedIssueId: null });
   }
 
   function summaryChip(label: string, n: number, variant: string): HTMLElement {
