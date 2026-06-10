@@ -26,7 +26,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.4'
+$MIKKE_RELAY_VERSION = '1.0.5'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -326,22 +326,59 @@ function Invoke-BundleDir {
     }
 }
 
-# ─── /mikke/issue — 検査ツール API 中継 (雛形・スタブ) ──────────────────────
+# ─── /mikke/issue — 検査ツール API 中継 (アダプタ委譲) ──────────────────────
 # 入力: { issueInstanceId }。出力: 正規化済み Issue。
-# ※ API 仕様は社内限定のため、ここはスタブ。社内確認後に実 API 呼び出しを実装。
+#
+# ★ API 仕様は委託先環境でのみ確認できるため、実装は別ファイル
+#   mikke-scanner-adapter.ps1 に委譲する (このファイルと同じフォルダに置く)。
+#   - アダプタは self-update の管理外 (MIKKE_RELAY_MANAGED_FILES に含めない) &
+#     git 管理外。委託先環境で自由に作成・更新してよい。relay 本体は触らない。
+#   - 契約: Invoke-MikkeScannerFetch -IssueInstanceId <string> を定義し、
+#     @{ scannerStatus=<string>; severity=<string>; lastSeen=<ISO8601>;
+#        scanFields=@{ '<列名>'='<値>' } } を返す (scanFields は任意)。
+#   - 雛形: mikke-scanner-adapter.example.ps1 をコピーして実装する。
 function Invoke-IssueFetch {
     param([System.Net.HttpListenerContext]$Context)
+    $request = $Context.Request
     $response = $Context.Response
-    if (-not $script:ScannerApiBase) {
+
+    $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+    $bodyText = $reader.ReadToEnd(); $reader.Close()
+    $iid = $null
+    try { if ($bodyText) { $iid = ([string](($bodyText | ConvertFrom-Json).issueInstanceId)).Trim() } } catch { }
+    if (-not $iid) { Send-Error $response 400 'no_issue_id' 'issueInstanceId を指定してください'; return }
+
+    $adapterPath = Join-Path $PSScriptRoot 'mikke-scanner-adapter.ps1'
+    if (-not (Test-Path -LiteralPath $adapterPath)) {
         Send-Json -Response $response -Status 501 -Body @{
             ok = $false
-            error = @{ code = 'scanner_api_not_configured'; detail = 'MIKKE_SCANNER_API_BASE 未設定 (雛形)。' }
+            error = @{ code = 'adapter_not_installed'
+                       detail = 'mikke-scanner-adapter.ps1 が未配置です。mikke-scanner-adapter.example.ps1 をコピーして委託先環境で実装し、relay と同じフォルダに置いてください。' }
         }
         return
     }
-    # TODO: 実 API 呼び出し → CSV と同じスキーマに正規化して返す。
-    Send-Json -Response $response -Status 501 -Body @{
-        ok = $false; error = @{ code = 'not_implemented'; detail = 'issue 中継は実装フェーズで接続します。' }
+    try {
+        # 毎リクエスト dot-source する (開発中の差し替えを relay 再起動なしで反映)。
+        # F3 は単発 API 用途なので読み込みコストは軽微。
+        . $adapterPath
+        if (-not (Get-Command Invoke-MikkeScannerFetch -ErrorAction SilentlyContinue)) {
+            Send-Error $response 500 'adapter_invalid' 'アダプタに Invoke-MikkeScannerFetch 関数が定義されていません'
+            return
+        }
+        $result = Invoke-MikkeScannerFetch -IssueInstanceId $iid
+        Write-Host "[issue] $iid -> OK" -ForegroundColor Green
+        $scanFields = @{}
+        if ($result.scanFields) { $scanFields = $result.scanFields }
+        Send-Json -Response $response -Status 200 -Body @{
+            ok = $true
+            scannerStatus = [string]$result.scannerStatus
+            severity = [string]$result.severity
+            lastSeen = [string]$result.lastSeen
+            scanFields = $scanFields
+        }
+    } catch {
+        Write-Host "[issue] $iid -> ERROR: $($_.Exception.Message)" -ForegroundColor Red
+        Send-Error $response 502 'adapter_error' $_.Exception.Message
     }
 }
 

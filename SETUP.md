@@ -75,6 +75,20 @@ npm run build      # dist/ に配布物を生成
 > 中継サーバを起動しなくても CSV 取込は動く（ブラウザ側でパース）。ただし大容量
 > （約 2 万件 / 100MB）では中継サーバ側解析を推奨。
 
+### 検査ツール API 連携 (F3) — アダプタの実装（委託先環境）
+
+詳細画面の「最新状態を取得」は、中継サーバ経由で検査ツール API を呼ぶ。
+**API 仕様は委託先環境でのみ確認できるため、実装は別ファイル（アダプタ）に分離**している。
+
+1. `mikke-scanner-adapter.example.ps1` を **`mikke-scanner-adapter.ps1`** にコピー。
+2. ファイル内の `Invoke-MikkeScannerFetch` に実 API 呼び出しを実装（契約はファイル冒頭のコメント参照）。
+3. relay と同じフォルダに置く。**relay の再起動は不要**（毎リクエスト読み込まれる）。
+
+- アダプタ実装版は **relay 自動更新の対象外・git 管理外**。委託先環境で自由に実装・更新してよい。
+- **relay 本体（mikke-relay.ps1 / .bat）は直接編集しない**こと（自動更新で上書きされる）。
+- 接続先・API キーは `mikke-relay.env`（`MIKKE_SCANNER_API_BASE` / `MIKKE_SCANNER_API_KEY`）に置き、アダプタからは環境変数で参照する。
+- アダプタ未配置の間、「最新状態を取得」は「未配置」のエラーメッセージを返す（他機能には影響なし）。
+
 ### ⚠️ 中継サーバに関する注意
 
 - **PowerShell 5.1 で動く**（Windows 標準）。`#Requires -Version 5.1`。

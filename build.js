@@ -134,7 +134,11 @@ if (watch || serve) {
 
   // ── relay 配布物 + 自動更新 manifest ──
   const relayFiles = [
-    'mikke-relay.ps1', 'mikke-launch.ps1', 'mikke-relay.bat', 'mikke-launch.bat', 'mikke-relay.env.example',
+    'mikke-relay.ps1', 'mikke-launch.ps1', 'mikke-relay.bat', 'mikke-launch.bat',
+    'mikke-relay.env.example',
+    // 検査ツール API アダプタの雛形。実装版 (mikke-scanner-adapter.ps1) は
+    // 委託先環境で作成し、self-update 管理外・git 管理外 (固有情報を含むため)。
+    'mikke-scanner-adapter.example.ps1',
   ];
   let relayVersion = '0.0.0';
   const relayPs1Path = 'scripts/mikke-relay.ps1';
@@ -148,7 +152,9 @@ if (watch || serve) {
       if (fs.existsSync(src)) fs.copyFileSync(src, path.join('dist', f));
     }
     // relay-version.txt = self-update manifest (UI が SP の値と比較)
-    const manifest = relayFiles.filter((f) => fs.existsSync(path.join('scripts', f)) && !f.endsWith('.example'));
+    // .example.* は配布はするが self-update の管理対象 (manifest) には含めない
+    // (relay 側の許可リスト外ファイルを送ると self-update 全体が 400 になる)。
+    const manifest = relayFiles.filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'));
     fs.writeFileSync('dist/relay-version.txt',
       JSON.stringify({ version: relayVersion, buildTime, files: manifest }, null, 2) + '\n');
     console.log(`[relay] dist/relay-version.txt: v${relayVersion} (${manifest.length} files)`);

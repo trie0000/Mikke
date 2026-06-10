@@ -29,6 +29,9 @@ dist/*
 
 # relay の個人設定 (テンプレートは .example として残す)
 scripts/mikke-relay.env
+# 検査ツール API アダプタの実装版 (委託先環境で作成。API 仕様・URL を公開リポに置かない)
+scripts/mikke-scanner-adapter.ps1
+dist/mikke-scanner-adapter.ps1
 .claude/
 
 # 開発専用の指示書。pull 同期対象外 (リポジトリで配布しない / 各自ローカル管理)。

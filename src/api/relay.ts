@@ -126,14 +126,19 @@ export interface RelayIssueResult {
   scanFields?: Record<string, string>;
 }
 
-/** /mikke/issue — 検査ツール API を Issue 単位で中継 (F3・雛形)。
- *  ※ API 仕様は社内限定のため、サーバ側はスタブ。I/F のみ固定。 */
+/** /mikke/issue — 検査ツール API を Issue 単位で中継 (F3)。
+ *  実装は relay 側の mikke-scanner-adapter.ps1 (委託先環境で作成) に委譲される。
+ *  未配置 (501) / アダプタエラー (502) は detail をそのままエラーメッセージにする。 */
 export async function relayGetIssue(issueInstanceId: string): Promise<RelayIssueResult> {
   const r = await fetch(`${getRelayBase()}/issue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ issueInstanceId }),
   });
-  if (!r.ok) throw new Error(`issue fetch failed: HTTP ${r.status}`);
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    throw new Error(detail);
+  }
   return await r.json();
 }
