@@ -80,6 +80,8 @@ npm run build      # dist/ に配布物を生成
 詳細画面の「最新状態を取得」は、中継サーバ経由で検査ツール API を呼ぶ。
 **API 仕様は委託先環境でのみ確認できるため、実装は別ファイル（アダプタ）に分離**している。
 
+> **実装する人（または AI）への引き渡し物**: 仕様書 **`SCANNER-ADAPTER-SPEC.md`** ＋ 雛形 **`mikke-scanner-adapter.example.ps1`**（どちらも dist に同梱）。仕様書に契約・PS5.1 制約・テスト方法まで揃っているので、この 2 ファイルを渡せばよい。
+
 1. `mikke-scanner-adapter.example.ps1` を **`mikke-scanner-adapter.ps1`** にコピー。
 2. ファイル内の `Invoke-MikkeScannerFetch` に実 API 呼び出しを実装（契約はファイル冒頭のコメント参照）。
 3. relay と同じフォルダに置く。**relay の再起動は不要**（毎リクエスト読み込まれる）。

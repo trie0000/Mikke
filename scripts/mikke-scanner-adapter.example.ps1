@@ -2,6 +2,8 @@
 # mikke-scanner-adapter.example.ps1 — 検査ツール API アダプタの雛形
 # =============================================================================
 #
+# ★ 実装仕様の詳細は SCANNER-ADAPTER-SPEC.md を参照 (契約・制約・テスト方法)。
+#
 # 使い方 (委託先環境):
 #   1) このファイルを mikke-scanner-adapter.ps1 という名前でコピーする
 #        copy mikke-scanner-adapter.example.ps1 mikke-scanner-adapter.ps1
@@ -35,6 +37,10 @@
 
 function Invoke-MikkeScannerFetch {
     param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+
+    # HTTPS API 用: PS5.1 は既定で TLS1.2 が無効なことがあるため明示する
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
     $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')

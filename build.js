@@ -162,6 +162,11 @@ if (watch || serve) {
     console.warn('[relay] WARN: scripts/mikke-relay.ps1 が無いので relay 配布物は出力しません');
   }
 
+  // 委託先向けアダプタ実装仕様 (雛形 example.ps1 とセットで配布)
+  if (fs.existsSync('SCANNER-ADAPTER-SPEC.md')) {
+    fs.copyFileSync('SCANNER-ADAPTER-SPEC.md', 'dist/SCANNER-ADAPTER-SPEC.md');
+  }
+
   // README / SETUP
   fs.writeFileSync('dist/README.md', renderReadme(buildId, relayVersion));
   console.log('');
