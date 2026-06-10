@@ -128,6 +128,40 @@ export class SpRepository implements Repository {
         if (spec.indexed) await this.tryIndex(listPath, spec.name);
       } catch (e) { console.warn(`[mikke] ensureField ${spec.name} failed:`, e); }
     }
+    // 列を作った可能性があるので実在列キャッシュを無効化 (次の書込で再取得)。
+    this.fieldNamesCache = null;
+  }
+
+  // ── 実在列との突合 ─────────────────────────────────────────────────────────
+  // リストの実在列 (内部名) のキャッシュ。書き込みペイロードのキーが実在列に
+  // 無いと SP はその行ごと 400 を返し「取り込んだのに一覧に出ない」になる
+  // (列の作成失敗 / 未作成 / 名前不一致のどれでも同じ)。書き込み前に突合して
+  // 存在しない列は除外し、行自体は必ず入るようにする。
+  private fieldNamesCache: Set<string> | null = null;
+
+  private async getFieldInternalNames(): Promise<Set<string>> {
+    if (this.fieldNamesCache) return this.fieldNamesCache;
+    const j = await this.spGet(
+      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/fields?$select=InternalName`,
+    );
+    const set = new Set<string>();
+    for (const f of j.d.results as { InternalName: string }[]) set.add(f.InternalName);
+    this.fieldNamesCache = set;
+    return set;
+  }
+
+  /** row のキーを実在列に絞る。除外したキーは戻り値 dropped に集める。 */
+  private filterRowToExistingFields(
+    row: Record<string, unknown>,
+    existing: Set<string>,
+    dropped: Set<string>,
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (existing.has(k)) out[k] = v;
+      else dropped.add(k);
+    }
+    return out;
   }
 
   private async tryIndex(listPath: string, fieldName: string): Promise<void> {
@@ -161,7 +195,10 @@ export class SpRepository implements Repository {
   }
 
   async updateIssue(id: number, patch: Partial<ManagedIssue>): Promise<void> {
-    const body = this.issueToRow(patch);
+    const existing = await this.getFieldInternalNames();
+    const dropped = new Set<string>();
+    const body = this.filterRowToExistingFields(this.issueToRow(patch), existing, dropped);
+    if (dropped.size) console.warn('[mikke] updateIssue: リストに存在しない列を除外:', [...dropped]);
     await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items(${id})`,
       { __metadata: { type: 'SP.Data.MikkeManagedIssuesListItem' }, ...body },
@@ -170,7 +207,10 @@ export class SpRepository implements Repository {
   }
 
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {
-    const body = this.issueToRow(issue);
+    const existing = await this.getFieldInternalNames();
+    const dropped = new Set<string>();
+    const body = this.filterRowToExistingFields(this.issueToRow(issue), existing, dropped);
+    if (dropped.size) console.warn('[mikke] createIssue: リストに存在しない列を除外:', [...dropped]);
     const r = await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items`,
       { __metadata: { type: 'SP.Data.MikkeManagedIssuesListItem' }, ...body },
@@ -253,14 +293,22 @@ export class SpRepository implements Repository {
     ops: ImportOp[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }> {
+    // ★ リストの実在列と突合し、存在しない列は送信から除外する。
+    //   存在しない列キーを含む行は SP が行ごと 400 を返し、「取り込んだのに
+    //   一覧に出ない」になるため (列の作成失敗 / 未作成 / 名前不一致のいずれでも)。
+    const existing = await this.getFieldInternalNames();
+    const dropped = new Set<string>();
     const batchOps: { kind: 'add' | 'update'; id?: number; row: Record<string, unknown> }[] = [];
     for (const op of ops) {
       if (op.kind === 'add' && op.create) {
-        batchOps.push({ kind: 'add', row: this.issueToRow(op.create) });
+        batchOps.push({ kind: 'add', row: this.filterRowToExistingFields(this.issueToRow(op.create), existing, dropped) });
       } else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
-        batchOps.push({ kind: 'update', id: op.id, row: this.issueToRow(op.patch) });
+        batchOps.push({ kind: 'update', id: op.id, row: this.filterRowToExistingFields(this.issueToRow(op.patch), existing, dropped) });
       }
       // skip は何もしない
+    }
+    if (dropped.size) {
+      console.warn('[mikke] 取込: リストに存在しない列を送信から除外しました (行は固定項目のみで登録されます):', [...dropped]);
     }
     if (batchOps.length === 0) return { ok: 0, fail: 0 };
     return this.batchWrite(batchOps, onProgress);
