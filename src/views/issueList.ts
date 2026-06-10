@@ -5,6 +5,7 @@ import { getState, setState, setFilter } from '../state';
 import { getRepo } from '../api/repo';
 import { isUndetected } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
+import { scanFieldName } from '../lib/scanName';
 import { DETECTION_STATUSES, MGMT_STATUSES } from '../types';
 import type { ManagedIssue } from '../types';
 
@@ -218,7 +219,8 @@ export function renderIssueList(): HTMLElement {
         el('td', {}, [severityBadge(i.severity)]),
         el('td', {}, [i.assignee || '—']),
         el('td', {}, [fmtDate(i.dueDate, false) || '—']),
-        ...scanCols.map((c) => el('td', {}, [i.scanFields?.[c] || '—'])),
+        // SP は安全列名 (scanFieldName) キー、mock は元名キーで保持 → 両対応で引く
+        ...scanCols.map((c) => el('td', {}, [i.scanFields?.[scanFieldName(c)] ?? i.scanFields?.[c] ?? '—'])),
         el('td', {}, [fmtDate(i.lastSyncedAt) || '—']),
       ]);
       tbody.appendChild(row);

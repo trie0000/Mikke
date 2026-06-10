@@ -1,0 +1,46 @@
+import { describe, it, expect } from 'vitest';
+import { scanFieldName, scanDisplayMap, fnv1aHex } from '../src/lib/scanName';
+
+describe('scanFieldName', () => {
+  it('決定的 (同じ入力は常に同じ出力)', () => {
+    expect(scanFieldName('First Seen')).toBe(scanFieldName('First Seen'));
+  });
+
+  it('Scan_ 接頭辞の有無で同じ名前になる', () => {
+    expect(scanFieldName('First Seen')).toBe(scanFieldName('Scan_First Seen'));
+  });
+
+  it('SP で安全な ASCII 名 (英数字と _ のみ)', () => {
+    for (const col of ['First Seen', '深刻度', 'CVSS', 'Issue Instance ID', 'a/b\\c:d']) {
+      expect(scanFieldName(col)).toMatch(/^Scan_[A-Za-z0-9]*_[0-9a-f]{4}$/);
+    }
+  });
+
+  it('スペース・日本語は除去されハッシュで区別される', () => {
+    expect(scanFieldName('First Seen')).toMatch(/^Scan_FirstSeen_[0-9a-f]{4}$/);
+    expect(scanFieldName('深刻度')).toMatch(/^Scan__[0-9a-f]{4}$/);
+    // ascii 部分が同じでも元名が違えばハッシュで衝突しない
+    expect(scanFieldName('深刻度')).not.toBe(scanFieldName('重要度'));
+  });
+
+  it('長い列名は ascii 部分が 18 文字に切り詰められる', () => {
+    const n = scanFieldName('AVeryLongColumnNameThatExceedsTheLimit');
+    expect(n.length).toBeLessThanOrEqual('Scan_'.length + 18 + 1 + 4);
+  });
+});
+
+describe('scanDisplayMap', () => {
+  it('SP 列名 → 元の列名 の逆引きを作る', () => {
+    const map = scanDisplayMap(['Scan_First Seen', 'Scan_CVSS']);
+    expect(map[scanFieldName('First Seen')]).toBe('First Seen');
+    expect(map[scanFieldName('CVSS')]).toBe('CVSS');
+  });
+});
+
+describe('fnv1aHex', () => {
+  it('決定的な 8 桁 hex', () => {
+    expect(fnv1aHex('abc')).toMatch(/^[0-9a-f]{8}$/);
+    expect(fnv1aHex('abc')).toBe(fnv1aHex('abc'));
+    expect(fnv1aHex('abc')).not.toBe(fnv1aHex('abd'));
+  });
+});

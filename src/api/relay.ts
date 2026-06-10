@@ -28,15 +28,41 @@ export interface CsvParseResult {
   rowCount: number;
 }
 
+/** csv-parse の進捗フェーズ。upload=送信バイト / server=サーバ解析待ち /
+ *  download=応答受信バイト。total=0 は総量不明 (不確定表示)。 */
+export type CsvParsePhase = 'upload' | 'server' | 'download';
+
 /** /mikke/csv-parse — 大容量 CSV をサーバ側でパース (主経路)。
  *  役割分担: サーバは CSV→行配列 のパースのみ。差分判定は import.ts。
- *  100MB 級のメモリ負荷をサーバ側に逃がす。 */
-export async function relayCsvParse(file: File): Promise<CsvParseResult> {
-  const form = new FormData();
-  form.append('file', file);
-  const r = await fetch(`${getRelayBase()}/csv-parse`, { method: 'POST', body: form });
-  if (!r.ok) throw new Error(`csv-parse failed: HTTP ${r.status}`);
-  return await r.json();
+ *  100MB 級のメモリ負荷をサーバ側に逃がす。
+ *  XHR を使うのは進捗 (upload.onprogress / onprogress) を取るため。 */
+export function relayCsvParse(
+  file: File,
+  onProgress?: (phase: CsvParsePhase, done: number, total: number) => void,
+): Promise<CsvParseResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${getRelayBase()}/csv-parse`);
+    xhr.responseType = 'json';
+    xhr.upload.onprogress = (e) => {
+      onProgress?.('upload', e.loaded, e.lengthComputable ? e.total : file.size);
+    };
+    xhr.upload.onload = () => onProgress?.('server', 0, 0);   // 送信完了 → サーバ解析待ち
+    xhr.onprogress = (e) => {
+      onProgress?.('download', e.loaded, e.lengthComputable ? e.total : 0);
+    };
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`csv-parse failed: HTTP ${xhr.status}`));
+        return;
+      }
+      resolve(xhr.response as CsvParseResult);
+    };
+    xhr.onerror = () => reject(new Error('csv-parse failed: ネットワークエラー'));
+    const form = new FormData();
+    form.append('file', file);
+    xhr.send(form);
+  });
 }
 
 export interface RelayVersionInfo { version: string; files: string[]; }

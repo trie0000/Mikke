@@ -6,7 +6,7 @@ import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { getState, setState } from '../state';
 import { relayHealth, relayCsvParse } from '../api/relay';
-import { parseCsv } from '../lib/csv';
+import { parseCsvAsync } from '../lib/csv';
 import { buildImportPlan, type ImportPlan } from '../lib/import';
 
 // ── 取込の進行状態 (モジュールスコープ) ──────────────────────────────────────
@@ -19,6 +19,8 @@ let plan: ImportPlan | null = null;
 let fileName = '';
 let parsingMsg = '';
 let progress: { done: number; total: number } | null = null;
+/** 解析進捗の単位 (relay=バイト / ブラウザ=文字数)。 */
+let parseUnit: 'bytes' | 'chars' = 'bytes';
 // 非同期完了 (解析/取込) 時に「現在マウント中の」ビューを再描画するためのフック。
 // 古いインスタンスの paint を呼ぶと detached DOM を更新するだけになるため。
 let repaintCurrent: (() => void) | null = null;
@@ -52,8 +54,40 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
     else paintCommitting();
   }
 
+  /** 解析中: フェーズメッセージ + 進捗バー (送信バイト / 解析文字数)。 */
   function paintParsing(): void {
-    area.appendChild(el('div', { class: 'mikke-empty' }, [parsingMsg || '解析中…']));
+    const fmtVal = (nv: number): string =>
+      parseUnit === 'bytes' ? fmtBytes(nv) : `${nv.toLocaleString()} 文字`;
+    const text = (): string => {
+      const msg = parsingMsg || '解析中…';
+      if (!progress || !progress.total) return msg;
+      const pct = Math.round((progress.done / progress.total) * 100);
+      return `${msg} ${fmtVal(progress.done)} / ${fmtVal(progress.total)} (${pct}%)`;
+    };
+    const pctWidth = (): string =>
+      (progress && progress.total) ? `${Math.round((progress.done / progress.total) * 100)}%` : '0%';
+    const label = el('div', { style: 'color:var(--ink-2);font-size:var(--fs-base);margin-bottom:var(--s-4)' }, [text()]);
+    const bar = el('div', { class: 'mikke-progress-bar' });
+    bar.style.width = pctWidth();
+    const barWrap = el('div', { class: 'mikke-progress' }, [bar]);
+    // 総量不明 (サーバ解析待ち等) の間はバーを隠してメッセージのみ
+    barWrap.style.visibility = (progress && progress.total) ? 'visible' : 'hidden';
+    area.append(
+      el('p', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [`ファイル: ${fileName}`]),
+      el('div', { style: 'text-align:center;padding:var(--s-10) 0' }, [label, barWrap]),
+    );
+    progressNotify = () => {
+      if (!label.isConnected) return;
+      label.textContent = text();
+      bar.style.width = pctWidth();
+      barWrap.style.visibility = (progress && progress.total) ? 'visible' : 'hidden';
+    };
+  }
+
+  function fmtBytes(n: number): string {
+    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
   }
 
   function paintSelect(): void {
@@ -125,21 +159,40 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
       // eslint-disable-next-line no-console
       console.log('[mikke] import: relayHealth', h);
       if (h.ok) {
-        showBusy(`「${file.name}」を中継サーバで解析中…`);
-        const res = await relayCsvParse(file);
+        parseUnit = 'bytes';
+        showBusy(`「${file.name}」を中継サーバへ送信中…`);
+        const res = await relayCsvParse(file, (phase, done, total) => {
+          if (phase === 'upload') {
+            parsingMsg = `「${file.name}」を中継サーバへ送信中…`;
+            progress = total ? { done, total } : null;
+          } else if (phase === 'server') {
+            parsingMsg = '中継サーバで解析中…（サイズにより時間がかかります）';
+            progress = null;
+          } else {
+            parsingMsg = '解析結果を受信中…';
+            progress = total ? { done, total } : null;
+          }
+          progressNotify?.();
+        });
         headers = res.headers;
         rows = res.rows;
         // eslint-disable-next-line no-console
         console.log('[mikke] import: relay parsed', { rows: rows.length, cols: headers.length });
       } else {
         toast(rootEl, '中継サーバ未起動 — ブラウザ側で解析します（大容量では重くなります）。', 'warn');
+        parseUnit = 'chars';
         showBusy(`「${file.name}」をブラウザで解析中…`);
-        const parsed = parseCsv(await file.text());
+        const textData = await file.text();
+        const parsed = await parseCsvAsync(textData, (done, total) => {
+          progress = { done, total };
+          progressNotify?.();
+        });
         headers = parsed.headers;
         rows = parsed.rows;
         // eslint-disable-next-line no-console
         console.log('[mikke] import: browser parsed', { rows: rows.length, cols: headers.length });
       }
+      progress = null;
 
       if (!headers.length) {
         throw new Error('ヘッダを検出できませんでした（空の CSV か区切り文字が不正の可能性）。');
@@ -287,7 +340,11 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
         rowCount: myPlan.summary.rowCount,
         importedAt: new Date().toISOString(),
       }).catch(() => { /* ログ失敗は取込自体を止めない */ });
-      toast(rootEl, `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗` : ''}`, fail ? 'warn' : 'ok');
+      // 失敗があれば手動 dismiss の error で目立たせる (一覧に出ない原因の特定用に
+      // $batch のエラー詳細を console に出している → F12 で確認できる旨を案内)。
+      toast(rootEl,
+        `取込完了: ${ok} 件反映${fail ? ` / ${fail} 件失敗（詳細は F12 コンソール）` : ''}`,
+        fail ? 'error' : 'ok');
       resetImportState();
       // 取込ビューを見ている時だけ一覧へ移動 (別ビュー閲覧中に画面を奪わない)。
       if (getState().view === 'import') {

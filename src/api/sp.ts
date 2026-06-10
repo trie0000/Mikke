@@ -10,6 +10,7 @@ import {
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
+import { scanFieldName } from '../lib/scanName';
 
 const V = 'application/json;odata=verbose';
 
@@ -227,7 +228,16 @@ export class SpRepository implements Repository {
       const text = await r.text();
       const successes = (text.match(/HTTP\/1\.1 20\d/g) ?? []).length;
       ok += successes;
-      fail += chunk.length - successes;
+      const chunkFails = chunk.length - successes;
+      fail += chunkFails;
+      // 失敗があったら原因 (最初のエラーサブレスポンス) を console に出す。
+      // これが無いと「取込完了と出たのに一覧に出ない」時に原因を特定できない。
+      if (chunkFails > 0) {
+        const errMatch = text.match(/HTTP\/1\.1 [45]\d\d[\s\S]{0,600}?("message"[\s\S]{0,300}?\})/);
+        // eslint-disable-next-line no-console
+        console.error(`[mikke] $batch: ${chunkFails} 件失敗 (chunk ${i / BATCH_CHUNK + 1})`,
+          errMatch ? errMatch[0].slice(0, 500) : text.slice(0, 500));
+      }
       onProgress?.(Math.min(i + chunk.length, ops.length), ops.length);
     }
     return { ok, fail };
@@ -290,11 +300,13 @@ export class SpRepository implements Repository {
   }
 
   /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成。既存・型一致はスキップ。
-   *  列名は Scan_ + 元 CSV ヘッダ。SP 内部名は SP が自動でエスケープする。 */
+   *  ★ 列名はスペース/日本語を含む表示名のまま作ると SP 内部名が _x0020_ 等に
+   *    変換され、REST の JSON キー (表示名) と食い違って書込が 400 になる。
+   *    安全な ASCII 名 (scanFieldName) で作成し、書込もそのキーで送る。 */
   async ensureScanColumns(columns: string[]): Promise<void> {
     if (!columns.length) return;
     const specs: FieldSpec[] = columns.map((c) => ({
-      name: c.startsWith('Scan_') ? c : `Scan_${c}`,
+      name: scanFieldName(c),
       type: 'Note', // 値の長さ・記号に耐えるため Note (複数行) で作る
     }));
     await this.ensureFields(LIST_MANAGED, specs);
@@ -366,7 +378,9 @@ export class SpRepository implements Repository {
     if (p.firstUndetectedAt !== undefined) row.FirstUndetectedAt = p.firstUndetectedAt || null;
     if (p.addedReason !== undefined) row.AddedReason = p.addedReason;
     if (p.lastSyncedAt !== undefined) row.LastSyncedAt = p.lastSyncedAt || null;
-    if (p.scanFields) for (const [k, v] of Object.entries(p.scanFields)) row[k] = v;
+    // 動的列は安全な SP 列名 (scanFieldName) へ変換して送る。表示名キーのまま
+    // 送ると内部名と食い違い 400 → 取込 add が全件失敗する (実機で判明)。
+    if (p.scanFields) for (const [k, v] of Object.entries(p.scanFields)) row[scanFieldName(k)] = v;
     return row;
   }
 }

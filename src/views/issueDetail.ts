@@ -7,6 +7,7 @@ import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { openEditModal } from './editModal';
 import { relayGetIssue, relayHealth } from '../api/relay';
 import { toast } from '../components/toast';
+import { scanDisplayMap } from '../lib/scanName';
 import type { ManagedIssue } from '../types';
 
 type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
@@ -29,6 +30,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
 
   let activeTab: DetailTab = 'overview';
   let current: ManagedIssue | null = null;
+  // SP の安全列名 (Scan_xxx_hash) → 元の列名 の逆引き (検査ツール詳細タブの表示用)
+  let scanNames: Record<string, string> = {};
 
   paintTabStrip();
   void loadCurrent();
@@ -80,6 +83,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     clear(body);
     body.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     current = await getRepo().getIssue(id);
+    try { scanNames = scanDisplayMap((await getRepo().getSettings()).managedColumns); } catch { /* noop */ }
     paintTabs();
     paintBody();
   }
@@ -137,7 +141,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['最終検出', fmtDate(i.lastSeen) || '—'],
         ['未検出になった日', fmtDate(i.firstUndetectedAt) || '—'],
       ];
-      for (const [k, v] of Object.entries(i.scanFields)) rows.push([k.replace(/^Scan_/, ''), v || '—']);
+      // SP の安全列名は逆引きで元の列名に戻す (mock の元名キーはそのまま)
+      for (const [k, v] of Object.entries(i.scanFields)) rows.push([scanNames[k] ?? k.replace(/^Scan_/, ''), v || '—']);
       body.appendChild(metaGrid(rows.map(([k, v]) => [k, v] as [string, string])));
       body.appendChild(el('p', { style: 'margin-top:var(--s-5);color:var(--ink-4);font-size:var(--fs-sm)' },
         ['※ 検査ツール由来の項目は読み取り専用です。']));

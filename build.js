@@ -25,7 +25,9 @@ try {
   gitSha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
   if (execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()) gitDirty = '+';
 } catch { /* not a git repo */ }
-const buildTime = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+// ビルド時刻は JST (+09:00) 表記。stableBuildId の比較は " (" より前の
+// version-sha 部分のみなので、時刻表記の変更は更新検知に影響しない。
+const buildTime = new Date(Date.now() + 9 * 3600_000).toISOString().replace(/\.\d+Z$/, '+09:00');
 const buildId = `${pkg.version}-${gitSha}${gitDirty} (${buildTime})`;
 console.log(`[build] id: ${buildId}`);
 
