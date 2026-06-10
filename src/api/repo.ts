@@ -22,6 +22,10 @@ export interface Repository {
   applyImportOps(ops: ImportOp[], onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
   /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成する。既存はスキップ。 */
   ensureScanColumns(columns: string[]): Promise<void>;
+  /** 取込 ops の書き込みに必要だがリストに存在しない列 (SP 列名)。mock は常に []。 */
+  findMissingColumns(ops: ImportOp[]): Promise<string[]>;
+  /** 不足列を作成する (固定列は既定スキーマ、それ以外 = Scan_* は Note)。 */
+  createMissingColumns(cols: string[]): Promise<void>;
   /** 取込履歴を ImportLog に記録する。 */
   writeImportLog(entry: ImportLogEntry): Promise<void>;
 }

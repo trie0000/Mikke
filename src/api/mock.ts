@@ -114,6 +114,10 @@ export class MockRepository implements Repository {
 
   async ensureScanColumns(_columns: string[]): Promise<void> { /* mock: no-op */ }
 
+  async findMissingColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
+
+  async createMissingColumns(_cols: string[]): Promise<void> { /* mock: no-op */ }
+
   async writeImportLog(entry: ImportLogEntry): Promise<void> {
     // mock: localStorage に履歴を積む (デバッグ用)。
     try {

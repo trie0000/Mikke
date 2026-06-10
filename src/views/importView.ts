@@ -3,6 +3,8 @@
 import { el, clear } from '../utils/dom';
 import { icon } from '../icons';
 import { toast } from '../components/toast';
+import { confirmModal } from '../components/modal';
+import { scanDisplayMap } from '../lib/scanName';
 import { getRepo } from '../api/repo';
 import { getState, setState } from '../state';
 import { relayHealth, relayCsvParse } from '../api/relay';
@@ -311,18 +313,39 @@ export function renderImportView(rootEl: HTMLElement): HTMLElement {
     if (!plan) return;
     const repo = getRepo();
     const myPlan = plan;
-    step = 'committing';
-    progress = { done: 0, total: myPlan.ops.filter((o) => o.kind !== 'skip').length };
-    repaintCurrent?.();
     try {
-      // F6: 取込前に、設定でチェックした動的列 (Scan_*) を SP に作成しておく。
       const settings = await repo.getSettings();
-      if (settings.managedColumns.length) {
-        await repo.ensureScanColumns(settings.managedColumns);
-      }
       // F6/F7 の列候補サジェスト用に、今回の CSV ヘッダを設定に保存。
       if (myPlan.headers.length) {
         await repo.saveSettings({ ...settings, lastCsvHeaders: myPlan.headers }).catch(() => { /* noop */ });
+      }
+
+      // 書き込みに必要な列がリストに不足していれば、確認の上で作成する。
+      // (不足列を含む行は SP が行ごと 400 を返すため、作らないと一覧に出ない)
+      const missing = await repo.findMissingColumns(myPlan.ops);
+      if (missing.length) {
+        const nameMap = scanDisplayMap(settings.managedColumns);
+        const labels = missing.map((m) => nameMap[m] ?? m);
+        const okToCreate = await new Promise<boolean>((resolve) => {
+          confirmModal(rootEl, {
+            title: 'リストに不足している列があります',
+            message: `管理リストに以下の ${labels.length} 列がありません:\n\n` +
+              labels.map((l) => `・${l}`).join('\n') +
+              '\n\n列を作成して取込を続行しますか？（キャンセルすると取込を中止します）',
+            primaryLabel: '列を作成して取り込む',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false),
+          });
+        });
+        if (!okToCreate) return;   // プレビューに留まる
+      }
+
+      step = 'committing';
+      progress = { done: 0, total: myPlan.ops.filter((o) => o.kind !== 'skip').length };
+      repaintCurrent?.();
+
+      if (missing.length) {
+        await repo.createMissingColumns(missing);
       }
       const { ok, fail } = await repo.applyImportOps(myPlan.ops, (done, total) => {
         progress = { done, total };

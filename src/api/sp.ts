@@ -360,6 +360,28 @@ export class SpRepository implements Repository {
     await this.ensureFields(LIST_MANAGED, specs);
   }
 
+  /** 取込 ops が書き込む列のうち、リストに存在しないもの (SP 列名) を返す。 */
+  async findMissingColumns(ops: ImportOp[]): Promise<string[]> {
+    const keys = new Set<string>();
+    for (const op of ops) {
+      const row = op.kind === 'add' && op.create
+        ? this.issueToRow(op.create)
+        : ((op.kind === 'update' || op.kind === 'undetect') && op.patch ? this.issueToRow(op.patch) : null);
+      if (row) for (const k of Object.keys(row)) keys.add(k);
+    }
+    this.fieldNamesCache = null;   // 最新の実在列で判定する
+    const existing = await this.getFieldInternalNames();
+    return [...keys].filter((k) => !existing.has(k));
+  }
+
+  /** 不足列を作成する。固定列は既定スキーマ、それ以外 (Scan_*) は Note で作る。 */
+  async createMissingColumns(cols: string[]): Promise<void> {
+    if (!cols.length) return;
+    const fixed = new Map(managedIssueFieldSpecs().map((s) => [s.name, s]));
+    const specs: FieldSpec[] = cols.map((c) => fixed.get(c) ?? { name: c, type: 'Note' });
+    await this.ensureFields(LIST_MANAGED, specs);   // 終了時に実在列キャッシュは無効化される
+  }
+
   /** 取込履歴を MikkeImportLog に記録。 */
   async writeImportLog(entry: ImportLogEntry): Promise<void> {
     await this.spPost(
