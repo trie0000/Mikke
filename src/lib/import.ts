@@ -36,25 +36,27 @@ export interface ImportPlan {
   headers: string[];
 }
 
-/** 動的列 (Scan_*) を CSV 行から抽出。managedColumns に挙がった元列名 (Scan_ を除いた名) を拾う。 */
-function extractScanFields(row: Record<string, string>, managedColumns: string[]): Record<string, string> {
+/** 動的列 (Scan_*) を CSV 行から抽出。
+ *  ★ CSV の「全列」を保存する (F6 のチェックは一覧に表示する列の選択であり、
+ *    保存対象の絞り込みではない)。検査ツール詳細タブで全項目を参照できる。 */
+function extractScanFields(row: Record<string, string>, headers: string[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const col of managedColumns) {
-    const srcName = col.replace(/^Scan_/, '');
-    if (row[srcName] !== undefined) out[col] = row[srcName];
-    else if (row[col] !== undefined) out[col] = row[col]; // 既に Scan_ 付きで来た場合
+  for (const h of headers) {
+    const name = h.trim();
+    if (!name) continue;
+    out[`Scan_${name}`] = row[name] ?? '';
   }
   return out;
 }
 
 /** CSV 行 → 検査ツール由来フィールド (更新/新規共通)。 */
-function scannerFieldsFromRow(row: Record<string, string>, managedColumns: string[]): Partial<ManagedIssue> {
+function scannerFieldsFromRow(row: Record<string, string>, headers: string[]): Partial<ManagedIssue> {
   return {
     title: row[COL_TITLE] ?? '',
     severity: row[COL_SEVERITY] || undefined,
     scannerStatus: row[COL_SCANNER_STATUS] || undefined,
     lastSeen: row[COL_LAST_SEEN] || undefined,
-    scanFields: extractScanFields(row, managedColumns),
+    scanFields: extractScanFields(row, headers),
   };
 }
 
@@ -87,7 +89,7 @@ export function buildImportPlan(
     seenInCsv.add(iid);
 
     const cur = byId.get(iid);
-    const sf = scannerFieldsFromRow(row, settings.managedColumns);
+    const sf = scannerFieldsFromRow(row, headers);
 
     if (cur) {
       // 既存管理対象に一致 → 更新 (検知ステータスは継続/再検知へ)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scanFieldName, scanDisplayMap, fnv1aHex } from '../src/lib/scanName';
+import { scanFieldName, scanDisplayMap, fnv1aHex, decodeSpInternalName } from '../src/lib/scanName';
 
 describe('scanFieldName', () => {
   it('決定的 (同じ入力は常に同じ出力)', () => {
@@ -34,6 +34,17 @@ describe('scanDisplayMap', () => {
     const map = scanDisplayMap(['Scan_First Seen', 'Scan_CVSS']);
     expect(map[scanFieldName('First Seen')]).toBe('First Seen');
     expect(map[scanFieldName('CVSS')]).toBe('CVSS');
+  });
+});
+
+describe('decodeSpInternalName', () => {
+  it('SP の _xXXXX_ エンコードを文字に戻す', () => {
+    expect(decodeSpInternalName('First_x0020_Seen')).toBe('First Seen');
+    expect(decodeSpInternalName('x005F_First_x0020_Seen')).toBe('_First Seen');
+    expect(decodeSpInternalName('_x65e5__x4ed8_')).toBe('日付');
+  });
+  it('エンコードが無ければそのまま', () => {
+    expect(decodeSpInternalName('CVSS')).toBe('CVSS');
   });
 });
 

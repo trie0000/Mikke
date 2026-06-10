@@ -7,7 +7,7 @@ import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { openEditModal } from './editModal';
 import { relayGetIssue, relayHealth } from '../api/relay';
 import { toast } from '../components/toast';
-import { scanDisplayMap } from '../lib/scanName';
+import { scanDisplayMap, scanFieldName, decodeSpInternalName } from '../lib/scanName';
 import type { ManagedIssue } from '../types';
 
 type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
@@ -32,6 +32,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   let current: ManagedIssue | null = null;
   // SP の安全列名 (Scan_xxx_hash) → 元の列名 の逆引き (検査ツール詳細タブの表示用)
   let scanNames: Record<string, string> = {};
+  // 直近取込 CSV のヘッダ (検査ツール詳細を CSV の列順で表示するため)
+  let csvHeaders: string[] = [];
 
   paintTabStrip();
   void loadCurrent();
@@ -83,7 +85,11 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     clear(body);
     body.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     current = await getRepo().getIssue(id);
-    try { scanNames = scanDisplayMap((await getRepo().getSettings()).managedColumns); } catch { /* noop */ }
+    try {
+      const settings = await getRepo().getSettings();
+      csvHeaders = settings.lastCsvHeaders ?? [];
+      scanNames = scanDisplayMap([...csvHeaders, ...settings.managedColumns]);
+    } catch { /* noop */ }
     paintTabs();
     paintBody();
   }
@@ -141,8 +147,28 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['最終検出', fmtDate(i.lastSeen) || '—'],
         ['未検出になった日', fmtDate(i.firstUndetectedAt) || '—'],
       ];
-      // SP の安全列名は逆引きで元の列名に戻す (mock の元名キーはそのまま)
-      for (const [k, v] of Object.entries(i.scanFields)) rows.push([scanNames[k] ?? k.replace(/^Scan_/, ''), v || '—']);
+      // CSV の全項目を「ヘッダの列順」で表示する。
+      // キーは SP=安全列名 (scanFieldName) / mock=Scan_<元名> の両対応で引く。
+      const sf = i.scanFields ?? {};
+      const used = new Set<string>();
+      for (const h of csvHeaders) {
+        const safe = scanFieldName(h);
+        const raw = `Scan_${h}`;
+        const v = sf[safe] !== undefined ? sf[safe] : sf[raw];
+        if (v === undefined) continue;
+        rows.push([h, v || '—']);
+        used.add(safe); used.add(raw);
+      }
+      // 残りのキー (ヘッダ外・旧形式列など)。逆引きできなければ SP 内部名の
+      // エンコード (_x0020_ 等) を解除して表示。不明キーで値も空なら出さない
+      // (旧形式で作られた空列がゴミとして並ぶのを防ぐ)。
+      for (const [k, v] of Object.entries(sf)) {
+        if (used.has(k)) continue;
+        const known = scanNames[k];
+        if (!known && !v) continue;
+        const label = known ?? decodeSpInternalName(k.replace(/^Scan_/, '')).replace(/^_+/, '');
+        rows.push([label, v || '—']);
+      }
       body.appendChild(metaGrid(rows.map(([k, v]) => [k, v] as [string, string])));
       body.appendChild(el('p', { style: 'margin-top:var(--s-5);color:var(--ink-4);font-size:var(--fs-sm)' },
         ['※ 検査ツール由来の項目は読み取り専用です。']));

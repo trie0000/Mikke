@@ -31,13 +31,23 @@ export function scanFieldName(col: string): string {
 }
 
 /**
- * managedColumns ("Scan_<元名>" の配列) から、SP 列名 → 表示名 (元名) の
- * 逆引きマップを作る。詳細画面などで SP から来た安全名キーを元名で表示する用。
+ * 列名リスト ("Scan_<元名>" でも元名そのままでも可) から、SP 列名 → 表示名 (元名)
+ * の逆引きマップを作る。詳細画面などで SP から来た安全名キーを元名で表示する用。
  */
-export function scanDisplayMap(managedColumns: string[]): Record<string, string> {
+export function scanDisplayMap(columns: string[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const c of managedColumns) {
+  for (const c of columns) {
     out[scanFieldName(c)] = c.replace(/^Scan_/, '');
   }
   return out;
+}
+
+/**
+ * SP 内部名のエンコード (_x0020_ 等) を文字に戻す。
+ * 旧形式 (表示名のまま作成され内部名がエンコードされた列) のキーを、
+ * 人が読めるラベルとして表示するための救済用。
+ * 例: "x005F_First_x0020_Seen" → "_First Seen"
+ */
+export function decodeSpInternalName(s: string): string {
+  return s.replace(/_?x([0-9a-fA-F]{4})_/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 }
