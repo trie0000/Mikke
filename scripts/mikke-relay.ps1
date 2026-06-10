@@ -26,7 +26,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.6'
+$MIKKE_RELAY_VERSION = '1.0.7'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -369,13 +369,17 @@ function Invoke-IssueFetch {
         Write-Host "[issue] $iid -> OK" -ForegroundColor Green
         $scanFields = @{}
         if ($result.scanFields) { $scanFields = $result.scanFields }
-        Send-Json -Response $response -Status 200 -Body @{
+        $body = @{
             ok = $true
             scannerStatus = [string]$result.scannerStatus
             severity = [string]$result.severity
             lastSeen = [string]$result.lastSeen
             scanFields = $scanFields
         }
+        # detected (現在も検出されているか): アダプタが返した場合のみ含める。
+        # UI 側はこれが true/false の時だけ検知ステータスを遷移させる (省略=変更なし)。
+        if ($null -ne $result.detected) { $body.detected = [bool]$result.detected }
+        Send-Json -Response $response -Status 200 -Body $body
     } catch {
         # 原因特定のため、例外の詳細 (型 / 発生箇所 / HTTP 情報 / 応答ボディ) を出す。
         # ※ アダプタが元の WebException を握りつぶして文字列 throw した場合、HTTP

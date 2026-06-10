@@ -13,6 +13,8 @@ export interface Repository {
   updateIssue(id: number, patch: Partial<ManagedIssue>): Promise<void>;
   /** 新規追加。 */
   createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number>;
+  /** 完全削除 (リストから行を消す。元に戻せない)。 */
+  deleteIssue(id: number): Promise<void>;
   /** 設定の取得 / 保存。 */
   getSettings(): Promise<MikkeSettings>;
   saveSettings(s: MikkeSettings): Promise<void>;

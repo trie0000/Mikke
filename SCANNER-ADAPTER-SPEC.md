@@ -77,13 +77,18 @@ function Invoke-MikkeScannerFetch {
     scannerStatus = '<string>'   # 検査ツール側の最新ステータス (例: open / fixed / ...)
     severity      = '<string>'   # 深刻度 (例: Critical / High / ...)
     lastSeen      = '<string>'   # 最終検出日時。ISO 8601 推奨 (例: 2026-06-10T12:34:56)
+    detected      = $true        # 任意。現在も検出されているか (bool)。下記参照
     scanFields    = @{           # 任意。省略可 (省略時は @{} 扱い)
         '<CSV列名>' = '<string値>'
     }
 }
 ```
 
-- すべて**文字列**で返す（数値・日付も文字列化する）。
+- **`detected`（任意・重要）**: この Issue が**現在も検出されている状態か**を bool で返す。
+  API のステータス値（例: open/active → `$true`、resolved/fixed/closed → `$false`）から**アダプタが正規化**する。
+  返すと Mikke 側が検知ステータス（新規/継続/再検知/未検出）を自動で遷移させる。
+  判定できない場合は**キー自体を省略**する（Mikke は検知ステータスを変更しない）。
+- `detected` 以外はすべて**文字列**で返す（数値・日付も文字列化する）。
 - `scanFields` のキーは**検査ツール CSV のヘッダ列名そのまま**（例: `Status`、`First Seen`）。`Scan_` 接頭辞は付けない。
   - Mikke 側で管理項目（F6）にチェックされている列だけが SharePoint に反映される。それ以外のキーは無視される（エラーにはならない）。
 - 該当データが無い項目は空文字 `''` でよい。
@@ -135,7 +140,7 @@ $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
 なお relay 本体も例外の型・発生箇所（アダプタの行番号）・スタックをコンソールに出すが、アダプタ内で元の例外を catch して文字列を throw し直すと HTTP 詳細は relay 側では取れない。**HTTP の詳細ログはアダプタの責務**。
 - relay 側のエンドポイント仕様（参考。アダプタ実装には直接関係しない）:
   - `POST /mikke/issue`、入力 `{"issueInstanceId": "<ID>"}`
-  - 成功: `200 {"ok":true, "scannerStatus":..., "severity":..., "lastSeen":..., "scanFields":{...}}`
+  - 成功: `200 {"ok":true, "scannerStatus":..., "severity":..., "lastSeen":..., "detected":..., "scanFields":{...}}`
   - 失敗: `400`(ID なし) / `501`(アダプタ未配置) / `500`(関数未定義) / `502`(アダプタが throw)
 
 ## 6. 実装の雛形
@@ -191,6 +196,10 @@ function Invoke-MikkeScannerFetch {
         scannerStatus = [string]$r.status
         severity      = [string]$r.severity
         lastSeen      = [string]$r.last_seen
+        # detected: 現在も検出されているか。API のステータス値から正規化する
+        # (例: open/active → $true、resolved/fixed/closed → $false)。
+        # 判定できない場合はキーごと省略 (Mikke は検知ステータスを変更しない)。
+        detected      = ($r.status -in @('open', 'active'))
         scanFields    = @{
             'Status' = [string]$r.status
             # 必要に応じて CSV 列名 = 値 を追加

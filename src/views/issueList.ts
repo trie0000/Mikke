@@ -3,7 +3,7 @@ import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
 import { getRepo } from '../api/repo';
-import { isUndetected } from '../lib/detection';
+import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { scanFieldName } from '../lib/scanName';
 import { relayHealth, relayGetIssue } from '../api/relay';
@@ -251,6 +251,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         onclick: () => bulkExclude(),
       }, ['管理対象から除外']),
       el('button', {
+        class: 'mikke-btn mikke-btn--danger',
+        style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+        ...(bulkBusy ? { disabled: 'disabled' } : {}),
+        onclick: () => bulkDelete(),
+      }, ['削除']),
+      el('button', {
         class: 'mikke-btn mikke-btn--ghost',
         style: 'height:28px;padding:0 var(--s-4);font-size:var(--fs-sm)',
         ...(bulkBusy ? { disabled: 'disabled' } : {}),
@@ -304,6 +310,35 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
+  // ── 一括: 完全削除 (確認モーダル付き) ────────────────────────────────────────
+  // 物理削除のため履歴も消える。通常運用は「除外」を推奨し、削除は誤取込の掃除用。
+  function bulkDelete(): void {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const body = el('div', { style: 'line-height:1.7' }, [
+      `選択中の ${ids.length} 件をリストから完全に削除します。`,
+      el('br'),
+      el('span', { style: 'color:var(--danger)' }, ['検知履歴・管理情報も含めて元に戻せません。']),
+      el('br'),
+      'データを残したまま一覧から隠す場合は「管理対象から除外」を使ってください。',
+    ]);
+    openModal(rootEl, {
+      title: '完全に削除',
+      body,
+      primaryLabel: `削除する (${ids.length} 件)`,
+      primaryVariant: 'danger',
+      onPrimary: async () => {
+        let ok = 0, fail = 0;
+        for (const id of ids) {
+          try { await getRepo().deleteIssue(id); ok++; } catch { fail++; }
+        }
+        toast(rootEl, `削除: ${ok} 件${fail ? ` / 失敗 ${fail} 件` : ''}`, fail ? 'warn' : 'ok');
+        selected.clear();
+        await load();
+      },
+    });
+  }
+
   // ── 一括: 情報更新 (検査ツール API / F3 アダプタ経由) ─────────────────────────
   async function bulkRefresh(btn: HTMLElement): Promise<void> {
     const ids = [...selected];
@@ -326,13 +361,25 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${n + 1}/${ids.length}…</span>`;
         try {
           const res = await relayGetIssue(issue.issueInstanceId);
-          await getRepo().updateIssue(issue.id, {
+          const patch: Partial<ManagedIssue> = {
             scannerStatus: res.scannerStatus,
             severity: res.severity,
             lastSeen: res.lastSeen,
             lastSyncedAt: new Date().toISOString(),
             scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
-          });
+          };
+          // アダプタが detected (現在も検出されているか) を返した場合のみ、
+          // CSV 取込と同じ遷移ロジックで検知ステータスを更新する。
+          if (res.detected === true) {
+            patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
+          } else if (res.detected === false) {
+            const nd = nextDetectionWhenAbsent(issue.detectionStatus);
+            patch.detectionStatus = nd;
+            if (nd === '未検出(New)' && !issue.firstUndetectedAt) {
+              patch.firstUndetectedAt = new Date().toISOString();
+            }
+          }
+          await getRepo().updateIssue(issue.id, patch);
           ok++;
         } catch (e) {
           fail++;

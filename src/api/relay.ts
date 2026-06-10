@@ -124,6 +124,9 @@ export interface RelayIssueResult {
   severity?: string;
   lastSeen?: string;
   scanFields?: Record<string, string>;
+  /** 現在も検出されているか (アダプタが正規化して返す。省略 = 検知ステータスを変更しない)。
+   *  true → 継続/再検知、false → 未検出(New)/未検出 へ CSV 取込と同じ遷移を適用する。 */
+  detected?: boolean;
 }
 
 /** /mikke/issue — 検査ツール API を Issue 単位で中継 (F3)。

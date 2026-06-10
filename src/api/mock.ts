@@ -76,6 +76,11 @@ export class MockRepository implements Repository {
     save(LS_ISSUES, this.issues);
   }
 
+  async deleteIssue(id: number): Promise<void> {
+    const idx = this.issues.findIndex((i) => i.id === id);
+    if (idx >= 0) { this.issues.splice(idx, 1); save(LS_ISSUES, this.issues); }
+  }
+
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {
     const id = this.issues.reduce((m, i) => Math.max(m, i.id), 0) + 1;
     this.issues.push({ ...issue, id });

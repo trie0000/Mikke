@@ -8,6 +8,7 @@ import { openEditModal } from './editModal';
 import { relayGetIssue, relayHealth } from '../api/relay';
 import { toast } from '../components/toast';
 import { scanDisplayMap, scanFieldName, decodeSpInternalName } from '../lib/scanName';
+import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import type { ManagedIssue } from '../types';
 
 type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
@@ -197,11 +198,22 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     }
     try {
       const res = await relayGetIssue(current.issueInstanceId);
-      await getRepo().updateIssue(current.id, {
+      const patch: Partial<ManagedIssue> = {
         scannerStatus: res.scannerStatus, severity: res.severity,
         lastSeen: res.lastSeen, lastSyncedAt: new Date().toISOString(),
         scanFields: { ...current.scanFields, ...(res.scanFields ?? {}) },
-      });
+      };
+      // アダプタが detected を返した場合のみ、CSV 取込と同じ遷移で検知を更新。
+      if (res.detected === true) {
+        patch.detectionStatus = nextDetectionWhenPresent(current.detectionStatus);
+      } else if (res.detected === false) {
+        const nd = nextDetectionWhenAbsent(current.detectionStatus);
+        patch.detectionStatus = nd;
+        if (nd === '未検出(New)' && !current.firstUndetectedAt) {
+          patch.firstUndetectedAt = new Date().toISOString();
+        }
+      }
+      await getRepo().updateIssue(current.id, patch);
       toast(rootEl, '最新状態を取得しました', 'ok');
       void loadCurrent();
     } catch (e) {

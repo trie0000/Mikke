@@ -30,6 +30,7 @@
 #       scannerStatus = <string>    # 検査ツール側の最新ステータス
 #       severity      = <string>    # 深刻度
 #       lastSeen      = <string>    # 最終検出日時 (ISO8601 推奨)
+#       detected      = <bool>      # 任意。現在も検出されているか (返すと検知ステータスが自動遷移)
 #       scanFields    = @{ '<CSV列名>' = '<値>' }   # 任意。動的列の更新に使う
 #     }
 #   エラー:  throw する (relay が 502 + メッセージで UI に返す)
@@ -80,6 +81,10 @@ function Invoke-MikkeScannerFetch {
     #     scannerStatus = [string]$r.status
     #     severity      = [string]$r.severity
     #     lastSeen      = [string]$r.last_seen
+    #     # detected: 現在も検出されているか。API のステータス値から正規化する
+    #     # (例: open/active → $true、resolved/fixed/closed → $false)。
+    #     # 判定できない場合はキーごと省略 (Mikke は検知ステータスを変更しない)。
+    #     detected      = ($r.status -in @('open', 'active'))
     #     scanFields    = @{ 'Status' = [string]$r.status }
     # }
     # ──────────────────────────────────────────────────────────────────────────

@@ -206,6 +206,13 @@ export class SpRepository implements Repository {
     );
   }
 
+  async deleteIssue(id: number): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {
     const existing = await this.getFieldInternalNames();
     const dropped = new Set<string>();

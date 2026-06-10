@@ -1,6 +1,6 @@
 # Mikke 配布物
 
-**Version:** UI = 0.0.1-0d00bc7+ (2026-06-10T17:49:56+09:00) / relay = v1.0.6
+**Version:** UI = 0.0.1-b860648+ (2026-06-10T18:57:54+09:00) / relay = v1.0.7
 
 ## SharePoint に置くファイル
 - `mikke.bundle.js` … UI 本体 (ブラウザ実行)
