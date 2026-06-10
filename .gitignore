@@ -15,6 +15,7 @@ dist/*
 !dist/mikke-launch.bat
 !dist/relay-version.txt
 !dist/mikke-relay.env.example
+!dist/mikke-scanner-adapter.example.ps1
 !dist/SETUP-README.md
 !dist/README.md
 *.log
