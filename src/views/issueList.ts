@@ -441,7 +441,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       });
       const row = el('tr', {
         ...(getState().selectedIssueId === i.id ? { class: 'is-selected' } : {}),
-        onclick: () => openDetail(i.id),
+        onclick: () => {
+          // テキストをドラッグ選択した直後の click では詳細へ遷移しない
+          // (セル値をコピーできるように)。通常クリックは選択が空なので遷移する。
+          const sel = window.getSelection();
+          if (sel && sel.toString()) return;
+          openDetail(i.id);
+        },
       }, [
         el('td', { class: 'mikke-check-col', onclick: (e: Event) => e.stopPropagation() }, [rowCheck]),
         el('td', {}, [i.title || '(無題)']),

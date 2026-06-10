@@ -75,6 +75,11 @@
   all: initial;            /* shield from SP host */
   font-family: var(--font-sans);
   color: var(--ink);
+  /* ★ all:initial は user-select を auto (=親の実効値を継承) に戻すため、
+     SP ページ側の user-select:none を引き継いで全画面コピー不可になる。
+     text を明示してオーバーレイ内は常に選択・コピー可能にする。 */
+  user-select: text;
+  -webkit-user-select: text;
 
   position: fixed;
   inset: 0;
