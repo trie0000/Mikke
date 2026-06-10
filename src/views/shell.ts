@@ -145,7 +145,7 @@ function paintMain(main: HTMLElement, root: HTMLElement): void {
   if (s.view === 'issues' && s.selectedIssueId != null) {
     main.appendChild(renderIssueDetail(root));
   } else if (s.view === 'issues') {
-    main.appendChild(renderIssueList());
+    main.appendChild(renderIssueList(root));
   } else if (s.view === 'import') {
     main.appendChild(renderImportView(root));
   }

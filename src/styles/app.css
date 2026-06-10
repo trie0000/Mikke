@@ -218,6 +218,12 @@
 #mikke-root .mikke-table tbody tr:hover { background: var(--paper-2); }
 #mikke-root .mikke-table tbody tr.is-selected { background: var(--accent-soft); }
 #mikke-root .mikke-check-col { width: 38px; text-align: center; }
+/* 列幅リサイズ用グリップ (th 右端。th は sticky=positioned なので absolute の基準になる) */
+#mikke-root .mikke-col-grip {
+  position: absolute; top: 0; right: -4px; width: 9px; height: 100%;
+  cursor: col-resize; user-select: none; z-index: 2;
+}
+#mikke-root .mikke-col-grip:hover { background: var(--accent-soft); }
 
 /* ---------- badges ---------- */
 #mikke-root .mikke-badge {

@@ -6,6 +6,9 @@ import { getRepo } from '../api/repo';
 import { isUndetected } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { scanFieldName } from '../lib/scanName';
+import { relayHealth, relayGetIssue } from '../api/relay';
+import { openModal } from '../components/modal';
+import { toast } from '../components/toast';
 import { DETECTION_STATUSES, MGMT_STATUSES } from '../types';
 import type { ManagedIssue } from '../types';
 
@@ -17,7 +20,21 @@ const MGMT_ORDER: Record<string, number> = {
   '未通知': 7, '通知': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
 };
 
-export function renderIssueList(): HTMLElement {
+// ── 列幅 (ドラッグでリサイズ・端末ローカルに永続化) ──────────────────────────
+const COL_WIDTH_KEY = 'mikke.colWidths';
+function loadColWidths(): Record<string, number> {
+  try {
+    const j = JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(j)) if (typeof v === 'number' && v >= 40) out[k] = v;
+    return out;
+  } catch { return {}; }
+}
+function saveColWidths(w: Record<string, number>): void {
+  try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch { /* noop */ }
+}
+
+export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const root = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
   const subbar = el('div', { class: 'mikke-subbar' });
   const toolbar = el('div', { class: 'mikke-toolbar' });
@@ -26,6 +43,11 @@ export function renderIssueList(): HTMLElement {
 
   let scanCols: string[] = [];
   let cache: ManagedIssue[] = [];
+  let lastFiltered: ManagedIssue[] = [];
+  const selected = new Set<number>();
+  const colWidths = loadColWidths();
+  let bulkBusy = false;
+  let headCheck: HTMLInputElement | null = null;
 
   void load();
 
@@ -36,6 +58,9 @@ export function renderIssueList(): HTMLElement {
       const [all, settings] = await Promise.all([getRepo().listIssues(), getRepo().getSettings()]);
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
       cache = all;
+      // 既に存在しない id は選択から除く
+      const ids = new Set(all.map((i) => i.id));
+      for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
       setState({ issueCount: all.length }, { silent: true });
       paint();
     } catch (e) {
@@ -100,6 +125,63 @@ export function renderIssueList(): HTMLElement {
     paint();
   }
 
+  // ── 列幅リサイズ ──────────────────────────────────────────────────────────
+  // th 右端のグリップを pointer ドラッグで列幅を変更。初回ドラッグ時に全列の
+  // 実測幅を焼き込んで table-layout:fixed に切替え (以降は指定幅が効く)。
+  function attachColResize(th: HTMLElement, key: string): void {
+    const grip = el('span', { class: 'mikke-col-grip', 'aria-hidden': 'true' });
+    grip.addEventListener('click', (e) => e.stopPropagation());   // ソート発火を抑止
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const table = th.closest('table') as HTMLTableElement | null;
+      if (!table) return;
+      const ths = [...table.querySelectorAll('th')] as HTMLElement[];
+      if (table.style.tableLayout !== 'fixed') {
+        // 現在の見た目を維持したまま fixed 化
+        for (const t of ths) t.style.width = `${Math.round(t.getBoundingClientRect().width)}px`;
+        table.style.tableLayout = 'fixed';
+        table.style.width = `${Math.round(table.getBoundingClientRect().width)}px`;
+      }
+      const startX = e.clientX;
+      const startW = th.getBoundingClientRect().width;
+      const startTableW = table.getBoundingClientRect().width;
+      const move = (ev: PointerEvent): void => {
+        const dx = ev.clientX - startX;
+        const w = Math.max(48, Math.round(startW + dx));
+        th.style.width = `${w}px`;
+        table.style.width = `${Math.round(startTableW + (w - startW))}px`;
+      };
+      const up = (): void => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        colWidths[key] = Math.round(th.getBoundingClientRect().width);
+        saveColWidths(colWidths);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    th.appendChild(grip);
+  }
+
+  /** 保存済みの列幅を適用 (1 つでもあれば fixed レイアウトにする)。 */
+  function applySavedWidths(table: HTMLTableElement, ths: { th: HTMLElement; key: string }[]): void {
+    const hasSaved = ths.some(({ key }) => colWidths[key]);
+    if (!hasSaved) return;
+    // 実測してから fixed 化 (未保存列は現状幅を維持)
+    requestAnimationFrame(() => {
+      if (!table.isConnected) return;
+      let total = 0;
+      for (const { th, key } of ths) {
+        const w = colWidths[key] ?? Math.round(th.getBoundingClientRect().width);
+        th.style.width = `${w}px`;
+        total += w;
+      }
+      table.style.tableLayout = 'fixed';
+      table.style.width = `${total}px`;
+    });
+  }
+
   function sortableTh(label: string, k: SortKey): HTMLElement {
     const s = getState();
     const active = s.sortBy === k;
@@ -111,8 +193,8 @@ export function renderIssueList(): HTMLElement {
   }
 
   /** 複数選択フィルタのドロップダウン (チェックボックス群)。 */
-  function multiFilter(label: string, options: string[], selected: string[], onChange: (next: string[]) => void): HTMLElement {
-    const count = selected.length;
+  function multiFilter(label: string, options: string[], selectedOpts: string[], onChange: (next: string[]) => void): HTMLElement {
+    const count = selectedOpts.length;
     const btn = el('button', {
       class: 'mikke-btn mikke-btn--secondary',
       style: 'height:30px;font-size:var(--fs-sm)',
@@ -124,10 +206,10 @@ export function renderIssueList(): HTMLElement {
     for (const opt of options) {
       menu.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:var(--fs-sm)' }, [
         el('input', {
-          type: 'checkbox', ...(selected.includes(opt) ? { checked: 'checked' } : {}),
+          type: 'checkbox', ...(selectedOpts.includes(opt) ? { checked: 'checked' } : {}),
           onchange: (e: Event) => {
             const on = (e.target as HTMLInputElement).checked;
-            const next = on ? [...selected, opt] : selected.filter((x) => x !== opt);
+            const next = on ? [...selectedOpts, opt] : selectedOpts.filter((x) => x !== opt);
             onChange(next);
           },
         }),
@@ -142,17 +224,143 @@ export function renderIssueList(): HTMLElement {
     return el('div', { style: 'position:relative;display:inline-block' }, [btn, menu]);
   }
 
+  // ── subbar (選択なし: タイトル+件数 / 選択あり: 件数+一括アクション) ─────────
+  // §1.4: バーは常に同じ高さ。中身だけ入れ替える。
+  function updateSubbar(): void {
+    clear(subbar);
+    const sel = selected.size;
+    subbar.appendChild(el('span', { class: 'mikke-subbar-title' }, ['管理対象一覧']));
+    if (sel === 0) {
+      subbar.appendChild(el('span', { class: 'mikke-subbar-count' }, [`${lastFiltered.length} / ${cache.length} 件`]));
+      return;
+    }
+    const refreshBtn = el('button', {
+      class: 'mikke-btn mikke-btn--primary',
+      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+      ...(bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => void bulkRefresh(refreshBtn),
+      html: icon('sync') + '<span>情報更新</span>',
+    });
+    subbar.append(
+      el('span', { class: 'mikke-subbar-count', style: 'color:var(--accent-strong);font-weight:600' }, [`${sel} 件選択`]),
+      refreshBtn,
+      el('button', {
+        class: 'mikke-btn mikke-btn--danger',
+        style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+        ...(bulkBusy ? { disabled: 'disabled' } : {}),
+        onclick: () => bulkExclude(),
+      }, ['管理対象から除外']),
+      el('button', {
+        class: 'mikke-btn mikke-btn--ghost',
+        style: 'height:28px;padding:0 var(--s-4);font-size:var(--fs-sm)',
+        ...(bulkBusy ? { disabled: 'disabled' } : {}),
+        onclick: () => { selected.clear(); paint(); },
+      }, ['選択解除']),
+    );
+  }
+
+  function updateHeadCheck(): void {
+    if (!headCheck) return;
+    const total = lastFiltered.length;
+    const sel = lastFiltered.filter((i) => selected.has(i.id)).length;
+    headCheck.checked = total > 0 && sel === total;
+    headCheck.indeterminate = sel > 0 && sel < total;
+  }
+
+  // ── 一括: 管理対象から除外 (理由入力付き確認モーダル) ────────────────────────
+  function bulkExclude(): void {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const reasonTa = el('textarea', {
+      placeholder: '除外の理由 (任意)',
+      style: 'width:100%;min-height:80px;padding:var(--s-3);border:1px solid var(--line-strong);border-radius:var(--r-2)',
+    }) as HTMLTextAreaElement;
+    const body = el('div', {}, [
+      el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7' }, [
+        `選択中の ${ids.length} 件を管理対象から除外します（対応ステータス=対象外）。`,
+        el('br'),
+        '一覧のデフォルト表示から隠れます（「対象外・過検出・未検出も表示」で再表示できます）。',
+      ]),
+      reasonTa,
+    ]);
+    openModal(rootEl, {
+      title: '管理対象から除外',
+      body,
+      primaryLabel: `除外する (${ids.length} 件)`,
+      primaryVariant: 'danger',
+      onPrimary: async () => {
+        const reason = reasonTa.value.trim() || '一括除外';
+        let ok = 0, fail = 0;
+        for (const id of ids) {
+          try {
+            await getRepo().updateIssue(id, { mgmtStatus: '対象外', isOutOfScope: true, outOfScopeReason: reason });
+            ok++;
+          } catch { fail++; }
+        }
+        toast(rootEl, `除外: ${ok} 件${fail ? ` / 失敗 ${fail} 件` : ''}`, fail ? 'warn' : 'ok');
+        selected.clear();
+        await load();
+      },
+    });
+  }
+
+  // ── 一括: 情報更新 (検査ツール API / F3 アダプタ経由) ─────────────────────────
+  async function bulkRefresh(btn: HTMLElement): Promise<void> {
+    const ids = [...selected];
+    if (!ids.length || bulkBusy) return;
+    const h = await relayHealth();
+    if (!h.ok) {
+      toast(rootEl, '中継サーバが起動していません。mikke-launch.bat を実行してください。', 'warn');
+      return;
+    }
+    bulkBusy = true;
+    updateSubbar();   // ボタンを disabled に
+    let ok = 0, fail = 0;
+    let firstErr = '';
+    try {
+      for (let n = 0; n < ids.length; n++) {
+        const issue = cache.find((i) => i.id === ids[n]);
+        if (!issue) { fail++; continue; }
+        // 進捗をボタンラベルに表示 (再描画で消えないよう都度取得)
+        const liveBtn = subbar.querySelector('.mikke-btn--primary');
+        if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${n + 1}/${ids.length}…</span>`;
+        try {
+          const res = await relayGetIssue(issue.issueInstanceId);
+          await getRepo().updateIssue(issue.id, {
+            scannerStatus: res.scannerStatus,
+            severity: res.severity,
+            lastSeen: res.lastSeen,
+            lastSyncedAt: new Date().toISOString(),
+            scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
+          });
+          ok++;
+        } catch (e) {
+          fail++;
+          const msg = (e as Error).message;
+          if (!firstErr) firstErr = msg;
+          // アダプタ未配置/未実装なら全件失敗確定なので中断する
+          if (/未配置|未実装|adapter/i.test(msg)) break;
+        }
+      }
+    } finally {
+      bulkBusy = false;
+    }
+    if (fail) {
+      toast(rootEl, `情報更新: ${ok} 件成功 / ${fail} 件失敗 — ${firstErr}`, 'error');
+    } else {
+      toast(rootEl, `情報更新: ${ok} 件を更新しました`, 'ok');
+    }
+    await load();   // 選択は維持したまま再読込 (load 内で存在しない id は除去)
+    void btn;
+  }
+
   function paint(): void {
     const all = cache;
     const filtered = applySort(applyFilter(all));
+    lastFiltered = filtered;
     const f = getState().filter;
 
-    // subbar
-    clear(subbar);
-    subbar.append(
-      el('span', { class: 'mikke-subbar-title' }, ['管理対象一覧']),
-      el('span', { class: 'mikke-subbar-count' }, [`${filtered.length} / ${all.length} 件`]),
-    );
+    updateSubbar();
 
     // toolbar
     clear(toolbar);
@@ -189,30 +397,53 @@ export function renderIssueList(): HTMLElement {
     // table
     clear(tableWrap);
     if (filtered.length === 0) {
+      headCheck = null;
       tableWrap.appendChild(emptyState());
       return;
     }
+    // ヘッダ: 全行選択チェックボックス (表示中=フィルタ後の行が対象)
+    headCheck = el('input', {
+      type: 'checkbox', 'aria-label': '表示中の全行を選択',
+      onchange: (e: Event) => {
+        const on = (e.target as HTMLInputElement).checked;
+        for (const i of lastFiltered) { on ? selected.add(i.id) : selected.delete(i.id); }
+        paint();
+      },
+    }) as HTMLInputElement;
+
+    const thKeys: { th: HTMLElement; key: string }[] = [];
+    const reg = (th: HTMLElement, key: string, resizable = true): HTMLElement => {
+      if (resizable) attachColResize(th, key);
+      thKeys.push({ th, key });
+      return th;
+    };
     const headCells = [
-      el('th', { class: 'mikke-check-col' }, ['']),
-      sortableTh('Issue', 'title'),
-      sortableTh('検知', 'detection'),
-      sortableTh('対応', 'mgmt'),
-      sortableTh('深刻度', 'severity'),
-      sortableTh('担当', 'assignee'),
-      sortableTh('期限', 'due'),
-      ...scanCols.map((c) => el('th', {}, [c.replace(/^Scan_/, '')])),
-      sortableTh('最終同期', 'synced'),
+      reg(el('th', { class: 'mikke-check-col' }, [headCheck]), '_check', false),
+      reg(sortableTh('Issue', 'title'), 'title'),
+      reg(sortableTh('検知', 'detection'), 'detection'),
+      reg(sortableTh('対応', 'mgmt'), 'mgmt'),
+      reg(sortableTh('深刻度', 'severity'), 'severity'),
+      reg(sortableTh('担当', 'assignee'), 'assignee'),
+      reg(sortableTh('期限', 'due'), 'due'),
+      ...scanCols.map((c) => reg(el('th', {}, [c.replace(/^Scan_/, '')]), `scan:${c}`)),
+      reg(sortableTh('最終同期', 'synced'), 'synced'),
     ];
     const thead = el('thead', {}, [el('tr', {}, headCells)]);
     const tbody = el('tbody');
     for (const i of filtered) {
+      const rowCheck = el('input', {
+        type: 'checkbox', ...(selected.has(i.id) ? { checked: 'checked' } : {}),
+        onchange: (e: Event) => {
+          (e.target as HTMLInputElement).checked ? selected.add(i.id) : selected.delete(i.id);
+          updateHeadCheck();
+          updateSubbar();
+        },
+      });
       const row = el('tr', {
         ...(getState().selectedIssueId === i.id ? { class: 'is-selected' } : {}),
         onclick: () => openDetail(i.id),
       }, [
-        el('td', { class: 'mikke-check-col', onclick: (e: Event) => e.stopPropagation() }, [
-          el('input', { type: 'checkbox' }),
-        ]),
+        el('td', { class: 'mikke-check-col', onclick: (e: Event) => e.stopPropagation() }, [rowCheck]),
         el('td', {}, [i.title || '(無題)']),
         el('td', {}, [detectionBadge(i.detectionStatus)]),
         el('td', {}, [mgmtBadge(i.mgmtStatus)]),
@@ -225,7 +456,10 @@ export function renderIssueList(): HTMLElement {
       ]);
       tbody.appendChild(row);
     }
-    tableWrap.appendChild(el('table', { class: 'mikke-table' }, [thead, tbody]));
+    const table = el('table', { class: 'mikke-table' }, [thead, tbody]) as HTMLTableElement;
+    tableWrap.appendChild(table);
+    updateHeadCheck();
+    applySavedWidths(table, thKeys);
   }
 
   function emptyState(): HTMLElement {
@@ -236,7 +470,7 @@ export function renderIssueList(): HTMLElement {
         el('button', {
           class: 'mikke-btn mikke-btn--primary',
           onclick: () => setState({ view: 'import' }),
-          html: icon('upload') + '<span style="margin-left:6px">CSV を取込</span>',
+          html: icon('upload') + '<span>CSV を取込</span>',
         }),
       ]),
     ]);
