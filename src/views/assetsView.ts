@@ -11,10 +11,23 @@ import { toast } from '../components/toast';
 import { filePicker } from '../components/filePicker';
 import { parseCsv } from '../lib/csv';
 import {
-  DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf,
+  DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf, normalizeAsset,
   buildAssetDirectory, matchAssets,
 } from '../lib/assets';
+import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile } from '../lib/xlsx';
 import type { ManagedAsset, ManagedIssue, MikkeSettings } from '../types';
+
+/** エクスポート/インポートの列 (ヘッダ = 表示名)。 */
+const EXPORT_HEADERS = ['資産', '種別', '事業会社', '関連会社', '管理番号', '特定理由', '特定根拠', '脆弱性件数', '更新日時'];
+/** ヘッダ名 → ManagedAsset の編集可能フィールド。インポート時の取込対象。 */
+const IMPORT_FIELDS: { header: string; field: 'businessCompany' | 'affiliateCompany' | 'mgmtNumber' | 'identifyReason' | 'identifyEvidence' }[] = [
+  { header: '事業会社', field: 'businessCompany' },
+  { header: '関連会社', field: 'affiliateCompany' },
+  { header: '管理番号', field: 'mgmtNumber' },
+  { header: '特定理由', field: 'identifyReason' },
+  { header: '特定根拠', field: 'identifyEvidence' },
+];
+const normHeader = (h: string): string => (h ?? '').replace(/[\s　]+/g, '');
 
 /** 設定から資産列 (複数) を解決。旧 assetColumn からのフォールバックあり。 */
 function resolveAssetColumns(s: MikkeSettings): string[] {
@@ -80,6 +93,15 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
         value: query, style: 'min-width:220px;border:1px solid var(--line)',
         oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; paint(); },
       }),
+      el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [
+        el('button', {
+          class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+          ...(busy ? { disabled: 'disabled' } : {}),
+          onclick: () => openImportModal(),
+          html: icon('upload') + '<span>インポート</span>',
+        }),
+        exportMenu(),
+      ]),
       el('span', { style: 'margin-left:auto;display:inline-flex;gap:var(--s-3)' }, [
         el('button', {
           class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
@@ -129,6 +151,133 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       el('td', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [fmtDate(a.updatedAt) || '—']),
     ])));
     tableWrap.appendChild(el('table', { class: 'mikke-table' }, [thead, tbody]));
+  }
+
+  // ── エクスポート (CSV / Excel) ───────────────────────────────────────────────
+  function assetToRecord(a: ManagedAsset): Record<string, string> {
+    return {
+      '資産': a.assetKey,
+      '種別': a.assetType,
+      '事業会社': a.businessCompany ?? '',
+      '関連会社': a.affiliateCompany ?? '',
+      '管理番号': a.mgmtNumber ?? '',
+      '特定理由': a.identifyReason ?? '',
+      '特定根拠': a.identifyEvidence ?? '',
+      '脆弱性件数': String(issueCounts[a.assetKey] ?? 0),
+      '更新日時': a.updatedAt ?? '',
+    };
+  }
+
+  function doExport(fmt: 'csv' | 'xlsx'): void {
+    if (!assets.length) { toast(rootEl, 'エクスポートする資産がありません。', 'warn'); return; }
+    const recs = assets.map(assetToRecord);
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (fmt === 'csv') {
+      downloadFile(`資産管理_${stamp}.csv`, new Blob([toCsv(EXPORT_HEADERS, recs)], { type: 'text/csv;charset=utf-8' }));
+    } else {
+      downloadFile(`資産管理_${stamp}.xlsx`, buildXlsxBlob(EXPORT_HEADERS, recs, '資産管理'));
+    }
+    toast(rootEl, `${assets.length} 件を ${fmt === 'csv' ? 'CSV' : 'Excel'} でエクスポートしました。`, 'ok');
+  }
+
+  /** エクスポート形式を選ぶドロップダウン。 */
+  function exportMenu(): HTMLElement {
+    const btn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+    }, [el('span', { html: icon('external') }), el('span', {}, ['エクスポート']),
+      el('span', { html: icon('chevronDown'), style: 'display:inline-flex;width:14px' })]);
+    const item = (label: string, fmt: 'csv' | 'xlsx'): HTMLElement => el('button', {
+      class: 'mikke-menu-item', onclick: () => { menu.style.display = 'none'; doExport(fmt); },
+    }, [label]);
+    const menu = el('div', {
+      style: 'position:absolute;right:0;z-index:20;margin-top:2px;background:var(--paper);border:1px solid var(--line);'
+        + 'border-radius:var(--r-2);box-shadow:var(--shadow-flyout);padding:var(--s-2);display:none;min-width:150px',
+    }, [item('CSV (.csv)', 'csv'), item('Excel (.xlsx)', 'xlsx')]);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { menu.style.display = 'none'; }, { once: true });
+    return el('div', { style: 'position:relative;display:inline-block' }, [btn, menu]);
+  }
+
+  // ── インポート (CSV / Excel) ─────────────────────────────────────────────────
+  // ファイルダイアログを直接開き、選択後に取込内容の確認モーダルを出す。
+  function openImportModal(): void {
+    const input = el('input', { type: 'file', accept: '.csv,.xlsx,text/csv', style: 'display:none' }) as HTMLInputElement;
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (file) void handleImportFile(file);
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  async function handleImportFile(file: File): Promise<void> {
+    let sheet;
+    try {
+      sheet = await parseSpreadsheetFile(file);
+    } catch (e) {
+      toast(rootEl, `ファイルを読み込めませんでした: ${(e as Error).message}`, 'error');
+      return;
+    }
+    if (!sheet.headers.length) { toast(rootEl, 'ヘッダを読み取れませんでした。', 'error'); return; }
+    const has = (name: string): boolean => sheet.headers.some((h) => normHeader(h) === name);
+    const pick = (row: Record<string, string>, name: string): string => {
+      for (const [k, v] of Object.entries(row)) if (normHeader(k) === name) return (v ?? '').trim();
+      return '';
+    };
+    if (!has('資産')) { toast(rootEl, '「資産」列が見つかりません。', 'error'); return; }
+    const presentFields = IMPORT_FIELDS.filter((f) => has(f.header));
+
+    const byKey = new Map(assets.map((a) => [a.assetKey, a]));
+    const creates: Omit<ManagedAsset, 'id'>[] = [];
+    const updates: { id: number; patch: Partial<ManagedAsset> }[] = [];
+    let skipped = 0;
+    for (const row of sheet.rows) {
+      const key = normalizeAsset(pick(row, '資産'));
+      if (!key) { skipped++; continue; }
+      const fields: Partial<ManagedAsset> = {};
+      for (const f of presentFields) fields[f.field] = pick(row, f.header);
+      const cur = byKey.get(key);
+      if (cur) {
+        if (!presentFields.length) { skipped++; continue; }
+        updates.push({ id: cur.id, patch: { ...fields, updatedAt: new Date().toISOString() } });
+      } else {
+        const typeRaw = pick(row, '種別').toUpperCase();
+        creates.push({
+          assetKey: key,
+          assetType: typeRaw === 'IP' ? 'IP' : typeRaw === 'FQDN' ? 'FQDN' : assetTypeOf(key),
+          ...fields,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+    if (!creates.length && !updates.length) {
+      toast(rootEl, `取り込める行がありませんでした（スキップ ${skipped} 行）。`, 'warn', 6000);
+      return;
+    }
+    const body = el('div', { style: 'line-height:1.8' }, [
+      `ファイル「${file.name}」から取り込みます。`, el('br'),
+      `・新規追加: ${creates.length} 件`, el('br'),
+      `・更新: ${updates.length} 件`, el('br'),
+      ...(skipped ? [el('span', { style: 'color:var(--ink-4)' }, [`・スキップ (資産キー空 / 更新列なし): ${skipped} 行`])] : []),
+    ]);
+    openModal(rootEl, {
+      title: 'インポート内容の確認',
+      body,
+      primaryLabel: `取り込む (${creates.length + updates.length} 件)`,
+      onPrimary: async () => {
+        busy = true;
+        let ok = 0, fail = 0;
+        for (const c of creates) { try { await getRepo().createAsset(c); ok++; } catch { fail++; } }
+        for (const u of updates) { try { await getRepo().updateAsset(u.id, u.patch); ok++; } catch { fail++; } }
+        busy = false;
+        toast(rootEl, `インポート完了: ${ok} 件${fail ? ` / 失敗 ${fail} 件` : ''}`, fail ? 'warn' : 'ok', 5000);
+        await load();
+      },
+    });
   }
 
   // ── 脆弱性から資産を抽出 ────────────────────────────────────────────────────

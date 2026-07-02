@@ -28,6 +28,14 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
   // ── 最新は先頭 ──────────────────────────────────────────────────────
   {
+    version: '2026-07-03b', date: '2026-07-03',
+    title: '資産管理の CSV / Excel エクスポート・インポート',
+    changes: [
+      '資産管理の一覧を CSV / Excel(.xlsx) でエクスポートできるように（依存ライブラリなし。BOM 付き CSV は Excel でそのまま開けます）。',
+      'CSV / Excel(.xlsx) をインポートして資産の管理情報を一括更新・追加できるように（「資産」列をキーに突合。存在する列だけ更新するので、エクスポートしたファイルを編集して戻せます）。',
+    ],
+  },
+  {
     version: '2026-07-03a', date: '2026-07-03',
     title: '資産抽出の複数列対応と、同一脆弱性の関連資産への伝播',
     changes: [

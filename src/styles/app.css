@@ -347,6 +347,14 @@
 #mikke-root .mikke-dropzone-title b { color: var(--accent-strong); font-weight: 600; }
 #mikke-root .mikke-dropzone-hint { font-size: var(--fs-sm); color: var(--ink-4); }
 
+/* ---------- ドロップダウンメニュー項目 ---------- */
+#mikke-root .mikke-menu-item {
+  display: block; width: 100%; text-align: left; padding: var(--s-3) var(--s-4);
+  background: transparent; border: 0; border-radius: var(--r-2); cursor: pointer;
+  font-size: var(--fs-sm); color: var(--ink); font-family: inherit;
+}
+#mikke-root .mikke-menu-item:hover { background: var(--paper-2); }
+
 /* ---------- file picker (モーダル内のコンパクトなファイル選択フィールド) ---------- */
 #mikke-root .mikke-filefield {
   display: flex; align-items: center; gap: var(--s-4);
