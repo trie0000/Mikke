@@ -347,6 +347,50 @@
 #mikke-root .mikke-dropzone-title b { color: var(--accent-strong); font-weight: 600; }
 #mikke-root .mikke-dropzone-hint { font-size: var(--fs-sm); color: var(--ink-4); }
 
+/* ---------- 全文表示トグル (折り返し) ---------- */
+#mikke-root .mikke-table.mikke-wrap td {
+  white-space: normal; overflow: visible; text-overflow: clip;
+  overflow-wrap: anywhere; word-break: break-word; vertical-align: top;
+}
+/* ---------- 仮想スクロールのスペーサ行 ---------- */
+#mikke-root .mikke-table tbody tr.mikke-vspacer:hover { background: transparent; }
+#mikke-root .mikke-table tbody tr.mikke-vspacer td { padding: 0; border: 0; }
+/* ---------- 列ヘッダのフィルタ/並べ替えメニュー ---------- */
+#mikke-root .mikke-th-caret {
+  display: inline-flex; vertical-align: middle; margin-left: 4px; opacity: 0.45;
+  width: 12px; height: 12px;
+}
+#mikke-root .mikke-th-caret svg { width: 12px; height: 12px; }
+#mikke-root .mikke-th-active { color: var(--accent-strong); opacity: 1; }
+#mikke-root .mikke-colmenu {
+  position: fixed; z-index: 50; width: 260px; max-height: 460px;
+  display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-2); box-shadow: var(--shadow-flyout); overflow: hidden;
+}
+#mikke-root .mikke-colmenu-act {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%; text-align: left;
+  padding: var(--s-3) var(--s-4); background: transparent; border: 0; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--ink); font-family: inherit;
+}
+#mikke-root .mikke-colmenu-act:hover { background: var(--paper-2); }
+#mikke-root .mikke-colmenu-sep { height: 1px; background: var(--line); margin: var(--s-2) 0; }
+#mikke-root .mikke-colmenu-search {
+  margin: var(--s-3); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-strong);
+  border-radius: var(--r-2); font-size: var(--fs-sm); font-family: inherit;
+}
+#mikke-root .mikke-colmenu-search:focus { outline: none; border-color: var(--accent); }
+#mikke-root .mikke-colmenu-vlist { flex: 1; overflow: auto; padding: 0 var(--s-2) var(--s-2); }
+#mikke-root .mikke-colmenu-item {
+  display: flex; align-items: center; gap: var(--s-3); padding: 3px var(--s-3);
+  cursor: pointer; font-size: var(--fs-sm); border-radius: var(--r-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#mikke-root .mikke-colmenu-item:hover { background: var(--paper-2); }
+#mikke-root .mikke-colmenu-item span { overflow: hidden; text-overflow: ellipsis; }
+#mikke-root .mikke-colmenu-all { border-bottom: 1px solid var(--line); margin-bottom: var(--s-2); font-weight: 600; }
+#mikke-root .mikke-colmenu-note { padding: var(--s-2) var(--s-3); color: var(--ink-4); font-size: var(--fs-xs); }
+
 /* ---------- ドロップダウンメニュー項目 ---------- */
 #mikke-root .mikke-menu-item {
   display: block; width: 100%; text-align: left; padding: var(--s-3) var(--s-4);

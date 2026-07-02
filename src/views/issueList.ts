@@ -1,4 +1,5 @@
 // F4: 管理対象脆弱性の一覧画面。subbar → toolbar → table の順 (UI ルール §1.2)。
+// QAM 参考: 列ヘッダクリックの Excel 風フィルタ / 全文表示トグル / 仮想スクロール。
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
@@ -9,16 +10,20 @@ import { resolveScanValue } from '../lib/scanName';
 import { relayHealth, relayGetIssue } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
-import { DETECTION_STATUSES, MGMT_STATUSES } from '../types';
 import type { ManagedIssue } from '../types';
 
-type SortKey = 'id' | 'title' | 'detection' | 'mgmt' | 'severity' | 'assignee' | 'due' | 'synced';
+type SortKey = 'title' | 'detection' | 'mgmt' | 'severity' | 'assignee' | 'due' | 'synced';
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
   '未通知': 7, '通知': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
 };
+
+// 仮想スクロール: この行数を超えたら仮想化。VBUF=上下バッファ行数。
+const VIRT_MIN = 40;
+const VBUF = 12;
+const ROW_H_DEFAULT = 40;
 
 // ── 列幅 (ドラッグでリサイズ・端末ローカルに永続化) ──────────────────────────
 const COL_WIDTH_KEY = 'mikke.colWidths';
@@ -34,6 +39,35 @@ function saveColWidths(w: Record<string, number>): void {
   try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch { /* noop */ }
 }
 
+// ── 列フィルタ (Excel 風・除外セット方式。端末ローカルに永続化) ────────────────
+const COL_FILTER_KEY = 'mikke.colFilters';
+function loadColFilters(): Record<string, string[]> {
+  try {
+    const j = JSON.parse(localStorage.getItem(COL_FILTER_KEY) || '{}') as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(j)) if (Array.isArray(v)) out[k] = v.filter((x): x is string => typeof x === 'string');
+    return out;
+  } catch { return {}; }
+}
+function saveColFilters(f: Record<string, string[]>): void {
+  try { localStorage.setItem(COL_FILTER_KEY, JSON.stringify(f)); } catch { /* noop */ }
+}
+
+// ── 全文表示 (折り返し) トグル ────────────────────────────────────────────────
+const WRAP_KEY = 'mikke.wrap';
+function loadWrap(): boolean { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } }
+function saveWrap(on: boolean): void { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch { /* noop */ } }
+
+interface Col {
+  id: string;
+  label: string;
+  sortKey?: SortKey;
+  width: number;
+  text: (i: ManagedIssue) => string;
+  render: (i: ManagedIssue) => HTMLElement | string;
+  cellStyle?: string;
+}
+
 export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const root = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
   const subbar = el('div', { class: 'mikke-subbar' });
@@ -45,10 +79,34 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let csvHeaders: string[] = [];
   let cache: ManagedIssue[] = [];
   let lastFiltered: ManagedIssue[] = [];
+  let menuBaseRows: ManagedIssue[] = [];
   const selected = new Set<number>();
   const colWidths = loadColWidths();
+  const colExcluded = loadColFilters();
+  let wrapOn = loadWrap();
   let bulkBusy = false;
   let headCheck: HTMLInputElement | null = null;
+
+  // ── 仮想スクロール状態 ──────────────────────────────────────────────────────
+  let vWin: ManagedIssue[] = [];
+  let vCols: Col[] = [];
+  let vRowH = ROW_H_DEFAULT;
+  let vVirtual = false;
+  let vTop: HTMLElement | null = null;
+  let vBot: HTMLElement | null = null;
+  let vTbody: HTMLElement | null = null;
+  let vLastStart = -1;
+  let rafPending = false;
+  tableWrap.addEventListener('scroll', () => {
+    if (!vVirtual) return;
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const start = Math.max(0, Math.floor(tableWrap.scrollTop / vRowH) - VBUF);
+      if (start !== vLastStart) paintWindow();
+    });
+  });
 
   void load();
 
@@ -60,7 +118,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
       csvHeaders = settings.lastCsvHeaders ?? [];
       cache = all;
-      // 既に存在しない id は選択から除く
       const ids = new Set(all.map((i) => i.id));
       for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
       setState({ issueCount: all.length }, { silent: true });
@@ -73,19 +130,48 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     }
   }
 
-  function applyFilter(all: ManagedIssue[]): ManagedIssue[] {
+  // ── 列定義 ──────────────────────────────────────────────────────────────────
+  function buildColumns(): Col[] {
+    const cols: Col[] = [
+      { id: 'title', label: 'Issue', sortKey: 'title', width: 260,
+        text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
+      { id: 'detection', label: '検知', sortKey: 'detection', width: 96,
+        text: (i) => i.detectionStatus, render: (i) => detectionBadge(i.detectionStatus) },
+      { id: 'mgmt', label: '対応', sortKey: 'mgmt', width: 96,
+        text: (i) => i.mgmtStatus, render: (i) => mgmtBadge(i.mgmtStatus) },
+      { id: 'severity', label: '深刻度', sortKey: 'severity', width: 92,
+        text: (i) => i.severity ?? '', render: (i) => severityBadge(i.severity) },
+      { id: 'assignee', label: '担当', sortKey: 'assignee', width: 120,
+        text: (i) => i.assignee ?? '', render: (i) => i.assignee || '—' },
+      { id: 'due', label: '期限', sortKey: 'due', width: 108,
+        text: (i) => fmtDate(i.dueDate, false) || '', render: (i) => fmtDate(i.dueDate, false) || '—' },
+    ];
+    for (const c of scanCols) {
+      cols.push({
+        id: `scan:${c}`, label: c.replace(/^Scan_/, ''), width: 160,
+        text: (i) => resolveScanValue(i.scanFields, c, csvHeaders) || '',
+        render: (i) => resolveScanValue(i.scanFields, c, csvHeaders) || '—',
+        cellStyle: 'color:var(--ink-2)',
+      });
+    }
+    cols.push({ id: 'synced', label: '最終同期', sortKey: 'synced', width: 150,
+      text: (i) => fmtDate(i.lastSyncedAt) || '', render: (i) => fmtDate(i.lastSyncedAt) || '—',
+      cellStyle: 'color:var(--ink-3)' });
+    return cols;
+  }
+
+  // ── フィルタ・ソート ──────────────────────────────────────────────────────────
+  /** 既定の非表示 (対象外/過検出/未検出) + 検索。列フィルタとは独立。 */
+  function baseFilter(all: ManagedIssue[]): ManagedIssue[] {
     const f = getState().filter;
+    const q = f.query ? f.query.toLowerCase() : '';
     return all.filter((i) => {
       if (!f.showHidden) {
         if (i.isOutOfScope) return false;
         if (i.mgmtStatus === '過検出' || i.mgmtStatus === '対象外') return false;
         if (isUndetected(i.detectionStatus)) return false;
       }
-      if (f.detection.length && !f.detection.includes(i.detectionStatus)) return false;
-      if (f.mgmt.length && !f.mgmt.includes(i.mgmtStatus)) return false;
-      if (f.severity.length && !f.severity.includes(i.severity ?? '')) return false;
-      if (f.query) {
-        const q = f.query.toLowerCase();
+      if (q) {
         const hay = `${i.title} ${i.issueInstanceId} ${i.assignee ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
@@ -93,12 +179,19 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
+  /** 列フィルタ (除外セット): 各列の除外値に一致する行を隠す (列間 AND)。 */
+  function colFilter(rows: ManagedIssue[], columns: Col[]): ManagedIssue[] {
+    const active = columns.filter((c) => (colExcluded[c.id]?.length ?? 0) > 0);
+    if (!active.length) return rows;
+    return rows.filter((i) => !active.some((c) => colExcluded[c.id]!.includes(c.text(i))));
+  }
+
   function applySort(rows: ManagedIssue[]): ManagedIssue[] {
     const { sortBy, sortDir } = getState();
+    if (!sortBy) return rows;
     const dir = sortDir === 'asc' ? 1 : -1;
     const key = (i: ManagedIssue): number | string => {
       switch (sortBy as SortKey) {
-        case 'id': return i.id;
         case 'title': return i.title ?? '';
         case 'detection': return DETECTION_ORDER[i.detectionStatus] ?? 0;
         case 'mgmt': return MGMT_ORDER[i.mgmtStatus] ?? 0;
@@ -117,40 +210,23 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
-  function toggleSort(k: SortKey): void {
-    const s = getState();
-    if (s.sortBy === k) {
-      setState({ sortDir: s.sortDir === 'asc' ? 'desc' : 'asc' }, { silent: true });
-    } else {
-      setState({ sortBy: k, sortDir: 'asc' }, { silent: true });
-    }
+  function setSort(k: SortKey, dir: 'asc' | 'desc'): void {
+    setState({ sortBy: k, sortDir: dir }, { silent: true });
     paint();
   }
 
   // ── 列幅リサイズ ──────────────────────────────────────────────────────────
-  // th 右端のグリップを pointer ドラッグで列幅を変更。初回ドラッグ時に全列の
-  // 実測幅を焼き込んで table-layout:fixed に切替え (以降は指定幅が効く)。
-  function attachColResize(th: HTMLElement, key: string): void {
+  function attachColResize(th: HTMLElement, key: string, table: HTMLTableElement): void {
     const grip = el('span', { class: 'mikke-col-grip', 'aria-hidden': 'true' });
-    grip.addEventListener('click', (e) => e.stopPropagation());   // ソート発火を抑止
+    grip.addEventListener('click', (e) => e.stopPropagation());
     grip.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const table = th.closest('table') as HTMLTableElement | null;
-      if (!table) return;
-      const ths = [...table.querySelectorAll('th')] as HTMLElement[];
-      if (table.style.tableLayout !== 'fixed') {
-        // 現在の見た目を維持したまま fixed 化
-        for (const t of ths) t.style.width = `${Math.round(t.getBoundingClientRect().width)}px`;
-        table.style.tableLayout = 'fixed';
-        table.style.width = `${Math.round(table.getBoundingClientRect().width)}px`;
-      }
       const startX = e.clientX;
       const startW = th.getBoundingClientRect().width;
       const startTableW = table.getBoundingClientRect().width;
       const move = (ev: PointerEvent): void => {
-        const dx = ev.clientX - startX;
-        const w = Math.max(48, Math.round(startW + dx));
+        const w = Math.max(48, Math.round(startW + (ev.clientX - startX)));
         th.style.width = `${w}px`;
         table.style.width = `${Math.round(startTableW + (w - startW))}px`;
       };
@@ -166,68 +242,108 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     th.appendChild(grip);
   }
 
-  /** 保存済みの列幅を適用 (1 つでもあれば fixed レイアウトにする)。 */
-  function applySavedWidths(table: HTMLTableElement, ths: { th: HTMLElement; key: string }[]): void {
-    const hasSaved = ths.some(({ key }) => colWidths[key]);
-    if (!hasSaved) return;
-    // 実測してから fixed 化 (未保存列は現状幅を維持)
-    requestAnimationFrame(() => {
-      if (!table.isConnected) return;
-      let total = 0;
-      for (const { th, key } of ths) {
-        const w = colWidths[key] ?? Math.round(th.getBoundingClientRect().width);
-        th.style.width = `${w}px`;
-        total += w;
-      }
-      table.style.tableLayout = 'fixed';
-      table.style.width = `${total}px`;
-    });
-  }
-
-  function sortableTh(label: string, k: SortKey): HTMLElement {
-    const s = getState();
-    const active = s.sortBy === k;
-    const arrow = active ? (s.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-    return el('th', {
-      onclick: () => toggleSort(k),
-      style: active ? 'color:var(--accent-strong)' : '',
-    }, [label + arrow]);
-  }
-
-  /** 複数選択フィルタのドロップダウン (チェックボックス群)。 */
-  function multiFilter(label: string, options: string[], selectedOpts: string[], onChange: (next: string[]) => void): HTMLElement {
-    const count = selectedOpts.length;
-    const btn = el('button', {
-      class: 'mikke-btn mikke-btn--secondary',
-      style: 'height:30px;font-size:var(--fs-sm)',
-    }, [count ? `${label} (${count})` : label, el('span', { html: icon('chevronDown'), style: 'display:inline-flex;width:14px;margin-left:4px' })]);
-    const menu = el('div', {
-      style: 'position:absolute;z-index:10;margin-top:2px;background:var(--paper);border:1px solid var(--line);' +
-        'border-radius:var(--r-2);box-shadow:var(--shadow-flyout);padding:var(--s-3);display:none;min-width:160px',
-    });
-    for (const opt of options) {
-      menu.appendChild(el('label', { style: 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:var(--fs-sm)' }, [
-        el('input', {
-          type: 'checkbox', ...(selectedOpts.includes(opt) ? { checked: 'checked' } : {}),
-          onchange: (e: Event) => {
-            const on = (e.target as HTMLInputElement).checked;
-            const next = on ? [...selectedOpts, opt] : selectedOpts.filter((x) => x !== opt);
-            onChange(next);
-          },
-        }),
-        opt || '(空)',
-      ]));
+  /** 常に table-layout:fixed + 明示幅にする (仮想スクロールで列幅を安定させる)。 */
+  function applyWidths(table: HTMLTableElement, ths: { th: HTMLElement; key: string; width: number }[]): void {
+    let total = 0;
+    for (const { th, key, width } of ths) {
+      const w = colWidths[key] ?? width;
+      th.style.width = `${w}px`;
+      total += w;
     }
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    });
-    document.addEventListener('click', () => { menu.style.display = 'none'; }, { once: true });
-    return el('div', { style: 'position:relative;display:inline-block' }, [btn, menu]);
+    table.style.tableLayout = 'fixed';
+    table.style.width = `${total}px`;
   }
 
-  // ── subbar (選択なし: タイトル+件数 / 選択あり: 件数+一括アクション) ─────────
-  // §1.4: バーは常に同じ高さ。中身だけ入れ替える。
+  // ── 列メニュー (並べ替え + Excel 風の値フィルタ) ──────────────────────────────
+  let openMenu: HTMLElement | null = null;
+  let openMenuCol: string | null = null;
+  let menuDocHandler: ((e: MouseEvent) => void) | null = null;
+  function closeMenu(): void {
+    if (menuDocHandler) { document.removeEventListener('mousedown', menuDocHandler); menuDocHandler = null; }
+    if (openMenu) { openMenu.remove(); openMenu = null; }
+    openMenuCol = null;
+  }
+
+  function openColMenu(th: HTMLElement, col: Col): void {
+    if (openMenuCol === col.id) { closeMenu(); return; }
+    closeMenu();
+    openMenuCol = col.id;
+    const rect = th.getBoundingClientRect();
+    const ex = new Set(colExcluded[col.id] ?? []);
+    const values = [...new Set(menuBaseRows.map((r) => col.text(r)))].sort((a, b) => a.localeCompare(b));
+    const capped = values.slice(0, 2000);
+
+    const menu = el('div', { class: 'mikke-colmenu' });
+    // 並べ替え
+    if (col.sortKey) {
+      const sk = col.sortKey;
+      menu.append(
+        el('button', { class: 'mikke-colmenu-act', onclick: () => { closeMenu(); setSort(sk, 'asc'); } },
+          [el('span', { html: icon('chevronDown'), style: 'display:inline-flex;transform:rotate(180deg)' }), el('span', {}, ['昇順で並べ替え'])]),
+        el('button', { class: 'mikke-colmenu-act', onclick: () => { closeMenu(); setSort(sk, 'desc'); } },
+          [el('span', { html: icon('chevronDown'), style: 'display:inline-flex' }), el('span', {}, ['降順で並べ替え'])]),
+        el('div', { class: 'mikke-colmenu-sep' }),
+      );
+    }
+    const search = el('input', { class: 'mikke-colmenu-search', type: 'text', placeholder: '値を検索' }) as HTMLInputElement;
+    const allCb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    const listWrap = el('div', { class: 'mikke-colmenu-vlist' });
+    if (values.length > 2000) menu.appendChild(el('div', { class: 'mikke-colmenu-note' }, [`値が多いため先頭 2000 件のみ表示 (全 ${values.length} 件)`]));
+
+    const apply = (): void => {
+      const arr = [...ex];
+      if (arr.length) colExcluded[col.id] = arr; else delete colExcluded[col.id];
+      saveColFilters(colExcluded);
+      paint();
+    };
+    const label = (v: string): string => (v === '' ? '(空白)' : v);
+    const renderList = (q: string): void => {
+      const scroll = listWrap.scrollTop;
+      clear(listWrap);
+      const ql = q.trim().toLowerCase();
+      const shown = capped.filter((v) => !ql || label(v).toLowerCase().includes(ql));
+      allCb.checked = shown.length > 0 && shown.every((v) => !ex.has(v));
+      allCb.indeterminate = shown.some((v) => !ex.has(v)) && shown.some((v) => ex.has(v));
+      for (const v of shown) {
+        const cb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+        cb.checked = !ex.has(v);
+        cb.addEventListener('change', () => { if (cb.checked) ex.delete(v); else ex.add(v); apply(); renderList(search.value); });
+        listWrap.appendChild(el('label', { class: 'mikke-colmenu-item' }, [cb, el('span', {}, [label(v)])]));
+      }
+      listWrap.scrollTop = scroll;
+    };
+    allCb.addEventListener('change', () => {
+      const ql = search.value.trim().toLowerCase();
+      const shown = capped.filter((v) => !ql || label(v).toLowerCase().includes(ql));
+      if (allCb.checked) shown.forEach((v) => ex.delete(v)); else shown.forEach((v) => ex.add(v));
+      apply(); renderList(search.value);
+    });
+    search.addEventListener('input', () => renderList(search.value));
+    search.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') closeMenu(); });
+
+    menu.append(
+      search,
+      el('div', { class: 'mikke-colmenu-vlist', style: 'flex:0 0 auto;overflow:visible;padding-bottom:0' }, [
+        el('label', { class: 'mikke-colmenu-item mikke-colmenu-all' }, [allCb, el('span', {}, ['(すべて選択)'])]),
+      ]),
+      listWrap,
+    );
+    renderList('');
+
+    // 位置決め (画面内にクランプ)
+    const width = 260;
+    const left = Math.max(6, Math.min(rect.left, window.innerWidth - width - 6));
+    const top = Math.min(rect.bottom + 2, window.innerHeight - 120);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.addEventListener('mousedown', (e) => e.stopPropagation());
+    rootEl.appendChild(menu);
+    openMenu = menu;
+    menuDocHandler = (): void => closeMenu();
+    setTimeout(() => document.addEventListener('mousedown', menuDocHandler!), 0);
+  }
+
+  // ── subbar ────────────────────────────────────────────────────────────────
   function updateSubbar(): void {
     clear(subbar);
     const sel = selected.size;
@@ -275,7 +391,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     headCheck.indeterminate = sel > 0 && sel < total;
   }
 
-  // ── 一括: 管理対象から除外 (理由入力付き確認モーダル) ────────────────────────
+  // ── 一括アクション ────────────────────────────────────────────────────────
   function bulkExclude(): void {
     const ids = [...selected];
     if (!ids.length) return;
@@ -312,8 +428,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
-  // ── 一括: 完全削除 (確認モーダル付き) ────────────────────────────────────────
-  // 物理削除のため履歴も消える。通常運用は「除外」を推奨し、削除は誤取込の掃除用。
   function bulkDelete(): void {
     const ids = [...selected];
     if (!ids.length) return;
@@ -341,7 +455,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
-  // ── 一括: 情報更新 (検査ツール API / F3 アダプタ経由) ─────────────────────────
   async function bulkRefresh(btn: HTMLElement): Promise<void> {
     const ids = [...selected];
     if (!ids.length || bulkBusy) return;
@@ -351,14 +464,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       return;
     }
     bulkBusy = true;
-    updateSubbar();   // ボタンを disabled に
+    updateSubbar();
     let ok = 0, fail = 0;
     let firstErr = '';
     try {
       for (let n = 0; n < ids.length; n++) {
         const issue = cache.find((i) => i.id === ids[n]);
         if (!issue) { fail++; continue; }
-        // 進捗をボタンラベルに表示 (再描画で消えないよう都度取得)
         const liveBtn = subbar.querySelector('.mikke-btn--primary');
         if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${n + 1}/${ids.length}…</span>`;
         try {
@@ -370,8 +482,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
             lastSyncedAt: new Date().toISOString(),
             scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
           };
-          // アダプタが detected (現在も検出されているか) を返した場合のみ、
-          // CSV 取込と同じ遷移ロジックで検知ステータスを更新する。
           if (res.detected === true) {
             patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
           } else if (res.detected === false) {
@@ -387,25 +497,71 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           fail++;
           const msg = (e as Error).message;
           if (!firstErr) firstErr = msg;
-          // アダプタ未配置/未実装なら全件失敗確定なので中断する
           if (/未配置|未実装|adapter/i.test(msg)) break;
         }
       }
     } finally {
       bulkBusy = false;
     }
-    if (fail) {
-      toast(rootEl, `情報更新: ${ok} 件成功 / ${fail} 件失敗 — ${firstErr}`, 'error');
-    } else {
-      toast(rootEl, `情報更新: ${ok} 件を更新しました`, 'ok');
-    }
-    await load();   // 選択は維持したまま再読込 (load 内で存在しない id は除去)
+    if (fail) toast(rootEl, `情報更新: ${ok} 件成功 / ${fail} 件失敗 — ${firstErr}`, 'error');
+    else toast(rootEl, `情報更新: ${ok} 件を更新しました`, 'ok');
+    await load();
     void btn;
   }
 
+  // ── 行 DOM ────────────────────────────────────────────────────────────────
+  function buildRow(i: ManagedIssue, columns: Col[]): HTMLElement {
+    const rowCheck = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    rowCheck.checked = selected.has(i.id);
+    rowCheck.addEventListener('change', () => {
+      rowCheck.checked ? selected.add(i.id) : selected.delete(i.id);
+      updateHeadCheck();
+      updateSubbar();
+    });
+    const cells: HTMLElement[] = [
+      el('td', { class: 'mikke-check-col', onclick: (e: Event) => e.stopPropagation() }, [rowCheck]),
+    ];
+    for (const col of columns) {
+      cells.push(el('td', col.cellStyle ? { style: col.cellStyle } : {}, [col.render(i)]));
+    }
+    return el('tr', {
+      class: 'mikke-drow' + (getState().selectedIssueId === i.id ? ' is-selected' : ''),
+      onclick: () => {
+        const sel = window.getSelection();
+        if (sel && sel.toString()) return;
+        openDetail(i.id);
+      },
+    }, cells);
+  }
+
+  // ── 仮想スクロール描画 ──────────────────────────────────────────────────────
+  function windowRange(): [number, number] {
+    const n = vWin.length;
+    const vh = tableWrap.clientHeight || window.innerHeight || 800;
+    let start = Math.floor(tableWrap.scrollTop / vRowH) - VBUF;
+    if (start < 0) start = 0;
+    let end = start + Math.ceil(vh / vRowH) + VBUF * 2;
+    if (end > n) end = n;
+    return [start, end];
+  }
+  function paintWindow(): void {
+    if (!vTbody || !vTop || !vBot) return;
+    const [start, end] = windowRange();
+    vLastStart = start;
+    (vTop.firstElementChild as HTMLElement).style.height = `${start * vRowH}px`;
+    (vBot.firstElementChild as HTMLElement).style.height = `${(vWin.length - end) * vRowH}px`;
+    let node = vTop.nextSibling;
+    while (node && node !== vBot) { const next = node.nextSibling; vTbody.removeChild(node); node = next; }
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) frag.append(buildRow(vWin[i]!, vCols));
+    vTbody.insertBefore(frag, vBot);
+  }
+
+  // ── 描画 ────────────────────────────────────────────────────────────────────
   function paint(): void {
-    const all = cache;
-    const filtered = applySort(applyFilter(all));
+    const columns = buildColumns();
+    menuBaseRows = baseFilter(cache);
+    const filtered = applySort(colFilter(menuBaseRows, columns));
     lastFiltered = filtered;
     const f = getState().filter;
 
@@ -418,11 +574,23 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       value: f.query, style: 'min-width:200px;border:1px solid var(--line)',
       oninput: (e: Event) => { setFilter({ query: (e.target as HTMLInputElement).value }, { silent: true }); paint(); },
     });
-    // 深刻度の候補 (データに出現する値)
-    const sevOptions = Array.from(new Set(all.map((i) => i.severity).filter((x): x is string => !!x)));
-    const detectFilter = multiFilter('検知', DETECTION_STATUSES, f.detection, (next) => { setFilter({ detection: next }, { silent: true }); paint(); });
-    const mgmtFilter = multiFilter('対応', MGMT_STATUSES, f.mgmt, (next) => { setFilter({ mgmt: next }, { silent: true }); paint(); });
-    const sevFilter = multiFilter('深刻度', sevOptions, f.severity, (next) => { setFilter({ severity: next }, { silent: true }); paint(); });
+    const wrapBtn = el('button', {
+      class: wrapOn ? 'mikke-btn mikke-btn--primary' : 'mikke-btn mikke-btn--secondary',
+      style: 'height:30px;font-size:var(--fs-sm)', title: '列幅で折り返して全文表示',
+      onclick: () => { wrapOn = !wrapOn; saveWrap(wrapOn); paint(); },
+    }, ['全文表示']);
+    const hasColFilter = Object.values(colExcluded).some((a) => a.length);
+    const clearBtn = (hasColFilter || f.query)
+      ? el('button', {
+          class: 'mikke-btn mikke-btn--ghost', style: 'height:30px;font-size:var(--fs-sm)',
+          onclick: () => {
+            for (const k of Object.keys(colExcluded)) delete colExcluded[k];
+            saveColFilters(colExcluded);
+            setFilter({ query: '' }, { silent: true });
+            paint();
+          },
+        }, ['フィルタ解除'])
+      : null;
     const hiddenToggle = el('label', {
       style: 'display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;margin-left:auto',
     }, [
@@ -432,25 +600,19 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       }),
       '対象外・過検出・未検出も表示',
     ]);
-    const clearBtn = (f.detection.length || f.mgmt.length || f.severity.length || f.query)
-      ? el('button', { class: 'mikke-btn mikke-btn--ghost', style: 'height:30px;font-size:var(--fs-sm)',
-          onclick: () => { setFilter({ detection: [], mgmt: [], severity: [], query: '' }); } }, ['クリア'])
-      : null;
     toolbar.append(
       el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
-      search, detectFilter, mgmtFilter, sevFilter,
+      search, wrapBtn,
       ...(clearBtn ? [clearBtn] : []),
       hiddenToggle,
     );
 
     // table
     clear(tableWrap);
-    if (filtered.length === 0) {
-      headCheck = null;
-      tableWrap.appendChild(emptyState());
-      return;
-    }
-    // ヘッダ: 全行選択チェックボックス (表示中=フィルタ後の行が対象)
+    closeMenu();
+    vVirtual = false; vTop = vBot = vTbody = null;
+    if (filtered.length === 0 && cache.length === 0) { headCheck = null; tableWrap.appendChild(emptyState()); return; }
+
     headCheck = el('input', {
       type: 'checkbox', 'aria-label': '表示中の全行を選択',
       onchange: (e: Event) => {
@@ -460,61 +622,62 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       },
     }) as HTMLInputElement;
 
-    const thKeys: { th: HTMLElement; key: string }[] = [];
-    const reg = (th: HTMLElement, key: string, resizable = true): HTMLElement => {
-      if (resizable) attachColResize(th, key);
-      thKeys.push({ th, key });
-      return th;
-    };
-    const headCells = [
-      reg(el('th', { class: 'mikke-check-col' }, [headCheck]), '_check', false),
-      reg(sortableTh('Issue', 'title'), 'title'),
-      reg(sortableTh('検知', 'detection'), 'detection'),
-      reg(sortableTh('対応', 'mgmt'), 'mgmt'),
-      reg(sortableTh('深刻度', 'severity'), 'severity'),
-      reg(sortableTh('担当', 'assignee'), 'assignee'),
-      reg(sortableTh('期限', 'due'), 'due'),
-      ...scanCols.map((c) => reg(el('th', {}, [c.replace(/^Scan_/, '')]), `scan:${c}`)),
-      reg(sortableTh('最終同期', 'synced'), 'synced'),
-    ];
-    const thead = el('thead', {}, [el('tr', {}, headCells)]);
-    const tbody = el('tbody');
-    for (const i of filtered) {
-      const rowCheck = el('input', {
-        type: 'checkbox', ...(selected.has(i.id) ? { checked: 'checked' } : {}),
-        onchange: (e: Event) => {
-          (e.target as HTMLInputElement).checked ? selected.add(i.id) : selected.delete(i.id);
-          updateHeadCheck();
-          updateSubbar();
-        },
-      });
-      const row = el('tr', {
-        ...(getState().selectedIssueId === i.id ? { class: 'is-selected' } : {}),
-        onclick: () => {
-          // テキストをドラッグ選択した直後の click では詳細へ遷移しない
-          // (セル値をコピーできるように)。通常クリックは選択が空なので遷移する。
-          const sel = window.getSelection();
-          if (sel && sel.toString()) return;
-          openDetail(i.id);
-        },
+    const table = el('table', { class: 'mikke-table' + (wrapOn ? ' mikke-wrap' : '') }) as HTMLTableElement;
+    const widthList: { th: HTMLElement; key: string; width: number }[] = [];
+    const checkTh = el('th', { class: 'mikke-check-col' }, [headCheck]);
+    widthList.push({ th: checkTh, key: '_check', width: 40 });
+    const headCells: HTMLElement[] = [checkTh];
+    const s = getState();
+    for (const col of columns) {
+      const activeSort = s.sortBy === col.sortKey;
+      const arrow = activeSort ? (s.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+      const hasFilter = (colExcluded[col.id]?.length ?? 0) > 0;
+      const th = el('th', {
+        title: 'クリックで並べ替え / 値で絞り込み',
+        onclick: () => openColMenu(th, col),
       }, [
-        el('td', { class: 'mikke-check-col', onclick: (e: Event) => e.stopPropagation() }, [rowCheck]),
-        el('td', {}, [i.title || '(無題)']),
-        el('td', {}, [detectionBadge(i.detectionStatus)]),
-        el('td', {}, [mgmtBadge(i.mgmtStatus)]),
-        el('td', {}, [severityBadge(i.severity)]),
-        el('td', {}, [i.assignee || '—']),
-        el('td', {}, [fmtDate(i.dueDate, false) || '—']),
-        // SP=安全列名 / mock=元名 の両対応 + 列名の表記揺れ吸収 (resolveScanValue)
-        ...scanCols.map((c) => el('td', {}, [resolveScanValue(i.scanFields, c, csvHeaders) || '—'])),
-        el('td', {}, [fmtDate(i.lastSyncedAt) || '—']),
+        col.label + arrow,
+        el('span', { class: 'mikke-th-caret' + (hasFilter ? ' mikke-th-active' : ''), html: hasFilter ? icon('filter') : icon('chevronDown') }),
       ]);
-      tbody.appendChild(row);
+      attachColResize(th, col.id, table);
+      widthList.push({ th, key: col.id, width: col.width });
+      headCells.push(th);
     }
-    const table = el('table', { class: 'mikke-table' }, [thead, tbody]) as HTMLTableElement;
+    table.appendChild(el('thead', {}, [el('tr', {}, headCells)]));
+    const tbody = el('tbody');
+
+    vCols = columns; vWin = filtered; vTbody = tbody;
+    vVirtual = filtered.length > VIRT_MIN && !wrapOn;
+    if (!vVirtual) {
+      for (const i of filtered) tbody.appendChild(buildRow(i, columns));
+    } else {
+      const colspan = String(columns.length + 1);
+      vTop = el('tr', { class: 'mikke-vspacer' }, [el('td', { colspan }, [el('div', {})])]);
+      vBot = el('tr', { class: 'mikke-vspacer' }, [el('td', { colspan }, [el('div', {})])]);
+      tbody.append(vTop, vBot);
+      vLastStart = -1; vRowH = ROW_H_DEFAULT;
+      paintWindow();
+    }
+    table.appendChild(tbody);
     tableWrap.appendChild(table);
+    applyWidths(table, widthList);
     updateHeadCheck();
-    applySavedWidths(table, thKeys);
+
+    if (filtered.length === 0) {
+      tableWrap.appendChild(el('div', { class: 'mikke-empty', style: 'padding-top:var(--s-8)' }, [
+        el('div', {}, ['条件に一致する行がありません（フィルタ解除で全件表示）。']),
+      ]));
+    }
+
+    // 実行後に実行高を測って補正 (行の実測高で仮想スクロールを正確化)
+    if (vVirtual) {
+      requestAnimationFrame(() => {
+        if (!vVirtual || !table.isConnected) return;
+        const probe = tbody.querySelector('tr.mikke-drow') as HTMLElement | null;
+        const h = probe?.offsetHeight ?? 0;
+        if (h > 0 && Math.abs(h - vRowH) > 1) { vRowH = h; vLastStart = -1; paintWindow(); }
+      });
+    }
   }
 
   function emptyState(): HTMLElement {
