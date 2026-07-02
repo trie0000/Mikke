@@ -15,6 +15,7 @@ import {
   buildAssetDirectory, matchAssets,
 } from '../lib/assets';
 import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile } from '../lib/xlsx';
+import { DataTable, type DataColumn } from './dataTable';
 import type { ManagedAsset, ManagedIssue, MikkeSettings } from '../types';
 
 /** エクスポート/インポートの列 (ヘッダ = 表示名)。 */
@@ -48,6 +49,32 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
   let issueCounts: Record<string, number> = {};
   let query = '';
   let busy = false;
+  let visibleCount = 0;
+
+  const table = new DataTable<ManagedAsset>(tableWrap, {
+    storeKey: 'mikke.assets',
+    columns: assetColumns(),
+    rowId: (a) => a.id,
+    virtualMin: 40,
+    onRowClick: (a) => openAssetEditModal(a),
+    onVisibleChange: (v) => { visibleCount = v.length; updateSubbar(); },
+    emptyText: '該当する資産がありません。',
+  });
+
+  function assetColumns(): DataColumn<ManagedAsset>[] {
+    return [
+      { id: 'assetKey', label: '資産 (FQDN / IP)', width: 220, text: (a) => a.assetKey,
+        cellStyle: 'font-family:var(--font-mono);font-size:var(--fs-sm)' },
+      { id: 'assetType', label: '種別', width: 72, text: (a) => a.assetType,
+        render: (a) => el('span', { class: `mikke-badge${a.assetType === 'IP' ? ' mikke-badge--muted' : ' mikke-badge--accent'}` }, [a.assetType]) },
+      { id: 'businessCompany', label: '事業会社', width: 140, text: (a) => a.businessCompany ?? '' },
+      { id: 'affiliateCompany', label: '関連会社', width: 140, text: (a) => a.affiliateCompany ?? '' },
+      { id: 'mgmtNumber', label: '管理番号', width: 120, text: (a) => a.mgmtNumber ?? '' },
+      { id: 'identifyReason', label: '特定理由', width: 180, text: (a) => a.identifyReason ?? '', cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
+      { id: 'vulns', label: '脆弱性', width: 72, text: (a) => String(issueCounts[a.assetKey] ?? 0), sortValue: (a) => issueCounts[a.assetKey] ?? 0 },
+      { id: 'updatedAt', label: '更新', width: 150, text: (a) => fmtDate(a.updatedAt) || '', sortValue: (a) => a.updatedAt ?? '', cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
+    ];
+  }
 
   void load();
 
@@ -68,31 +95,43 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     }
   }
 
-  function filtered(): ManagedAsset[] {
-    const q = query.toLowerCase();
-    const rows = q
+  function searchFiltered(): ManagedAsset[] {
+    const q = query.trim().toLowerCase();
+    return q
       ? assets.filter((a) => `${a.assetKey} ${a.businessCompany ?? ''} ${a.affiliateCompany ?? ''} ${a.mgmtNumber ?? ''}`.toLowerCase().includes(q))
       : assets;
-    return [...rows].sort((a, b) => a.assetKey < b.assetKey ? -1 : a.assetKey > b.assetKey ? 1 : 0);
   }
 
-  function paint(): void {
-    const rows = filtered();
-
+  function updateSubbar(): void {
     clear(subbar);
     subbar.append(
       el('span', { class: 'mikke-subbar-title' }, ['資産管理']),
-      el('span', { class: 'mikke-subbar-count' }, [`${rows.length} / ${assets.length} 件`]),
+      el('span', { class: 'mikke-subbar-count' }, [`${visibleCount} / ${assets.length} 件`]),
     );
+  }
+
+  function paint(): void {
+    updateSubbar();
 
     clear(toolbar);
+    const wrapBtn = el('button', {
+      class: table.isWrap() ? 'mikke-btn mikke-btn--primary' : 'mikke-btn mikke-btn--secondary',
+      style: 'height:30px;font-size:var(--fs-sm)', title: '列幅で折り返して全文表示',
+      onclick: () => { table.toggleWrap(); paint(); },
+    }, ['全文表示']);
+    const clearBtn = table.hasActiveFilters() || query
+      ? el('button', { class: 'mikke-btn mikke-btn--ghost', style: 'height:30px;font-size:var(--fs-sm)',
+          onclick: () => { table.clearFilters(); query = ''; paint(); } }, ['フィルタ解除'])
+      : null;
     toolbar.append(
       el('span', { html: icon('building'), style: 'color:var(--ink-3);display:inline-flex' }),
       el('input', {
         class: 'mikke-input', type: 'text', placeholder: '資産 / 会社 / 管理番号で検索',
-        value: query, style: 'min-width:220px;border:1px solid var(--line)',
-        oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; paint(); },
+        value: query, style: 'min-width:200px;border:1px solid var(--line)',
+        oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; refresh(); },
       }),
+      wrapBtn,
+      ...(clearBtn ? [clearBtn] : []),
       el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [
         el('button', {
           class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
@@ -116,41 +155,23 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       ]),
     );
 
-    clear(tableWrap);
-    if (rows.length === 0) {
+    if (assets.length === 0) {
+      clear(tableWrap);
       tableWrap.appendChild(el('div', { class: 'mikke-empty' }, [
         el('div', { class: 'mikke-empty-title' }, ['資産がありません']),
         el('div', {}, ['「脆弱性から資産を抽出」を実行すると、管理対象の脆弱性から FQDN / IP 単位の資産一覧を作成します。']),
       ]));
       return;
     }
-    const thead = el('thead', {}, [el('tr', {}, [
-      el('th', {}, ['資産 (FQDN / IP)']),
-      el('th', {}, ['種別']),
-      el('th', {}, ['事業会社']),
-      el('th', {}, ['関連会社']),
-      el('th', {}, ['管理番号']),
-      el('th', {}, ['特定理由']),
-      el('th', {}, ['脆弱性']),
-      el('th', {}, ['更新']),
-    ])]);
-    const tbody = el('tbody', {}, rows.map((a) => el('tr', {
-      onclick: () => {
-        const sel = window.getSelection();
-        if (sel && sel.toString()) return;   // テキスト選択中は編集を開かない
-        openAssetEditModal(a);
-      },
-    }, [
-      el('td', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm)' }, [a.assetKey]),
-      el('td', {}, [el('span', { class: `mikke-badge${a.assetType === 'IP' ? ' mikke-badge--muted' : ' mikke-badge--accent'}` }, [a.assetType])]),
-      el('td', {}, [a.businessCompany || '—']),
-      el('td', {}, [a.affiliateCompany || '—']),
-      el('td', {}, [a.mgmtNumber || '—']),
-      el('td', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [a.identifyReason || '—']),
-      el('td', {}, [String(issueCounts[a.assetKey] ?? 0)]),
-      el('td', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [fmtDate(a.updatedAt) || '—']),
-    ])));
-    tableWrap.appendChild(el('table', { class: 'mikke-table' }, [thead, tbody]));
+    refresh();
+  }
+
+  /** 検索を反映して表を再描画。 */
+  function refresh(): void {
+    if (assets.length === 0) return;
+    table.setColumns(assetColumns());
+    table.setRows(searchFiltered());
+    table.render();
   }
 
   // ── エクスポート (CSV / Excel) ───────────────────────────────────────────────
