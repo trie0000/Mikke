@@ -84,22 +84,18 @@ export function packScanData(scanFields: Record<string, string> | undefined): st
   return Object.keys(clean).length ? JSON.stringify(clean) : '';
 }
 
-/** ScanData(JSON) と旧個別列(legacy)を統合して scanFields を復元する。
- *  重複キーは JSON(新方式) を優先。壊れた JSON は無視し legacy を返す。 */
-export function unpackScanData(
-  scanDataStr: string | null | undefined,
-  legacy: Record<string, string> = {},
-): Record<string, string> {
-  const out: Record<string, string> = { ...legacy };
-  if (scanDataStr) {
-    try {
-      const obj = JSON.parse(String(scanDataStr));
-      if (obj && typeof obj === 'object') {
-        for (const [k, v] of Object.entries(obj)) out[k] = String(v ?? '');
-      }
-    } catch { /* 壊れた JSON は無視 (legacy がフォールバック) */ }
-  }
-  return out;
+/** ScanData(JSON) を scanFields に復元する。壊れた JSON や空は {} を返す。 */
+export function unpackScanData(scanDataStr: string | null | undefined): Record<string, string> {
+  if (!scanDataStr) return {};
+  try {
+    const obj = JSON.parse(String(scanDataStr));
+    if (obj && typeof obj === 'object') {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(obj)) out[k] = String(v ?? '');
+      return out;
+    }
+  } catch { /* 壊れた JSON は無視 */ }
+  return {};
 }
 
 /**

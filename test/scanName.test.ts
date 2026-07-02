@@ -90,16 +90,9 @@ describe('packScanData / unpackScanData (単一 Note 列への JSON 集約)', ()
     expect(typeof json).toBe('string');
     expect(Object.keys(unpackScanData(json)).length).toBe(259);
   });
-  it('旧個別列(legacy)と JSON を統合 (重複は JSON 優先)', () => {
-    const legacy = { 'Scan_Asset Name': 'OLD', 'Scan_Only Legacy': 'keep' };
-    const json = packScanData({ 'Scan_Asset Name': 'NEW' });
-    const merged = unpackScanData(json, legacy);
-    expect(merged['Scan_Asset Name']).toBe('NEW');      // JSON 優先
-    expect(merged['Scan_Only Legacy']).toBe('keep');    // legacy 残す
-  });
-  it('壊れた JSON は無視して legacy を返す', () => {
-    expect(unpackScanData('{壊れ', { 'Scan_X': 'v' })).toEqual({ 'Scan_X': 'v' });
-    expect(unpackScanData('', {})).toEqual({});
+  it('壊れた JSON / 空は {} を返す', () => {
+    expect(unpackScanData('{壊れ')).toEqual({});
+    expect(unpackScanData('')).toEqual({});
     expect(unpackScanData(null)).toEqual({});
   });
   it('resolveScanValue は unpack 済み scanFields から raw キーで引ける', () => {

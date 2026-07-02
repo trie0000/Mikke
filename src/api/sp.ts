@@ -130,43 +130,34 @@ export class SpRepository implements Repository {
       } catch (e) { console.warn(`[mikke] ensureField ${spec.name} failed:`, e); }
     }
     // 列を作った可能性があるので実在列キャッシュを無効化 (次の書込で再取得)。
-    this.fieldMapsCache = null;
+    this.fieldNamesCache = null;
   }
 
-  // ── 実在列との突合 (Title ↔ InternalName マップ) ────────────────────────────
-  // ★ SP は列作成時、Title に含まれる `_` を InternalName で `_x005f_` にエンコード
-  //   し、さらに 32 文字で切り詰める。そのため安全名 (Scan_XXX_hash) で作った列も
-  //   Title=InternalName にならない (例: Title 'Scan_AssetTeams_d002' → InternalName
-  //   'Scan_x005f_AssetTeams_x005f_d0')。REST の item JSON キー / 書込キーは
-  //   InternalName なので、読み書きの両方で Title ↔ InternalName を変換する。
-  private fieldMapsCache: { byTitle: Map<string, string>; byInternal: Map<string, string> } | null = null;
+  // ── 実在列チェック ─────────────────────────────────────────────────────────
+  // 列は全て固定 ASCII 名 (IssueInstanceId / ScanData 等) で Title=InternalName の
+  // ため変換は不要。書込前に実在列と突合し、無い列だけ除外して行ごと 400 を防ぐ。
+  private fieldNamesCache: Set<string> | null = null;
 
-  private async getFieldMaps(): Promise<{ byTitle: Map<string, string>; byInternal: Map<string, string> }> {
-    if (this.fieldMapsCache) return this.fieldMapsCache;
+  private async getFieldNames(): Promise<Set<string>> {
+    if (this.fieldNamesCache) return this.fieldNamesCache;
     const j = await this.spGet(
-      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/fields?$select=InternalName,Title`,
+      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/fields?$select=InternalName`,
     );
-    const byTitle = new Map<string, string>();
-    const byInternal = new Map<string, string>();
-    for (const f of j.d.results as { InternalName: string; Title: string }[]) {
-      if (!byTitle.has(f.Title)) byTitle.set(f.Title, f.InternalName);
-      byInternal.set(f.InternalName, f.Title);
-    }
-    this.fieldMapsCache = { byTitle, byInternal };
-    return this.fieldMapsCache;
+    const set = new Set<string>();
+    for (const f of j.d.results as { InternalName: string }[]) set.add(f.InternalName);
+    this.fieldNamesCache = set;
+    return set;
   }
 
-  /** row のキー (Title または InternalName) を実在列の InternalName に変換する。
-   *  どちらにも無いキーは除外して dropped に集める (行ごと 400 を防ぐ)。 */
-  private mapRowToInternal(
+  /** row のキーを実在列に絞る。除外したキーは dropped に集める。 */
+  private filterExisting(
     row: Record<string, unknown>,
-    maps: { byTitle: Map<string, string>; byInternal: Map<string, string> },
+    existing: Set<string>,
     dropped: Set<string>,
   ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(row)) {
-      const internal = maps.byInternal.has(k) ? k : maps.byTitle.get(k);
-      if (internal) out[internal] = v;
+      if (existing.has(k)) out[k] = v;
       else dropped.add(k);
     }
     return out;
@@ -184,13 +175,12 @@ export class SpRepository implements Repository {
 
   // ── CRUD ────────────────────────────────────────────────────────────────
   async listIssues(): Promise<ManagedIssue[]> {
-    const { byInternal } = await this.getFieldMaps();
     const out: ManagedIssue[] = [];
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items?$top=5000`;
     while (url) {
       const j: any = await this.spGet(url);
-      for (const row of j.d.results) out.push(this.rowToIssue(row, byInternal));
+      for (const row of j.d.results) out.push(this.rowToIssue(row));
       url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
     }
     return out;
@@ -198,16 +188,15 @@ export class SpRepository implements Repository {
 
   async getIssue(id: number): Promise<ManagedIssue | null> {
     try {
-      const { byInternal } = await this.getFieldMaps();
       const j = await this.spGet(`/_api/web/lists/getbytitle('${LIST_MANAGED}')/items(${id})`);
-      return this.rowToIssue(j.d, byInternal);
+      return this.rowToIssue(j.d);
     } catch { return null; }
   }
 
   async updateIssue(id: number, patch: Partial<ManagedIssue>): Promise<void> {
-    const maps = await this.getFieldMaps();
+    const existing = await this.getFieldNames();
     const dropped = new Set<string>();
-    const body = this.mapRowToInternal(this.issueToRow(patch), maps, dropped);
+    const body = this.filterExisting(this.issueToRow(patch), existing, dropped);
     if (dropped.size) console.warn('[mikke] updateIssue: リストに存在しない列を除外:', [...dropped]);
     await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items(${id})`,
@@ -224,9 +213,9 @@ export class SpRepository implements Repository {
   }
 
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {
-    const maps = await this.getFieldMaps();
+    const existing = await this.getFieldNames();
     const dropped = new Set<string>();
-    const body = this.mapRowToInternal(this.issueToRow(issue), maps, dropped);
+    const body = this.filterExisting(this.issueToRow(issue), existing, dropped);
     if (dropped.size) console.warn('[mikke] createIssue: リストに存在しない列を除外:', [...dropped]);
     const r = await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items`,
@@ -310,17 +299,16 @@ export class SpRepository implements Repository {
     ops: ImportOp[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }> {
-    // ★ リストの実在列と突合し、キーを Title → InternalName に変換して送る。
-    //   (SP は Title 中の `_` を InternalName で _x005f_ にエンコードするため、
-    //    Title のまま送ると列不一致で行ごと 400 になる)。どちらにも無い列は除外。
-    const maps = await this.getFieldMaps();
+    // 実在列と突合し、無い列だけ除外して送る (行ごと 400 を防ぐ)。列は全て固定
+    // ASCII 名なので変換は不要。
+    const existing = await this.getFieldNames();
     const dropped = new Set<string>();
     const batchOps: { kind: 'add' | 'update'; id?: number; row: Record<string, unknown> }[] = [];
     for (const op of ops) {
       if (op.kind === 'add' && op.create) {
-        batchOps.push({ kind: 'add', row: this.mapRowToInternal(this.issueToRow(op.create), maps, dropped) });
+        batchOps.push({ kind: 'add', row: this.filterExisting(this.issueToRow(op.create), existing, dropped) });
       } else if ((op.kind === 'update' || op.kind === 'undetect') && op.id != null && op.patch) {
-        batchOps.push({ kind: 'update', id: op.id, row: this.mapRowToInternal(this.issueToRow(op.patch), maps, dropped) });
+        batchOps.push({ kind: 'update', id: op.id, row: this.filterExisting(this.issueToRow(op.patch), existing, dropped) });
       }
       // skip は何もしない
     }
@@ -381,9 +369,9 @@ export class SpRepository implements Repository {
         : ((op.kind === 'update' || op.kind === 'undetect') && op.patch ? this.issueToRow(op.patch) : null);
       if (row) for (const k of Object.keys(row)) keys.add(k);
     }
-    this.fieldMapsCache = null;   // 最新の実在列で判定する
-    const maps = await this.getFieldMaps();
-    return [...keys].filter((k) => !maps.byTitle.has(k) && !maps.byInternal.has(k));
+    this.fieldNamesCache = null;   // 最新の実在列で判定する
+    const existing = await this.getFieldNames();
+    return [...keys].filter((k) => !existing.has(k));
   }
 
   /** 不足列を作成する。固定列は既定スキーマ、それ以外 (Scan_*) は Note で作る。 */
@@ -479,15 +467,9 @@ export class SpRepository implements Repository {
   }
 
   // ── row ↔ entity ──────────────────────────────────────────────────────────
-  private rowToIssue(row: any, byInternal?: Map<string, string>): ManagedIssue {
-    // 旧方式: 個別 Scan_* 列 (上限に達する前に作られた分) を後方互換で読む。
-    const legacy: Record<string, string> = {};
-    for (const k of Object.keys(row)) {
-      const title = byInternal?.get(k) ?? k;
-      if (title.startsWith('Scan_')) legacy[title] = String(row[k] ?? '');
-    }
-    // 新方式: ScanData(JSON) を展開し legacy と統合 (重複は JSON 優先)。
-    const scanFields = unpackScanData(row.ScanData, legacy);
+  private rowToIssue(row: any): ManagedIssue {
+    // 検査ツール由来の全項目は ScanData(JSON) から復元する。
+    const scanFields = unpackScanData(row.ScanData);
     return {
       id: row.Id,
       title: row.Title ?? '',
