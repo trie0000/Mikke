@@ -5,7 +5,7 @@ import { getState, setState, setFilter } from '../state';
 import { getRepo } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
-import { scanFieldName } from '../lib/scanName';
+import { scanFieldName, resolveScanValue } from '../lib/scanName';
 import { relayHealth, relayGetIssue } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
@@ -42,6 +42,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   root.append(subbar, toolbar, tableWrap);
 
   let scanCols: string[] = [];
+  let csvHeaders: string[] = [];
   let cache: ManagedIssue[] = [];
   let lastFiltered: ManagedIssue[] = [];
   const selected = new Set<number>();
@@ -57,7 +58,24 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     try {
       const [all, settings] = await Promise.all([getRepo().listIssues(), getRepo().getSettings()]);
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
+      csvHeaders = settings.lastCsvHeaders ?? [];
       cache = all;
+      // 診断: 動的列が全行で値なし → 原因特定用に期待キーと実キーを console に出す。
+      // (よくある原因: ①列が無かった頃の取込で値が未保存 → CSV 再取込で入る
+      //  ②F6 の列名と実 CSV ヘッダの表記揺れ)
+      for (const c of scanCols) {
+        if (all.length === 0) break;
+        const hasAny = all.some((i) => {
+          const v = resolveScanValue(i.scanFields, c, csvHeaders);
+          return v !== undefined && v !== '';
+        });
+        if (!hasAny) {
+          const sampleKeys = Object.keys(all[0]?.scanFields ?? {});
+          console.warn(`[mikke] 一覧: 列「${c.replace(/^Scan_/, '')}」の値が全行で見つかりません。`,
+            `期待キー=${scanFieldName(c)}`, '行が実際に持つキー例=', sampleKeys,
+            '→ CSV を再取込すると値が入る可能性があります (過去の取込時に列が未作成だった場合)。');
+        }
+      }
       // 既に存在しない id は選択から除く
       const ids = new Set(all.map((i) => i.id));
       for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
@@ -503,8 +521,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         el('td', {}, [severityBadge(i.severity)]),
         el('td', {}, [i.assignee || '—']),
         el('td', {}, [fmtDate(i.dueDate, false) || '—']),
-        // SP は安全列名 (scanFieldName) キー、mock は元名キーで保持 → 両対応で引く
-        ...scanCols.map((c) => el('td', {}, [i.scanFields?.[scanFieldName(c)] ?? i.scanFields?.[c] ?? '—'])),
+        // SP=安全列名 / mock=元名 の両対応 + 列名の表記揺れ吸収 (resolveScanValue)
+        ...scanCols.map((c) => el('td', {}, [resolveScanValue(i.scanFields, c, csvHeaders) || '—'])),
         el('td', {}, [fmtDate(i.lastSyncedAt) || '—']),
       ]);
       tbody.appendChild(row);

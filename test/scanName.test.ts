@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scanFieldName, scanDisplayMap, fnv1aHex, decodeSpInternalName } from '../src/lib/scanName';
+import { scanFieldName, scanDisplayMap, fnv1aHex, decodeSpInternalName, resolveScanValue } from '../src/lib/scanName';
 
 describe('scanFieldName', () => {
   it('決定的 (同じ入力は常に同じ出力)', () => {
@@ -26,6 +26,35 @@ describe('scanFieldName', () => {
   it('長い列名は ascii 部分が 18 文字に切り詰められる', () => {
     const n = scanFieldName('AVeryLongColumnNameThatExceedsTheLimit');
     expect(n.length).toBeLessThanOrEqual('Scan_'.length + 18 + 1 + 4);
+  });
+
+  it('冪等 (安全名を再変換しても変わらない = 二重変換バグ防止)', () => {
+    for (const col of ['First Seen', 'CVSS', '深刻度']) {
+      const safe = scanFieldName(col);
+      expect(scanFieldName(safe)).toBe(safe);
+    }
+  });
+});
+
+describe('resolveScanValue', () => {
+  const headers = ['Issue Instance ID', 'First Seen', 'CVE'];
+  it('SP 安全名キーで引ける', () => {
+    const sf = { [scanFieldName('First Seen')]: '2026-05-01' };
+    expect(resolveScanValue(sf, 'Scan_First Seen', headers)).toBe('2026-05-01');
+  });
+  it('mock の Scan_元名キーで引ける', () => {
+    const sf = { 'Scan_First Seen': '2026-05-01' };
+    expect(resolveScanValue(sf, 'Scan_First Seen', headers)).toBe('2026-05-01');
+  });
+  it('列名の表記揺れ (大文字小文字/空白) を lastCsvHeaders 経由で吸収する', () => {
+    // 実 CSV ヘッダは 'First Seen'、F6 側の列名は 'first  seen' (揺れ)
+    const sf = { [scanFieldName('First Seen')]: '2026-05-01' };
+    expect(resolveScanValue(sf, 'Scan_first  seen', headers)).toBe('2026-05-01');
+    expect(resolveScanValue(sf, 'FIRST SEEN', headers)).toBe('2026-05-01');
+  });
+  it('どこにも無ければ undefined', () => {
+    expect(resolveScanValue({ 'Scan_X_0000': 'v' }, 'Scan_Nope', headers)).toBeUndefined();
+    expect(resolveScanValue(undefined, 'Scan_First Seen', headers)).toBeUndefined();
   });
 });
 

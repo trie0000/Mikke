@@ -20,14 +20,45 @@ export function fnv1aHex(s: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
+/** 既に安全名 (Scan_<ascii≤18>_<hash4>) か。 */
+const SAFE_NAME_RE = /^Scan_[A-Za-z0-9]{0,18}_[0-9a-f]{4}$/;
+
 /**
  * 元の CSV 列名 (または "Scan_<元名>") から、SP に作る安全な列名を決定的に導出する。
  * 例: "First Seen" → "Scan_FirstSeen_1a2b" / "深刻度" → "Scan__c3d4"
+ * ★ 冪等: 既に安全名ならそのまま返す (SP から読んだキーを再変換して
+ *   別名になる二重変換バグを防ぐ)。
  */
 export function scanFieldName(col: string): string {
+  if (SAFE_NAME_RE.test(col)) return col;
   const base = col.replace(/^Scan_/, '');
   const ascii = base.replace(/[^A-Za-z0-9]/g, '').slice(0, 18);
   return `Scan_${ascii}_${fnv1aHex(base).slice(0, 4)}`;
+}
+
+/**
+ * 表示用: 列名 col の値を scanFields から解決する。
+ * 1) 安全名キー (SP) → 2) Scan_<元名> キー (mock) → 3) 列名の表記揺れ吸収:
+ *    lastCsvHeaders から空白・大文字小文字を無視して一致するヘッダを探し、
+ *    そのキーで引く (F6 の列名と実 CSV ヘッダが微妙に違っても値が出る)。
+ */
+export function resolveScanValue(
+  scanFields: Record<string, string> | undefined,
+  col: string,
+  csvHeaders: string[],
+): string | undefined {
+  if (!scanFields) return undefined;
+  const raw = col.startsWith('Scan_') ? col : `Scan_${col}`;
+  const direct = scanFields[scanFieldName(col)] ?? scanFields[raw];
+  if (direct !== undefined && direct !== '') return direct;
+  const norm = (s: string): string => s.replace(/[\s　]+/g, '').toLowerCase();
+  const want = norm(col.replace(/^Scan_/, ''));
+  for (const h of csvHeaders) {
+    if (norm(h) !== want) continue;
+    const v = scanFields[scanFieldName(h)] ?? scanFields[`Scan_${h}`];
+    if (v !== undefined && v !== '') return v;
+  }
+  return direct;
 }
 
 /**
