@@ -46,11 +46,21 @@ describe('resolveScanValue', () => {
     const sf = { 'Scan_First Seen': '2026-05-01' };
     expect(resolveScanValue(sf, 'Scan_First Seen', headers)).toBe('2026-05-01');
   });
-  it('列名の表記揺れ (大文字小文字/空白) を lastCsvHeaders 経由で吸収する', () => {
-    // 実 CSV ヘッダは 'First Seen'、F6 側の列名は 'first  seen' (揺れ)
-    const sf = { [scanFieldName('First Seen')]: '2026-05-01' };
+  it('raw キーに対し列名の表記揺れ (大文字小文字/空白) を正規化総当たりで吸収する', () => {
+    // 実データは raw キー (Scan_<元名>) で保存される → 正規化総当たりで吸収
+    const sf = { 'Scan_First Seen': '2026-05-01' };
     expect(resolveScanValue(sf, 'Scan_first  seen', headers)).toBe('2026-05-01');
     expect(resolveScanValue(sf, 'FIRST SEEN', headers)).toBe('2026-05-01');
+  });
+  it('SP エンコード済みキー (Scan_First_x0020_Seen) でも引ける', () => {
+    const sf = { 'Scan_First_x0020_Seen': '2026-05-01' };
+    expect(resolveScanValue(sf, 'Scan_First Seen', headers)).toBe('2026-05-01');
+  });
+  it('raw キー (Scan_Asset Dynamically resolved 等・スペース入り) を引ける', () => {
+    const sf = { 'Scan_Asset Dynamically resolved': 'yes', 'Scan_Asset Mapped IP Addresses': '' };
+    expect(resolveScanValue(sf, 'Scan_Asset Dynamically resolved', headers)).toBe('yes');
+    // 値が空のキーは存在しても undefined 相当 (表示は「—」になる)
+    expect(resolveScanValue(sf, 'Scan_Asset Mapped IP Addresses', headers) || '—').toBe('—');
   });
   it('どこにも無ければ undefined', () => {
     expect(resolveScanValue({ 'Scan_X_0000': 'v' }, 'Scan_Nope', headers)).toBeUndefined();

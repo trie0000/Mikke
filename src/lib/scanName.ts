@@ -36,29 +36,41 @@ export function scanFieldName(col: string): string {
   return `Scan_${ascii}_${fnv1aHex(base).slice(0, 4)}`;
 }
 
+/** 列名比較用の正規化 (Scan_接頭辞除去 / SP エンコード復元 / 空白除去 / 小文字化)。 */
+function normColName(s: string): string {
+  return decodeSpInternalName(s.replace(/^Scan_/, ''))
+    .replace(/_x005f_/gi, '_')       // 念のため二重エンコード分も戻す
+    .replace(/[\s　_]+/g, '')
+    .toLowerCase();
+}
+
 /**
- * 表示用: 列名 col の値を scanFields から解決する。
- * 1) 安全名キー (SP) → 2) Scan_<元名> キー (mock) → 3) 列名の表記揺れ吸収:
- *    lastCsvHeaders から空白・大文字小文字を無視して一致するヘッダを探し、
- *    そのキーで引く (F6 の列名と実 CSV ヘッダが微妙に違っても値が出る)。
+ * 表示用: 列名 col の値を scanFields から解決する。保存キーが
+ *   - 安全名  (Scan_Ascii_hash / SP 新方式)
+ *   - raw     (Scan_<元名そのまま・スペース入り> / mock・旧列)
+ *   - エンコード (Scan_x0020_ 等 / SP 旧方式)
+ * のいずれでも引けるよう、最終手段として scanFields の実キーを正規化総当たりする。
  */
 export function resolveScanValue(
   scanFields: Record<string, string> | undefined,
   col: string,
-  csvHeaders: string[],
+  _csvHeaders: string[] = [],
 ): string | undefined {
   if (!scanFields) return undefined;
+  // 速い経路: 完全一致キー
   const raw = col.startsWith('Scan_') ? col : `Scan_${col}`;
-  const direct = scanFields[scanFieldName(col)] ?? scanFields[raw];
+  const direct = scanFields[scanFieldName(col)] ?? scanFields[raw] ?? scanFields[col];
   if (direct !== undefined && direct !== '') return direct;
-  const norm = (s: string): string => s.replace(/[\s　]+/g, '').toLowerCase();
-  const want = norm(col.replace(/^Scan_/, ''));
-  for (const h of csvHeaders) {
-    if (norm(h) !== want) continue;
-    const v = scanFields[scanFieldName(h)] ?? scanFields[`Scan_${h}`];
+  // 総当たり: 正規化して一致する実キーの値を返す (非空を優先)。
+  const want = normColName(col);
+  let fallback: string | undefined = direct;
+  for (const k of Object.keys(scanFields)) {
+    if (normColName(k) !== want) continue;
+    const v = scanFields[k];
     if (v !== undefined && v !== '') return v;
+    if (fallback === undefined) fallback = v;   // 空でもキーは存在した
   }
-  return direct;
+  return fallback;
 }
 
 /**
