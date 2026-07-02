@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 export interface Repository {
@@ -32,6 +32,10 @@ export interface Repository {
   writeImportLog(entry: ImportLogEntry): Promise<void>;
   /** 資産 (FQDN/IP) の管理部門リスト。 */
   listAssets(): Promise<ManagedAsset[]>;
+  /** 脆弱性の対応履歴 (Issue Instance ID で絞り込み)。 */
+  listHistory(issueInstanceId: string): Promise<ResponseHistory[]>;
+  createHistory(entry: Omit<ResponseHistory, 'id'>): Promise<number>;
+  deleteHistory(id: number): Promise<void>;
   createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number>;
   updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void>;
   deleteAsset(id: number): Promise<void>;

@@ -154,5 +154,37 @@ export interface ManagedAsset {
   updatedAt?: string;
 }
 
+/** 対応履歴のスレッド種別 (外部=顧客/委託先向け, 内部=社内)。 */
+export type HistoryThread = 'external' | 'internal';
+/** 対応履歴の記録元。 */
+export type HistorySource = 'mail' | 'manual' | 'other';
+
+/** 脆弱性の対応履歴 1 件 (カード)。SP リスト MikkeHistory の 1 行。 */
+export interface ResponseHistory {
+  id: number;
+  /** 紐づく脆弱性 (Issue Instance ID)。 */
+  issueInstanceId: string;
+  /** 外部 / 内部。 */
+  thread: HistoryThread;
+  /** 記録元 (メール取込 / 手入力ソース / その他)。 */
+  source: HistorySource;
+  /** 記入者 / 送信者名。 */
+  author?: string;
+  /** 送信元メールアドレス (メール取込時)。 */
+  fromEmail?: string;
+  /** 件名 (メール取込時)。 */
+  subject?: string;
+  /** 本文。 */
+  body: string;
+  /** 本文が HTML か。 */
+  isHtml?: boolean;
+  /** 対応日時 (ISO)。メールの送信日時 or 手入力。 */
+  occurredAt: string;
+  /** SP 登録日時 (ISO)。 */
+  createdAt?: string;
+  /** SP 登録者。 */
+  createdBy?: string;
+}
+
 /** メイン画面のビュー。 */
 export type ViewName = 'issues' | 'import' | 'assets';

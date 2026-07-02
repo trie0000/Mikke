@@ -2,12 +2,12 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
 import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
-  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS,
-  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs,
+  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY,
+  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
@@ -81,6 +81,7 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_SETTINGS, settingsFieldSpecs());
     await this.ensureList(LIST_IMPORTLOG, importLogFieldSpecs());
     await this.ensureList(LIST_ASSETS, assetFieldSpecs());
+    await this.ensureList(LIST_HISTORY, historyFieldSpecs());
   }
 
   private async ensureList(title: string, fields: FieldSpec[]): Promise<void> {
@@ -417,6 +418,63 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_ASSETS}')/items(${id})`,
       undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
     );
+  }
+
+  // ── 対応履歴 — MikkeHistory ────────────────────────────────────────────────
+  async listHistory(issueInstanceId: string): Promise<ResponseHistory[]> {
+    const q = `IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'`;
+    const out: ResponseHistory[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_HISTORY}')/items?$top=2000&$filter=${encodeURIComponent(q)}`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const row of j.d.results) out.push(this.rowToHistory(row));
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+  async createHistory(entry: Omit<ResponseHistory, 'id'>): Promise<number> {
+    const r = await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_HISTORY}')/items`,
+      { __metadata: { type: 'SP.Data.MikkeHistoryListItem' }, ...this.historyToRow(entry) },
+    );
+    const j = await r.json();
+    return j.d.Id as number;
+  }
+  async deleteHistory(id: number): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_HISTORY}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+  private rowToHistory(row: any): ResponseHistory {
+    return {
+      id: row.Id,
+      issueInstanceId: row.IssueInstanceId ?? '',
+      thread: row.Thread === 'internal' ? 'internal' : 'external',
+      source: (['mail', 'manual', 'other'].includes(row.Source) ? row.Source : 'other'),
+      author: row.AuthorName ?? undefined,
+      fromEmail: row.FromEmail ?? undefined,
+      subject: row.Subject ?? undefined,
+      body: row.Body ?? '',
+      isHtml: !!row.IsHtml,
+      occurredAt: row.OccurredAt ?? row.Created ?? '',
+      createdAt: row.Created ?? undefined,
+      createdBy: row.Author?.Title ?? undefined,
+    };
+  }
+  private historyToRow(p: Partial<ResponseHistory>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (p.issueInstanceId !== undefined) row.IssueInstanceId = p.issueInstanceId;
+    if (p.thread !== undefined) row.Thread = p.thread;
+    if (p.source !== undefined) row.Source = p.source;
+    if (p.author !== undefined) row.AuthorName = p.author;
+    if (p.fromEmail !== undefined) row.FromEmail = p.fromEmail;
+    if (p.subject !== undefined) row.Subject = p.subject;
+    if (p.body !== undefined) row.Body = p.body;
+    if (p.isHtml !== undefined) row.IsHtml = p.isHtml;
+    if (p.occurredAt !== undefined) row.OccurredAt = p.occurredAt || null;
+    return row;
   }
 
   private rowToAsset(row: any): ManagedAsset {

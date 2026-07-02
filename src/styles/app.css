@@ -393,6 +393,42 @@
 #mikke-root .mikke-colmenu-all { border-bottom: 1px solid var(--line); margin-bottom: var(--s-2); font-weight: 600; }
 #mikke-root .mikke-colmenu-note { padding: var(--s-2) var(--s-3); color: var(--ink-4); font-size: var(--fs-xs); }
 
+/* ---------- 対応履歴カード ---------- */
+#mikke-root .mikke-hist-list { display: flex; flex-direction: column; gap: var(--s-5); }
+#mikke-root .mikke-hist-card {
+  border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--s-5);
+  background: var(--paper-2);
+}
+#mikke-root .mikke-hist-card[data-thread="internal"] {
+  background: rgba(122, 138, 120, 0.10); border-color: rgba(122, 138, 120, 0.30);
+}
+#mikke-root .mikke-hist-head {
+  display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-3);
+  font-size: var(--fs-sm); color: var(--ink-3);
+}
+#mikke-root .mikke-hist-icon { display: inline-flex; color: var(--ink-4); }
+#mikke-root .mikke-hist-icon svg { width: 15px; height: 15px; }
+#mikke-root .mikke-hist-from { color: var(--ink); font-weight: 600; }
+#mikke-root .mikke-hist-email { color: var(--ink-4); font-size: var(--fs-xs); }
+#mikke-root .mikke-hist-date { color: var(--ink-4); font-size: var(--fs-xs); }
+#mikke-root .mikke-hist-subject { font-weight: 600; margin-bottom: var(--s-2); color: var(--ink); }
+#mikke-root .mikke-hist-body {
+  font-size: var(--fs-md); line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: var(--ink);
+}
+#mikke-root .mikke-hist-body.is-clamped {
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+#mikke-root .mikke-hist-toggle {
+  margin-top: var(--s-3); padding: 3px 12px; background: var(--paper); border: 1px solid var(--line);
+  border-radius: 999px; font-family: inherit; font-size: var(--fs-xs); color: var(--ink-3); cursor: pointer;
+}
+#mikke-root .mikke-hist-drop {
+  margin: var(--s-4) 0; padding: var(--s-5); border: 1.5px dashed var(--line-strong);
+  border-radius: var(--r-3); text-align: center; color: var(--ink-3); font-size: var(--fs-sm);
+  background: var(--paper-2); transition: border-color 0.15s, background 0.15s;
+}
+#mikke-root .mikke-hist-drop.is-over { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+
 /* ---------- ドロップダウンメニュー項目 ---------- */
 #mikke-root .mikke-menu-item {
   display: block; width: 100%; text-align: left; padding: var(--s-3) var(--s-4);

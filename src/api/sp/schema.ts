@@ -16,6 +16,7 @@ export const LIST_MANAGED = 'MikkeManagedIssues';
 export const LIST_SETTINGS = 'MikkeSettings';
 export const LIST_IMPORTLOG = 'MikkeImportLog';
 export const LIST_ASSETS = 'MikkeAssets';
+export const LIST_HISTORY = 'MikkeHistory';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -94,6 +95,21 @@ export function assetFieldSpecs(): FieldSpec[] {
     { name: 'IdentifyReason', type: 'Note' },
     { name: 'IdentifyEvidence', type: 'Note' },
     { name: 'UpdatedAt', type: 'DateTime' },
+  ];
+}
+
+/** MikkeHistory: 脆弱性の対応履歴 (外部/内部カード)。 */
+export function historyFieldSpecs(): FieldSpec[] {
+  return [
+    { name: 'IssueInstanceId', type: 'Text', indexed: true },
+    { name: 'Thread', type: 'Choice', choices: ['external', 'internal'] },
+    { name: 'Source', type: 'Choice', choices: ['mail', 'manual', 'other'] },
+    { name: 'AuthorName', type: 'Text' },
+    { name: 'FromEmail', type: 'Text' },
+    { name: 'Subject', type: 'Note' },
+    { name: 'Body', type: 'Note' },
+    { name: 'IsHtml', type: 'Boolean' },
+    { name: 'OccurredAt', type: 'DateTime' },
   ];
 }
 

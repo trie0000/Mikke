@@ -9,7 +9,12 @@ import { relayGetIssue, relayHealth } from '../api/relay';
 import { toast } from '../components/toast';
 import { scanDisplayMap, scanFieldName, decodeSpInternalName } from '../lib/scanName';
 import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
-import type { ManagedIssue } from '../types';
+import { openModal } from '../components/modal';
+import { sanitizeNoteHtml } from '../utils/sanitize';
+import {
+  parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag, type ParsedMail,
+} from '../lib/emlParser';
+import type { ManagedIssue, ResponseHistory, HistoryThread, HistorySource } from '../types';
 
 type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
 
@@ -35,6 +40,9 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   let scanNames: Record<string, string> = {};
   // 直近取込 CSV のヘッダ (検査ツール詳細を CSV の列順で表示するため)
   let csvHeaders: string[] = [];
+  // 対応履歴 (現在の Issue) と表示スレッド (external/internal/both)。
+  let historyEntries: ResponseHistory[] = [];
+  let historyThread: HistoryThread | 'both' = 'both';
 
   paintTabStrip();
   void loadCurrent();
@@ -91,6 +99,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       csvHeaders = settings.lastCsvHeaders ?? [];
       scanNames = scanDisplayMap([...csvHeaders, ...settings.managedColumns]);
     } catch { /* noop */ }
+    await loadHistory();
     paintTabs();
     paintBody();
   }
@@ -101,7 +110,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       { key: 'overview', label: '概要' },
       { key: 'scanner', label: '検査ツール詳細' },
       { key: 'mgmt', label: '管理情報' },
-      { key: 'history', label: '履歴' },
+      { key: 'history', label: '対応履歴' },
     ];
     for (const t of tabs) {
       detailTabs.appendChild(el('div', {
@@ -185,8 +194,208 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.mgmtNote || '（メモなし）']),
       ]));
     } else {
-      body.appendChild(el('div', { class: 'mikke-empty' }, ['変更履歴は Phase 3 で実装予定です。']));
+      body.appendChild(renderHistory());
     }
+  }
+
+  // ── 対応履歴タブ ────────────────────────────────────────────────────────────
+  async function loadHistory(): Promise<void> {
+    try { historyEntries = current ? await getRepo().listHistory(current.issueInstanceId) : []; }
+    catch { historyEntries = []; }
+  }
+
+  function renderHistory(): HTMLElement {
+    const wrapEl = el('div', {});
+    const extCount = historyEntries.filter((h) => h.thread === 'external').length;
+    const intCount = historyEntries.filter((h) => h.thread === 'internal').length;
+
+    const segBtn = (label: string, key: HistoryThread | 'both'): HTMLElement => el('button', {
+      class: 'mikke-btn ' + (historyThread === key ? 'mikke-btn--primary' : 'mikke-btn--secondary'),
+      style: 'height:28px;font-size:var(--fs-sm)',
+      onclick: () => { historyThread = key; paintBody(); },
+    }, [label]);
+
+    wrapEl.appendChild(el('div', { style: 'display:flex;align-items:center;gap:var(--s-3);margin-bottom:var(--s-5)' }, [
+      segBtn('両方', 'both'),
+      segBtn(`外部対応履歴 (${extCount})`, 'external'),
+      segBtn(`内部対応履歴 (${intCount})`, 'internal'),
+      el('span', { style: 'flex:1' }),
+      el('button', {
+        class: 'mikke-btn mikke-btn--primary', style: 'height:28px;font-size:var(--fs-sm)',
+        onclick: () => openAddHistory(historyThread === 'internal' ? 'internal' : 'external'),
+        html: icon('plus') + '<span>履歴を追加</span>',
+      }),
+    ]));
+
+    const shown = historyEntries
+      .filter((h) => historyThread === 'both' || h.thread === historyThread)
+      .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : b.id - a.id));
+
+    if (!shown.length) {
+      wrapEl.appendChild(el('div', { class: 'mikke-empty' }, [
+        el('div', {}, ['対応履歴がありません。「履歴を追加」から登録できます（メール .msg / .eml をドラッグでも取り込めます）。']),
+      ]));
+      return wrapEl;
+    }
+    const list = el('div', { class: 'mikke-hist-list' });
+    for (const h of shown) list.appendChild(historyCard(h));
+    wrapEl.appendChild(list);
+    return wrapEl;
+  }
+
+  function historyCard(h: ResponseHistory): HTMLElement {
+    const srcIcon = h.source === 'mail' ? 'external' : h.source === 'manual' ? 'edit' : 'hash';
+    const threadLabel = h.thread === 'internal' ? '内部' : '外部';
+    const head = el('div', { class: 'mikke-hist-head' }, [
+      el('span', { class: 'mikke-hist-icon', html: icon(srcIcon) }),
+      el('span', { class: 'mikke-hist-from' }, [h.author || (h.fromEmail ?? '（記入者なし）')]),
+      ...(h.fromEmail && h.author ? [el('span', { class: 'mikke-hist-email' }, [`<${h.fromEmail}>`])] : []),
+      el('span', { class: `mikke-badge ${h.thread === 'internal' ? 'mikke-badge--ok' : 'mikke-badge--accent'}` }, [threadLabel]),
+      el('span', { style: 'flex:1' }),
+      el('span', { class: 'mikke-hist-date' }, [fmtDate(h.occurredAt) || '']),
+      el('button', {
+        class: 'mikke-iconbtn', style: 'width:22px;height:22px', 'aria-label': '削除', title: '削除',
+        onclick: () => void deleteHistory(h),
+        html: icon('trash'),
+      }),
+    ]);
+    const bodyEl = el('div', { class: 'mikke-hist-body' });
+    if (h.isHtml) bodyEl.innerHTML = sanitizeNoteHtml(h.body);
+    else bodyEl.textContent = h.body;
+    if (h.subject) bodyEl.prepend(el('div', { class: 'mikke-hist-subject' }, [`件名: ${h.subject}`]));
+
+    const card = el('div', { class: 'mikke-hist-card', 'data-thread': h.thread }, [head, bodyEl]);
+    // 長い本文は折りたたむ
+    if ((h.body?.length ?? 0) > 400) {
+      bodyEl.classList.add('is-clamped');
+      const toggle = el('button', { class: 'mikke-hist-toggle' }, ['全文表示']);
+      toggle.addEventListener('click', () => {
+        const on = bodyEl.classList.toggle('is-clamped');
+        toggle.textContent = on ? '全文表示' : '折りたたむ';
+      });
+      card.appendChild(toggle);
+    }
+    return card;
+  }
+
+  async function deleteHistory(h: ResponseHistory): Promise<void> {
+    const ok = await new Promise<boolean>((resolve) => {
+      openModal(rootEl, {
+        title: '対応履歴を削除',
+        body: el('div', { style: 'line-height:1.7' }, ['この対応履歴を削除します。元に戻せません。']),
+        primaryLabel: '削除する', primaryVariant: 'danger',
+        onPrimary: () => resolve(true), onClose: () => resolve(false),
+      });
+    });
+    if (!ok) return;
+    try { await getRepo().deleteHistory(h.id); toast(rootEl, '削除しました', 'ok'); }
+    catch (e) { toast(rootEl, `削除に失敗: ${(e as Error).message}`, 'error'); return; }
+    await loadHistory();
+    paintBody();
+  }
+
+  // ── 履歴の追加 (手入力 + メール .msg/.eml ドラッグ取込) ─────────────────────────
+  function openAddHistory(defaultThread: HistoryThread): void {
+    if (!current) return;
+    const iid = current.issueInstanceId;
+    const threadSel = el('select', { class: 'mikke-input' }, [
+      el('option', { value: 'external', ...(defaultThread === 'external' ? { selected: 'selected' } : {}) }, ['外部対応履歴']),
+      el('option', { value: 'internal', ...(defaultThread === 'internal' ? { selected: 'selected' } : {}) }, ['内部対応履歴']),
+    ]) as HTMLSelectElement;
+    const sourceSel = el('select', { class: 'mikke-input' }, [
+      el('option', { value: 'manual' }, ['ソース (手入力)']),
+      el('option', { value: 'mail' }, ['メール']),
+      el('option', { value: 'other' }, ['その他']),
+    ]) as HTMLSelectElement;
+    const authorInput = el('input', { class: 'mikke-input', type: 'text', placeholder: '記入者 / 送信者名' }) as HTMLInputElement;
+    const dtInput = el('input', { class: 'mikke-input', type: 'datetime-local', value: toLocalDateTime(new Date().toISOString()) }) as HTMLInputElement;
+    const subjectInput = el('input', { class: 'mikke-input', type: 'text', placeholder: '件名 (任意)' }) as HTMLInputElement;
+    const bodyArea = el('textarea', { class: 'mikke-input', style: 'min-height:160px;width:100%;font-family:inherit', placeholder: '対応内容。ここに .msg / .eml をドラッグするとメールを取り込みます。' }) as HTMLTextAreaElement;
+    let pendingHtml: string | undefined;
+    let pendingFromEmail: string | undefined;
+
+    const field = (label: string, control: HTMLElement): HTMLElement =>
+      el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, [label]), control]);
+
+    const applyMail = (p: ParsedMail): void => {
+      sourceSel.value = 'mail';
+      if (p.fromName && !authorInput.value) authorInput.value = p.fromName;
+      if (p.dateISO) dtInput.value = toLocalDateTime(p.dateISO);
+      if (p.subject) subjectInput.value = p.subject;
+      if (p.body) { bodyArea.value = p.body; bodyArea.defaultValue = p.body; }
+      pendingHtml = p.bodyHtml;
+      pendingFromEmail = p.fromEmail;
+    };
+
+    const dropZone = el('div', { class: 'mikke-hist-drop' }, [
+      el('div', {}, [
+        el('span', { html: icon('upload'), style: 'display:inline-flex;vertical-align:-2px;margin-right:6px' }),
+        'メール (.msg / .eml) をここにドラッグして取り込み',
+      ]),
+    ]);
+    const onDragOver = (e: DragEvent): void => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; dropZone.classList.add('is-over'); };
+    const onDragLeave = (): void => dropZone.classList.remove('is-over');
+    const onDrop = async (e: DragEvent): Promise<void> => {
+      e.preventDefault();
+      dropZone.classList.remove('is-over');
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const files = [...(dt.files ?? [])];
+      const eml = files.find((f) => /\.eml$/i.test(f.name) || f.type === 'message/rfc822');
+      const msg = files.find((f) => /\.msg$/i.test(f.name) || f.type === 'application/vnd.ms-outlook');
+      try {
+        if (eml) { applyMail(parseEml(await eml.text())); toast(rootEl, `「${eml.name}」を取り込みました`, 'ok'); return; }
+        if (msg) { applyMail(await parseMsgFile(msg)); toast(rootEl, `「${msg.name}」を取り込みました`, 'ok'); return; }
+        const txt = dt.getData('text/plain');
+        if (txt && looksLikeEml(txt)) { applyMail(parseEml(txt)); toast(rootEl, 'メールを取り込みました', 'ok'); return; }
+        if (txt && looksLikeOutlookDrag(txt)) { applyMail(parseOutlookDragText(txt)); toast(rootEl, 'Outlook ヘッダから取り込みました', 'ok'); return; }
+        toast(rootEl, '取り込めるメール (.msg / .eml) が見つかりませんでした。', 'warn');
+      } catch (err) {
+        toast(rootEl, `メール取込に失敗: ${(err as Error).message}`, 'error');
+      }
+    };
+    dropZone.addEventListener('dragover', onDragOver);
+    dropZone.addEventListener('dragleave', onDragLeave);
+    dropZone.addEventListener('drop', (e) => void onDrop(e));
+
+    const modalBody = el('div', {}, [
+      el('div', { style: 'display:flex;gap:var(--s-4)' }, [
+        el('div', { style: 'flex:1' }, [field('種別', threadSel)]),
+        el('div', { style: 'flex:1' }, [field('記録元', sourceSel)]),
+      ]),
+      dropZone,
+      el('div', { style: 'display:flex;gap:var(--s-4)' }, [
+        el('div', { style: 'flex:1' }, [field('記入者 / 送信者', authorInput)]),
+        el('div', { style: 'flex:1' }, [field('対応日時', dtInput)]),
+      ]),
+      field('件名', subjectInput),
+      field('内容', bodyArea),
+    ]);
+    openModal(rootEl, {
+      title: '対応履歴を追加', body: modalBody, size: 'lg', primaryLabel: '登録する',
+      onPrimary: async () => {
+        const body = bodyArea.value.trim();
+        if (!body && !subjectInput.value.trim()) { toast(rootEl, '内容を入力してください。', 'warn'); throw new Error('empty'); }
+        const entry: Omit<ResponseHistory, 'id'> = {
+          issueInstanceId: iid,
+          thread: threadSel.value as HistoryThread,
+          source: sourceSel.value as HistorySource,
+          author: authorInput.value.trim() || undefined,
+          fromEmail: pendingFromEmail,
+          subject: subjectInput.value.trim() || undefined,
+          body,
+          isHtml: false,
+          occurredAt: dtInput.value ? new Date(dtInput.value).toISOString() : new Date().toISOString(),
+        };
+        // 本文を編集していなければ HTML 版を保存 (見た目を保持)
+        if (pendingHtml && bodyArea.defaultValue === bodyArea.value) { entry.body = sanitizeNoteHtml(pendingHtml); entry.isHtml = true; }
+        try { await getRepo().createHistory(entry); }
+        catch (e) { toast(rootEl, `登録に失敗: ${(e as Error).message}`, 'error'); throw e; }
+        toast(rootEl, '対応履歴を登録しました', 'ok');
+        await loadHistory();
+        paintBody();
+      },
+    });
   }
 
   async function fetchLatest(): Promise<void> {
@@ -222,6 +431,14 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   }
 
   return wrap;
+}
+
+/** ISO 文字列を datetime-local 入力用のローカル 'YYYY-MM-DDTHH:MM' に変換。 */
+function toLocalDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function metaGrid(rows: ([string, string] | [string, null, HTMLElement])[]): HTMLElement {

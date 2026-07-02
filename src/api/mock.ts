@@ -1,12 +1,13 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
 const LS_ASSETS = 'mikke.mock.assets';
+const LS_HISTORY = 'mikke.mock.history';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -50,10 +51,12 @@ export class MockRepository implements Repository {
   private issues: ManagedIssue[];
   private settings: MikkeSettings;
   private assets: ManagedAsset[];
+  private history: ResponseHistory[];
 
   constructor() {
     this.issues = load<ManagedIssue[]>(LS_ISSUES, seedIssues());
     this.assets = load<ManagedAsset[]>(LS_ASSETS, []);
+    this.history = load<ResponseHistory[]>(LS_HISTORY, []);
     this.settings = load<MikkeSettings>(LS_SETTINGS, {
       managedColumns: ['Scan_Asset', 'Scan_CVE'],
       matchConditions: { combinator: 'OR', rules: [{ field: 'Severity', op: 'equals', value: 'Critical' }] },
@@ -106,6 +109,21 @@ export class MockRepository implements Repository {
   async deleteAsset(id: number): Promise<void> {
     const idx = this.assets.findIndex((a) => a.id === id);
     if (idx >= 0) { this.assets.splice(idx, 1); save(LS_ASSETS, this.assets); }
+  }
+
+  // ── 対応履歴 ──────────────────────────────────────────────────────────────
+  async listHistory(issueInstanceId: string): Promise<ResponseHistory[]> {
+    return this.history.filter((h) => h.issueInstanceId === issueInstanceId).map((h) => ({ ...h }));
+  }
+  async createHistory(entry: Omit<ResponseHistory, 'id'>): Promise<number> {
+    const id = this.history.reduce((m, h) => Math.max(m, h.id), 0) + 1;
+    this.history.push({ ...entry, id, createdAt: new Date().toISOString() });
+    save(LS_HISTORY, this.history);
+    return id;
+  }
+  async deleteHistory(id: number): Promise<void> {
+    const idx = this.history.findIndex((h) => h.id === id);
+    if (idx >= 0) { this.history.splice(idx, 1); save(LS_HISTORY, this.history); }
   }
 
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {
