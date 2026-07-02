@@ -8,6 +8,7 @@ import { icon } from '../icons';
 import { getRepo } from '../api/repo';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
+import { filePicker } from '../components/filePicker';
 import { parseCsv } from '../lib/csv';
 import { scanFieldName } from '../lib/scanName';
 import {
@@ -168,8 +169,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
 
   // ── 管理部門 CSV (基本情報 + サイトURL情報) の取込 ─────────────────────────────
   function openDeptCsvModal(): void {
-    const baseInput = el('input', { type: 'file', accept: '.csv,text/csv' }) as HTMLInputElement;
-    const siteInput = el('input', { type: 'file', accept: '.csv,text/csv' }) as HTMLInputElement;
+    const basePicker = filePicker({ accept: '.csv,text/csv', placeholder: '基本情報 CSV を選択' });
+    const sitePicker = filePicker({ accept: '.csv,text/csv', placeholder: 'サイトURL情報 CSV を選択' });
     const body = el('div', {}, [
       el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7;color:var(--ink-2)' }, [
         '社内の資産管理部門リスト (CSV 2種) を読み込み、FQDN が一致した資産の',
@@ -178,11 +179,11 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       ]),
       el('div', { class: 'mikke-field' }, [
         el('label', { class: 'mikke-field-label' }, ['基本情報 CSV（管理番号 / 組織区分 第１階層名 / 関係会社/事業場略称）']),
-        baseInput,
+        basePicker.root,
       ]),
       el('div', { class: 'mikke-field' }, [
         el('label', { class: 'mikke-field-label' }, ['サイトURL情報 CSV（管理番号 / サブドメイン / ドメインネーム）']),
-        siteInput,
+        sitePicker.root,
       ]),
     ]);
     openModal(rootEl, {
@@ -190,8 +191,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       body,
       primaryLabel: '突合する',
       onPrimary: async () => {
-        const baseFile = baseInput.files?.[0];
-        const siteFile = siteInput.files?.[0];
+        const baseFile = basePicker.getFile();
+        const siteFile = sitePicker.getFile();
         if (!baseFile || !siteFile) {
           toast(rootEl, '基本情報とサイトURL情報の両方の CSV を選択してください。', 'warn');
           throw new Error('files required');
