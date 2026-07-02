@@ -4,13 +4,13 @@
 import type { Repository, ImportLogEntry } from './repo';
 import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
 import type { ImportOp } from '../lib/import';
+import { packScanData, unpackScanData } from '../lib/scanName';
 import {
   LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS,
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
-import { scanFieldName } from '../lib/scanName';
 
 const V = 'application/json;odata=verbose';
 
@@ -364,17 +364,12 @@ export class SpRepository implements Repository {
     } catch { return null; }
   }
 
-  /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成。既存・型一致はスキップ。
-   *  ★ 列名はスペース/日本語を含む表示名のまま作ると SP 内部名が _x0020_ 等に
-   *    変換され、REST の JSON キー (表示名) と食い違って書込が 400 になる。
-   *    安全な ASCII 名 (scanFieldName) で作成し、書込もそのキーで送る。 */
-  async ensureScanColumns(columns: string[]): Promise<void> {
-    if (!columns.length) return;
-    const specs: FieldSpec[] = columns.map((c) => ({
-      name: scanFieldName(c),
-      type: 'Note', // 値の長さ・記号に耐えるため Note (複数行) で作る
-    }));
-    await this.ensureFields(LIST_MANAGED, specs);
+  /** 検査ツール由来の項目は個別列を作らず ScanData(JSON) に集約するため、
+   *  ここでは集約列 ScanData の存在だけを保証する (per-field 列は作らない)。
+   *  ★ 個別列方式は SP の列数上限 (複数行テキスト約192列) と行サイズ上限に
+   *    抵触し、259 列 CSV で列作成が HTTP 500 になっていた。 */
+  async ensureScanColumns(_columns: string[]): Promise<void> {
+    await this.ensureFields(LIST_MANAGED, [{ name: 'ScanData', type: 'Note' }]);
   }
 
   /** 取込 ops が書き込む列のうち、リストに存在しないもの (SP 列名) を返す。 */
@@ -485,13 +480,14 @@ export class SpRepository implements Repository {
 
   // ── row ↔ entity ──────────────────────────────────────────────────────────
   private rowToIssue(row: any, byInternal?: Map<string, string>): ManagedIssue {
-    const scanFields: Record<string, string> = {};
+    // 旧方式: 個別 Scan_* 列 (上限に達する前に作られた分) を後方互換で読む。
+    const legacy: Record<string, string> = {};
     for (const k of Object.keys(row)) {
-      // item JSON のキーは InternalName (_x005f_ エンコード + 32文字切詰) の
-      // ことがある → Title (安全名 Scan_XXX_hash) に戻してから格納する。
       const title = byInternal?.get(k) ?? k;
-      if (title.startsWith('Scan_')) scanFields[title] = String(row[k] ?? '');
+      if (title.startsWith('Scan_')) legacy[title] = String(row[k] ?? '');
     }
+    // 新方式: ScanData(JSON) を展開し legacy と統合 (重複は JSON 優先)。
+    const scanFields = unpackScanData(row.ScanData, legacy);
     return {
       id: row.Id,
       title: row.Title ?? '',
@@ -533,9 +529,10 @@ export class SpRepository implements Repository {
     if (p.firstUndetectedAt !== undefined) row.FirstUndetectedAt = p.firstUndetectedAt || null;
     if (p.addedReason !== undefined) row.AddedReason = p.addedReason;
     if (p.lastSyncedAt !== undefined) row.LastSyncedAt = p.lastSyncedAt || null;
-    // 動的列は安全な SP 列名 (scanFieldName) へ変換して送る。表示名キーのまま
-    // 送ると内部名と食い違い 400 → 取込 add が全件失敗する (実機で判明)。
-    if (p.scanFields) for (const [k, v] of Object.entries(p.scanFields)) row[scanFieldName(k)] = v;
+    // ★ 検査ツール由来の全項目は個別列ではなく ScanData に JSON で集約する
+    //   (SP の列数上限/行サイズ上限を回避)。キーは元の "Scan_<元名>" のまま保持し、
+    //   表示側 resolveScanValue が raw/安全名/エンコードのいずれでも引ける。
+    if (p.scanFields !== undefined) row.ScanData = packScanData(p.scanFields);
     return row;
   }
 }

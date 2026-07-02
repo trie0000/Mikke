@@ -73,6 +73,35 @@ export function resolveScanValue(
   return fallback;
 }
 
+/** scanFields を ScanData(単一 Note 列) 用の JSON 文字列に詰める。
+ *  空値のキーは省いてサイズを抑える。全て空なら '' を返す。 */
+export function packScanData(scanFields: Record<string, string> | undefined): string {
+  if (!scanFields) return '';
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(scanFields)) {
+    if (v !== undefined && v !== null && String(v) !== '') clean[k] = String(v);
+  }
+  return Object.keys(clean).length ? JSON.stringify(clean) : '';
+}
+
+/** ScanData(JSON) と旧個別列(legacy)を統合して scanFields を復元する。
+ *  重複キーは JSON(新方式) を優先。壊れた JSON は無視し legacy を返す。 */
+export function unpackScanData(
+  scanDataStr: string | null | undefined,
+  legacy: Record<string, string> = {},
+): Record<string, string> {
+  const out: Record<string, string> = { ...legacy };
+  if (scanDataStr) {
+    try {
+      const obj = JSON.parse(String(scanDataStr));
+      if (obj && typeof obj === 'object') {
+        for (const [k, v] of Object.entries(obj)) out[k] = String(v ?? '');
+      }
+    } catch { /* 壊れた JSON は無視 (legacy がフォールバック) */ }
+  }
+  return out;
+}
+
 /**
  * 列名リスト ("Scan_<元名>" でも元名そのままでも可) から、SP 列名 → 表示名 (元名)
  * の逆引きマップを作る。詳細画面などで SP から来た安全名キーを元名で表示する用。

@@ -68,6 +68,11 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'FirstUndetectedAt', type: 'DateTime' },
     { name: 'AddedReason', type: 'Choice', choices: ['条件一致', '個別指定'] },
     { name: 'LastSyncedAt', type: 'DateTime' },
+    // ★ 検査ツール由来の全項目 (Scan_*) は個別列にせず、この 1 列へ JSON で集約する。
+    //   個別列にすると SP の列数上限 (複数行テキストは 1 リスト約192列) と 1 行あたり
+    //   約8KB のサイズ上限に抵触し、CyCognito 等の 259 列 CSV で列作成が HTTP 500 /
+    //   書込が失敗する。JSON 集約なら 1 列で済み破綻しない (表示・絞込はクライアント側)。
+    { name: 'ScanData', type: 'Note' },
   ];
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scanFieldName, scanDisplayMap, fnv1aHex, decodeSpInternalName, resolveScanValue } from '../src/lib/scanName';
+import { scanFieldName, scanDisplayMap, fnv1aHex, decodeSpInternalName, resolveScanValue, packScanData, unpackScanData } from '../src/lib/scanName';
 
 describe('scanFieldName', () => {
   it('決定的 (同じ入力は常に同じ出力)', () => {
@@ -65,6 +65,46 @@ describe('resolveScanValue', () => {
   it('どこにも無ければ undefined', () => {
     expect(resolveScanValue({ 'Scan_X_0000': 'v' }, 'Scan_Nope', headers)).toBeUndefined();
     expect(resolveScanValue(undefined, 'Scan_First Seen', headers)).toBeUndefined();
+  });
+});
+
+describe('packScanData / unpackScanData (単一 Note 列への JSON 集約)', () => {
+  it('round-trip: scanFields → JSON → scanFields (空値は落ちる)', () => {
+    const sf = { 'Scan_Asset Name': 'web01.example.com', 'Scan_CVE': 'CVE-2011-3389', 'Scan_Empty': '' };
+    const json = packScanData(sf);
+    expect(json).toContain('web01.example.com');
+    const back = unpackScanData(json);
+    expect(back['Scan_Asset Name']).toBe('web01.example.com');
+    expect(back['Scan_CVE']).toBe('CVE-2011-3389');
+    expect(back['Scan_Empty']).toBeUndefined();   // 空値は保存されない
+  });
+  it('全部空 / undefined は空文字列', () => {
+    expect(packScanData({ a: '', b: '' })).toBe('');
+    expect(packScanData(undefined)).toBe('');
+    expect(packScanData({})).toBe('');
+  });
+  it('259 列相当でも 1 文字列に収まる', () => {
+    const wide: Record<string, string> = {};
+    for (let i = 0; i < 259; i++) wide[`Scan_Col ${i}`] = `v${i}`;
+    const json = packScanData(wide);
+    expect(typeof json).toBe('string');
+    expect(Object.keys(unpackScanData(json)).length).toBe(259);
+  });
+  it('旧個別列(legacy)と JSON を統合 (重複は JSON 優先)', () => {
+    const legacy = { 'Scan_Asset Name': 'OLD', 'Scan_Only Legacy': 'keep' };
+    const json = packScanData({ 'Scan_Asset Name': 'NEW' });
+    const merged = unpackScanData(json, legacy);
+    expect(merged['Scan_Asset Name']).toBe('NEW');      // JSON 優先
+    expect(merged['Scan_Only Legacy']).toBe('keep');    // legacy 残す
+  });
+  it('壊れた JSON は無視して legacy を返す', () => {
+    expect(unpackScanData('{壊れ', { 'Scan_X': 'v' })).toEqual({ 'Scan_X': 'v' });
+    expect(unpackScanData('', {})).toEqual({});
+    expect(unpackScanData(null)).toEqual({});
+  });
+  it('resolveScanValue は unpack 済み scanFields から raw キーで引ける', () => {
+    const sf = unpackScanData(packScanData({ 'Scan_Asset Mapped IP Addresses': '203.0.113.10' }));
+    expect(resolveScanValue(sf, 'Scan_Asset Mapped IP Addresses', [])).toBe('203.0.113.10');
   });
 });
 
