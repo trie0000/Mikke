@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  normalizeAsset, isIp, assetTypeOf, splitAssetCell, extractAssetKeys,
+  normalizeAsset, isIp, assetTypeOf, splitAssetCell, extractAssets, countIssuesByAsset,
   joinFqdn, dataRowsOfDeptCsv, buildAssetDirectory, matchAssets,
 } from '../src/lib/assets';
 import { parseCsv } from '../src/lib/csv';
-import { scanFieldName } from '../src/lib/scanName';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 describe('normalizeAsset / isIp', () => {
@@ -25,9 +24,12 @@ describe('normalizeAsset / isIp', () => {
 });
 
 describe('splitAssetCell', () => {
-  it('カンマ / セミコロン / 空白区切り', () => {
+  it('カンマ / セミコロン / 空白 / パイプ区切り', () => {
     expect(splitAssetCell('a.example.com, 10.0.0.1; b.example.com')).toEqual([
       'a.example.com', '10.0.0.1', 'b.example.com',
+    ]);
+    expect(splitAssetCell('10.0.0.1 | 10.0.0.2 | web.example.com')).toEqual([
+      '10.0.0.1', '10.0.0.2', 'web.example.com',
     ]);
   });
   it('空セルは空配列', () => {
@@ -35,19 +37,34 @@ describe('splitAssetCell', () => {
   });
 });
 
-describe('extractAssetKeys', () => {
+describe('extractAssets (複数列・グループ)', () => {
   const mk = (id: number, scanFields: Record<string, string>): ManagedIssue => ({
     id, title: 't', issueInstanceId: `i-${id}`, detectionStatus: '新規',
     mgmtStatus: '未通知', isOutOfScope: false, scanFields,
   });
-  it('mock 形式 (Scan_元名) と SP 形式 (安全名) の両方から抽出しユニーク化', () => {
+  it('複数列から抽出しユニーク化 + パイプ複数値を個別展開', () => {
     const issues = [
-      mk(1, { 'Scan_Asset': 'Web01.example.com' }),               // mock キー
-      mk(2, { [scanFieldName('Asset')]: 'web01.example.com' }),   // SP 安全名キー (重複)
-      mk(3, { 'Scan_Asset': '10.0.0.5' }),
+      mk(1, { 'Scan_FQDN': 'Web01.example.com', 'Scan_IP': '10.0.0.1 | 10.0.0.2' }),
+      mk(2, { 'Scan_FQDN': 'web01.example.com', 'Scan_IP': '10.0.0.3' }),   // FQDN 重複
     ];
-    const keys = extractAssetKeys(issues, 'Asset', scanFieldName);
-    expect(keys.sort()).toEqual(['10.0.0.5', 'web01.example.com']);
+    const { keys } = extractAssets(issues, ['FQDN', 'IP']);
+    expect(keys.sort()).toEqual(['10.0.0.1', '10.0.0.2', '10.0.0.3', 'web01.example.com']);
+  });
+  it('脆弱性ごとのグループ (同一 issue の資産を束ねる)', () => {
+    const issues = [mk(1, { 'Scan_FQDN': 'a.example.com', 'Scan_IP': '10.0.0.1 | 10.0.0.2' })];
+    const { groups } = extractAssets(issues, ['FQDN', 'IP']);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.iid).toBe('i-1');
+    expect(groups[0]!.keys.sort()).toEqual(['10.0.0.1', '10.0.0.2', 'a.example.com']);
+  });
+  it('countIssuesByAsset は同一脆弱性内の重複を 1 件で数える', () => {
+    const issues = [
+      mk(1, { 'Scan_FQDN': 'a.example.com', 'Scan_IP': '10.0.0.1' }),
+      mk(2, { 'Scan_FQDN': 'a.example.com', 'Scan_IP': '10.0.0.2' }),
+    ];
+    const counts = countIssuesByAsset(issues, ['FQDN', 'IP']);
+    expect(counts['a.example.com']).toBe(2);
+    expect(counts['10.0.0.1']).toBe(1);
   });
 });
 
@@ -140,5 +157,38 @@ describe('matchAssets', () => {
       }),
     ], dir, now);
     expect(plan.length).toBe(0);
+  });
+
+  it('同一脆弱性の関連資産へ伝播 (FQDN 一致 → 同居 IP に会社/管理番号を引継ぎ)', () => {
+    const dir = buildAssetDirectory(parseCsv(BASE_CSV), parseCsv(SITE_CSV));
+    const assets = [asset(1, 'www.example.com'), asset(2, '10.0.0.1'), asset(3, '10.0.0.9')];
+    // 脆弱性 i-1: www.example.com と 10.0.0.1 が同居 (10.0.0.9 は無関係)
+    const groups = [{ iid: 'i-1', keys: ['www.example.com', '10.0.0.1'] }];
+    const plan = matchAssets(assets, dir, now, groups);
+    const byId = Object.fromEntries(plan.map((p) => [p.asset.id, p]));
+    // 直接一致
+    expect(byId[1]!.patch.identifyReason).toBe('資産管理部門リスト CSV 突合');
+    // 伝播: 10.0.0.1 は www.example.com の会社/番号を引き継ぐ
+    expect(byId[2]!.patch).toMatchObject({
+      mgmtNumber: 'W-0001', businessCompany: 'エナジー事業', affiliateCompany: 'ABC株式会社',
+      identifyReason: '同一脆弱性の関連資産から特定',
+    });
+    expect(byId[2]!.patch.identifyEvidence).toContain('i-1');
+    expect(byId[2]!.patch.identifyEvidence).toContain('www.example.com');
+    // 無関係の 10.0.0.9 は対象外
+    expect(byId[3]).toBeUndefined();
+  });
+
+  it('伝播は直接一致を上書きしない (自分の直接一致を優先)', () => {
+    const dir = buildAssetDirectory(parseCsv(BASE_CSV), parseCsv(SITE_CSV));
+    // www.example.com(W-0001) と example.org(W-0002) が同一脆弱性で同居
+    const assets = [asset(1, 'www.example.com'), asset(2, 'example.org')];
+    const groups = [{ iid: 'i-9', keys: ['www.example.com', 'example.org'] }];
+    const plan = matchAssets(assets, dir, now, groups);
+    const byId = Object.fromEntries(plan.map((p) => [p.asset.id, p]));
+    // 両者とも自分自身の直接一致が優先される
+    expect(byId[1]!.patch.mgmtNumber).toBe('W-0001');
+    expect(byId[2]!.patch.mgmtNumber).toBe('W-0002');
+    expect(byId[2]!.patch.identifyReason).toBe('資産管理部門リスト CSV 突合');
   });
 });

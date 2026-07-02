@@ -10,12 +10,18 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { filePicker } from '../components/filePicker';
 import { parseCsv } from '../lib/csv';
-import { scanFieldName } from '../lib/scanName';
 import {
-  DEFAULT_ASSET_COLUMN, extractAssetKeys, countIssuesByAsset, assetTypeOf,
+  DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf,
   buildAssetDirectory, matchAssets,
 } from '../lib/assets';
-import type { ManagedAsset, ManagedIssue } from '../types';
+import type { ManagedAsset, ManagedIssue, MikkeSettings } from '../types';
+
+/** 設定から資産列 (複数) を解決。旧 assetColumn からのフォールバックあり。 */
+function resolveAssetColumns(s: MikkeSettings): string[] {
+  if (s.assetColumns && s.assetColumns.length) return s.assetColumns;
+  if (s.assetColumn) return [s.assetColumn];
+  return [DEFAULT_ASSET_COLUMN];
+}
 
 export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
   const root = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
@@ -37,9 +43,9 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
       const settings = await getRepo().getSettings();
-      const assetColumn = settings.assetColumn || DEFAULT_ASSET_COLUMN;
+      const cols = resolveAssetColumns(settings);
       [assets, issues] = await Promise.all([getRepo().listAssets(), getRepo().listIssues()]);
-      issueCounts = countIssuesByAsset(issues, assetColumn, scanFieldName);
+      issueCounts = countIssuesByAsset(issues, cols);
       paint();
     } catch (e) {
       clear(tableWrap);
@@ -129,28 +135,61 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
   function openExtractModal(): void {
     void (async () => {
       const settings = await getRepo().getSettings();
-      const dlId = 'mikke-asset-col-dl';
-      const colInput = el('input', {
-        type: 'text', list: dlId, value: settings.assetColumn || DEFAULT_ASSET_COLUMN,
-      }) as HTMLInputElement;
+      const selected = new Set(resolveAssetColumns(settings));
+      // 候補列: 実 CSV ヘッダ (無ければ現在の選択)。IP/FQDN 列を複数選べる。
+      const candidates = (settings.lastCsvHeaders ?? []).slice();
+      for (const c of selected) if (!candidates.includes(c)) candidates.push(c);
+
+      const listWrap = el('div', {
+        style: 'max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-3)',
+      });
+      const rowOf = (h: string): HTMLElement => {
+        const cb = el('input', { type: 'checkbox', ...(selected.has(h) ? { checked: 'checked' } : {}),
+          onchange: (e: Event) => { (e.target as HTMLInputElement).checked ? selected.add(h) : selected.delete(h); },
+        }) as HTMLInputElement;
+        return el('label', {
+          class: 'mikke-check-row',
+          style: 'display:flex;gap:var(--s-3);align-items:center;padding:var(--s-2) var(--s-3);cursor:pointer',
+        }, [cb, el('span', {}, [h])]);
+      };
+      const renderList = (filter: string): void => {
+        clear(listWrap);
+        const f = filter.trim().toLowerCase();
+        const shown = f ? candidates.filter((h) => h.toLowerCase().includes(f)) : candidates;
+        if (!shown.length) { listWrap.appendChild(el('div', { class: 'mikke-empty' }, ['該当する列がありません'])); return; }
+        for (const h of shown) listWrap.appendChild(rowOf(h));
+      };
+      const filterInput = el('input', {
+        class: 'mikke-input', type: 'text', placeholder: '列名で絞り込み (例: IP / FQDN / Asset)',
+        style: 'width:100%;border:1px solid var(--line);margin-bottom:var(--s-3)',
+        oninput: (e: Event) => renderList((e.target as HTMLInputElement).value),
+      });
+      renderList('');
+
       const body = el('div', {}, [
         el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7;color:var(--ink-2)' }, [
-          '管理対象の脆弱性から、資産 (FQDN / IP) をユニークに抽出して資産一覧へ追加します。既存の資産はそのまま残ります。',
+          '管理対象の脆弱性から、資産 (FQDN / IP) をユニークに抽出して資産一覧へ追加します。',
+          el('b', {}, ['資産が入っている列を複数選択']),
+          'できます (例: FQDN 列と IP 列)。1 セルに ',
+          el('code', {}, ['|']),
+          ' 等で複数値がある場合はそれぞれ個別の資産として登録します。既存の資産はそのまま残ります。',
         ]),
-        el('datalist', { id: dlId }, (settings.lastCsvHeaders ?? []).map((h) => el('option', { value: h }))),
         el('div', { class: 'mikke-field' }, [
-          el('label', { class: 'mikke-field-label' }, ['資産が入っている列 (CSV 列名)']),
-          colInput,
+          el('label', { class: 'mikke-field-label' }, ['資産が入っている列 (複数選択可)']),
+          filterInput,
+          listWrap,
         ]),
       ]);
       openModal(rootEl, {
         title: '脆弱性から資産を抽出',
         body,
+        size: 'lg',
         primaryLabel: '抽出する',
         onPrimary: async () => {
-          const col = colInput.value.trim() || DEFAULT_ASSET_COLUMN;
-          await getRepo().saveSettings({ ...settings, assetColumn: col }).catch(() => { /* noop */ });
-          const keys = extractAssetKeys(issues, col, scanFieldName);
+          const cols = [...selected];
+          if (!cols.length) { toast(rootEl, '資産が入っている列を 1 つ以上選択してください。', 'warn'); throw new Error('no column'); }
+          await getRepo().saveSettings({ ...settings, assetColumns: cols }).catch(() => { /* noop */ });
+          const { keys } = extractAssets(issues, cols);
           const existing = new Set(assets.map((a) => a.assetKey));
           const fresh = keys.filter((k) => !existing.has(k));
           let added = 0;
@@ -185,6 +224,10 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
         el('label', { class: 'mikke-field-label' }, ['サイトURL情報 CSV（管理番号 / サブドメイン / ドメインネーム）']),
         sitePicker.root,
       ]),
+      el('p', { style: 'margin:var(--s-3) 0 0;color:var(--ink-4);font-size:var(--fs-xs);line-height:1.6' }, [
+        '同一脆弱性に紐づく資産 (例: FQDN と IP) のうち 1 つでも FQDN 一致で特定できた場合、',
+        '残りの資産にも同じ事業会社・関連会社・管理番号を引き継ぎます (根拠に明記)。',
+      ]),
     ]);
     openModal(rootEl, {
       title: '管理部門CSVを取込',
@@ -203,8 +246,10 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
           toast(rootEl, 'CSV のヘッダを読み取れませんでした。', 'error');
           throw new Error('bad csv');
         }
+        const settings = await getRepo().getSettings();
+        const { groups } = extractAssets(issues, resolveAssetColumns(settings));
         const dir = buildAssetDirectory(base, site);
-        const plan = matchAssets(assets, dir, new Date().toISOString());
+        const plan = matchAssets(assets, dir, new Date().toISOString(), groups);
         if (plan.length === 0) {
           toast(rootEl, `FQDN が一致する資産はありませんでした (部門リスト側 ${dir.size} FQDN)。`, 'warn', 6000);
           return;
@@ -216,19 +261,25 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
 
   /** 突合プレビュー → 確定で更新。 */
   function openMatchPreview(plan: ReturnType<typeof matchAssets>, dirSize: number): void {
+    const propagatedCount = plan.filter((p) => p.patch.identifyReason === '同一脆弱性の関連資産から特定').length;
     const thead = el('thead', {}, [el('tr', {}, [
-      el('th', {}, ['資産']), el('th', {}, ['管理番号']), el('th', {}, ['事業会社']), el('th', {}, ['関連会社']),
+      el('th', {}, ['資産']), el('th', {}, ['種別']), el('th', {}, ['管理番号']), el('th', {}, ['事業会社']), el('th', {}, ['関連会社']), el('th', {}, ['特定理由']),
     ])]);
     const tbody = el('tbody', {}, plan.slice(0, 100).map(({ asset, patch }) => el('tr', {}, [
       el('td', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm)' }, [asset.assetKey]),
+      el('td', {}, [asset.assetType]),
       el('td', {}, [patch.mgmtNumber ?? '—']),
       el('td', {}, [patch.businessCompany || '—']),
       el('td', {}, [patch.affiliateCompany || '—']),
+      el('td', { style: 'font-size:var(--fs-sm);color:var(--ink-3)' }, [
+        patch.identifyReason === '同一脆弱性の関連資産から特定' ? '関連資産から伝播' : '直接一致',
+      ]),
     ])));
     const body = el('div', {}, [
       el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7' }, [
-        `部門リスト側 ${dirSize} FQDN と突合し、${plan.length} 件の資産を更新します。`,
-        '特定理由には「資産管理部門リスト CSV 突合」、特定根拠には一致した FQDN と管理番号が記録されます。',
+        `部門リスト側 ${dirSize} FQDN と突合し、${plan.length} 件の資産を更新します`,
+        propagatedCount ? `（うち ${propagatedCount} 件は同一脆弱性の関連資産からの伝播）` : '',
+        '。特定理由・根拠 (一致した FQDN / 管理番号、または伝播元の脆弱性と資産) を記録します。',
       ]),
       el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:320px' }, [
         el('table', { class: 'mikke-table' }, [thead, tbody]),

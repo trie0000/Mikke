@@ -5,6 +5,7 @@
 // UI 非依存の純関数。テストは test/assets.test.ts。
 import type { ManagedIssue, ManagedAsset } from '../types';
 import type { ParsedCsv } from './csv';
+import { resolveScanValue } from './scanName';
 
 /** 既定の資産列名 (脆弱性 CSV 内で FQDN/IP が入っている列)。 */
 export const DEFAULT_ASSET_COLUMN = 'Asset';
@@ -30,43 +31,59 @@ export function assetTypeOf(key: string): 'FQDN' | 'IP' {
   return isIp(key) ? 'IP' : 'FQDN';
 }
 
-/** 1 セルから資産キーを取り出す (カンマ / セミコロン / 空白区切りの複数値対応)。 */
+/** 1 セルから資産キーを取り出す。1 セルに複数値が入っている場合の区切りは
+ *  パイプ(|) / カンマ / セミコロン / 空白 に対応 (管理対象一覧では | 区切りが多い)。 */
 export function splitAssetCell(cell: string): string[] {
   return (cell ?? '')
-    .split(/[,;\s]+/)
+    .split(/[|,;\s]+/)
     .map((x) => normalizeAsset(x))
     .filter(Boolean);
 }
 
-/** 脆弱性一覧から資産キーをユニーク抽出する。
- *  資産列は scanFields (Scan_<列名> / SP 安全名) と固定項目の両方から探す。 */
-export function extractAssetKeys(
-  issues: ManagedIssue[],
-  assetColumn: string,
-  scanKeyOf: (col: string) => string,
-): string[] {
-  const out = new Set<string>();
-  const rawKey = `Scan_${assetColumn}`;
-  const safeKey = scanKeyOf(assetColumn);
-  for (const i of issues) {
-    const cell = i.scanFields?.[safeKey] ?? i.scanFields?.[rawKey] ?? '';
-    for (const k of splitAssetCell(cell)) out.add(k);
+/** 1 脆弱性・指定列群から資産キー集合 (この脆弱性に紐づく資産) を取り出す。 */
+function assetKeysOfIssue(issue: ManagedIssue, columns: string[]): string[] {
+  const set = new Set<string>();
+  for (const col of columns) {
+    const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
+    const cell = resolveScanValue(issue.scanFields, key, []) ?? '';
+    for (const k of splitAssetCell(cell)) set.add(k);
   }
-  return [...out];
+  return [...set];
 }
 
-/** 資産ごとの脆弱性件数 (assetKey → 件数)。 */
+/** 脆弱性ごとの資産グループ (同一脆弱性に紐づく資産キー群)。伝播判定に使う。 */
+export interface IssueAssetGroup {
+  /** 脆弱性の識別子 (Issue Instance ID)。根拠文言に使う。 */
+  iid: string;
+  /** この脆弱性に紐づく資産キー (正規化済み・ユニーク)。 */
+  keys: string[];
+}
+
+/** 脆弱性一覧から、ユニーク資産キーと脆弱性ごとのグループを抽出する。
+ *  columns: 資産が入っている列 (複数可。例: FQDN 列 + IP 列)。 */
+export function extractAssets(
+  issues: ManagedIssue[],
+  columns: string[],
+): { keys: string[]; groups: IssueAssetGroup[] } {
+  const all = new Set<string>();
+  const groups: IssueAssetGroup[] = [];
+  for (const issue of issues) {
+    const keys = assetKeysOfIssue(issue, columns);
+    if (!keys.length) continue;
+    groups.push({ iid: issue.issueInstanceId || String(issue.id), keys });
+    for (const k of keys) all.add(k);
+  }
+  return { keys: [...all], groups };
+}
+
+/** 資産ごとの脆弱性件数 (assetKey → 件数。同一脆弱性内の重複は 1 件)。 */
 export function countIssuesByAsset(
   issues: ManagedIssue[],
-  assetColumn: string,
-  scanKeyOf: (col: string) => string,
+  columns: string[],
 ): Record<string, number> {
   const out: Record<string, number> = {};
-  const rawKey = `Scan_${assetColumn}`;
-  const safeKey = scanKeyOf(assetColumn);
-  for (const i of issues) {
-    const cell = i.scanFields?.[safeKey] ?? i.scanFields?.[rawKey] ?? '';
-    for (const k of splitAssetCell(cell)) out[k] = (out[k] ?? 0) + 1;
+  for (const issue of issues) {
+    for (const k of assetKeysOfIssue(issue, columns)) out[k] = (out[k] ?? 0) + 1;
   }
   return out;
 }
@@ -157,27 +174,74 @@ export interface AssetMatch {
   patch: Partial<ManagedAsset>;
 }
 
-/** 資産一覧とディレクトリを突合し、更新プランを返す (一致した資産のみ)。 */
+/**
+ * 資産一覧とディレクトリを突合し、更新プランを返す (一致・伝播した資産のみ)。
+ *
+ * 2 段階で特定する:
+ *  1) 直接一致: 資産キー(FQDN) が部門ディレクトリに存在 → その会社/管理番号を記載。
+ *  2) 伝播: 同一脆弱性に紐づく資産グループ (groups) の中で、どれか 1 つでも直接
+ *     一致していれば、同グループの他の資産 (IP など単体では特定できないもの) にも
+ *     同じ事業会社・関連会社・管理番号を記載し、根拠に「同一脆弱性に紐づく」旨を残す。
+ *
+ * @param groups 脆弱性ごとの資産グループ (extractAssets の戻り値)。省略時は伝播なし。
+ */
 export function matchAssets(
   assets: ManagedAsset[],
   dir: Map<string, AssetDirEntry>,
   nowIso: string,
+  groups: IssueAssetGroup[] = [],
 ): AssetMatch[] {
-  const out: AssetMatch[] = [];
+  // 1) 直接一致 (assetKey → 部門エントリ)
+  const direct = new Map<string, AssetDirEntry>();
   for (const a of assets) {
     const hit = dir.get(a.assetKey);
-    if (!hit) continue;
-    const patch: Partial<ManagedAsset> = {
-      mgmtNumber: hit.mgmtNumber,
-      businessCompany: hit.businessCompany,
-      affiliateCompany: hit.affiliateCompany,
-      identifyReason: '資産管理部門リスト CSV 突合',
-      identifyEvidence: hit.evidence,
-      updatedAt: nowIso,
-    };
+    if (hit) direct.set(a.assetKey, hit);
+  }
+
+  // 2) 伝播 (assetKey → 由来: どの脆弱性のどの一致資産から引き継いだか)。先勝ち。
+  const propagated = new Map<string, { entry: AssetDirEntry; viaKey: string; iid: string }>();
+  for (const g of groups) {
+    const matchedKey = g.keys.find((k) => direct.has(k));
+    if (!matchedKey) continue;
+    const entry = direct.get(matchedKey)!;
+    for (const k of g.keys) {
+      if (k === matchedKey || direct.has(k) || propagated.has(k)) continue;
+      propagated.set(k, { entry, viaKey: matchedKey, iid: g.iid });
+    }
+  }
+
+  const out: AssetMatch[] = [];
+  for (const a of assets) {
+    let patch: Partial<ManagedAsset> | null = null;
+    const hit = direct.get(a.assetKey);
+    if (hit) {
+      patch = {
+        mgmtNumber: hit.mgmtNumber,
+        businessCompany: hit.businessCompany,
+        affiliateCompany: hit.affiliateCompany,
+        identifyReason: '資産管理部門リスト CSV 突合',
+        identifyEvidence: hit.evidence,
+        updatedAt: nowIso,
+      };
+    } else {
+      const p = propagated.get(a.assetKey);
+      if (p) {
+        patch = {
+          mgmtNumber: p.entry.mgmtNumber,
+          businessCompany: p.entry.businessCompany,
+          affiliateCompany: p.entry.affiliateCompany,
+          identifyReason: '同一脆弱性の関連資産から特定',
+          identifyEvidence: `同一脆弱性(${p.iid})で検出された ${p.viaKey}`
+            + (p.entry.mgmtNumber ? ` (管理番号 ${p.entry.mgmtNumber})` : '')
+            + ' と同一資産群のため',
+          updatedAt: nowIso,
+        };
+      }
+    }
+    if (!patch) continue;
     // 変化が無ければスキップ (無駄な書き込みをしない)
     const changed = (['mgmtNumber', 'businessCompany', 'affiliateCompany'] as const)
-      .some((k) => (a[k] ?? '') !== (patch[k] ?? ''));
+      .some((k) => (a[k] ?? '') !== (patch![k] ?? ''));
     if (changed) out.push({ asset: a, patch });
   }
   return out;

@@ -108,8 +108,11 @@ export interface MikkeSettings {
   lastCsvHeaders?: string[];
   /** F6: 各管理項目の推定データ型 (キー = 列名、Scan_ 接頭辞なし)。 */
   columnTypes?: Record<string, ColumnType>;
-  /** 資産管理: 脆弱性 CSV のどの列を資産 (FQDN/IP) とみなすか (既定 'Asset')。 */
+  /** 資産管理: 脆弱性 CSV のどの列を資産 (FQDN/IP) とみなすか (既定 'Asset')。
+   *  @deprecated assetColumns に移行 (単一→複数)。読み込み時のフォールバックにのみ使う。 */
   assetColumn?: string;
+  /** 資産管理: 資産 (FQDN/IP) が入っている列 (複数可。例: FQDN 列 + IP 列)。 */
+  assetColumns?: string[];
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
 }
