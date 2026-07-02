@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 export interface Repository {
@@ -30,6 +30,11 @@ export interface Repository {
   createMissingColumns(cols: string[]): Promise<void>;
   /** 取込履歴を ImportLog に記録する。 */
   writeImportLog(entry: ImportLogEntry): Promise<void>;
+  /** 資産 (FQDN/IP) の管理部門リスト。 */
+  listAssets(): Promise<ManagedAsset[]>;
+  createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number>;
+  updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void>;
+  deleteAsset(id: number): Promise<void>;
 }
 
 /** 取込履歴の 1 レコード。 */

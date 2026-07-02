@@ -108,6 +108,8 @@ export interface MikkeSettings {
   lastCsvHeaders?: string[];
   /** F6: 各管理項目の推定データ型 (キー = 列名、Scan_ 接頭辞なし)。 */
   columnTypes?: Record<string, ColumnType>;
+  /** 資産管理: 脆弱性 CSV のどの列を資産 (FQDN/IP) とみなすか (既定 'Asset')。 */
+  assetColumn?: string;
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
 }
@@ -127,5 +129,27 @@ export interface SiteUser {
   email: string;
 }
 
+/** 資産 (FQDN / IP 単位) の管理部門情報。SP リスト MikkeAssets の 1 行。 */
+export interface ManagedAsset {
+  /** SP リスト内部 ID。 */
+  id: number;
+  /** 正規化済み資産キー (FQDN は小文字、IP はそのまま)。ユニーク。 */
+  assetKey: string;
+  /** 資産種別。 */
+  assetType: 'FQDN' | 'IP';
+  /** 事業会社 (基本情報 CSV「組織区分　第１階層名」)。 */
+  businessCompany?: string;
+  /** 関連会社 (基本情報 CSV「関係会社/事業場略称」)。 */
+  affiliateCompany?: string;
+  /** Web 資産管理番号 (両 CSV の「管理番号」)。 */
+  mgmtNumber?: string;
+  /** 特定理由 (CSV 突合 / 手動 等)。 */
+  identifyReason?: string;
+  /** 特定根拠 (どの情報から特定したか)。 */
+  identifyEvidence?: string;
+  /** 最終更新日時 (ISO)。 */
+  updatedAt?: string;
+}
+
 /** メイン画面のビュー。 */
-export type ViewName = 'issues' | 'import';
+export type ViewName = 'issues' | 'import' | 'assets';

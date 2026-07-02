@@ -1,11 +1,12 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
+const LS_ASSETS = 'mikke.mock.assets';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -48,9 +49,11 @@ function seedIssues(): ManagedIssue[] {
 export class MockRepository implements Repository {
   private issues: ManagedIssue[];
   private settings: MikkeSettings;
+  private assets: ManagedAsset[];
 
   constructor() {
     this.issues = load<ManagedIssue[]>(LS_ISSUES, seedIssues());
+    this.assets = load<ManagedAsset[]>(LS_ASSETS, []);
     this.settings = load<MikkeSettings>(LS_SETTINGS, {
       managedColumns: ['Scan_Asset', 'Scan_CVE'],
       matchConditions: { combinator: 'OR', rules: [{ field: 'Severity', op: 'equals', value: 'Critical' }] },
@@ -79,6 +82,30 @@ export class MockRepository implements Repository {
   async deleteIssue(id: number): Promise<void> {
     const idx = this.issues.findIndex((i) => i.id === id);
     if (idx >= 0) { this.issues.splice(idx, 1); save(LS_ISSUES, this.issues); }
+  }
+
+  // ── 資産 (FQDN/IP) 管理 ──────────────────────────────────────────────────
+  async listAssets(): Promise<ManagedAsset[]> {
+    return this.assets.map((a) => ({ ...a }));
+  }
+
+  async createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number> {
+    const id = this.assets.reduce((m, a) => Math.max(m, a.id), 0) + 1;
+    this.assets.push({ ...asset, id });
+    save(LS_ASSETS, this.assets);
+    return id;
+  }
+
+  async updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void> {
+    const idx = this.assets.findIndex((a) => a.id === id);
+    if (idx < 0) return;
+    this.assets[idx] = { ...this.assets[idx]!, ...patch, id };
+    save(LS_ASSETS, this.assets);
+  }
+
+  async deleteAsset(id: number): Promise<void> {
+    const idx = this.assets.findIndex((a) => a.id === id);
+    if (idx >= 0) { this.assets.splice(idx, 1); save(LS_ASSETS, this.assets); }
   }
 
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {

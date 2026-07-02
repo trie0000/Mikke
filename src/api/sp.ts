@@ -2,11 +2,11 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
+import type { ManagedIssue, ManagedAsset, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
 import type { ImportOp } from '../lib/import';
 import {
-  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG,
-  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs,
+  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS,
+  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
@@ -80,6 +80,7 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_MANAGED, managedIssueFieldSpecs());
     await this.ensureList(LIST_SETTINGS, settingsFieldSpecs());
     await this.ensureList(LIST_IMPORTLOG, importLogFieldSpecs());
+    await this.ensureList(LIST_ASSETS, assetFieldSpecs());
   }
 
   private async ensureList(title: string, fields: FieldSpec[]): Promise<void> {
@@ -387,6 +388,71 @@ export class SpRepository implements Repository {
     const fixed = new Map(managedIssueFieldSpecs().map((s) => [s.name, s]));
     const specs: FieldSpec[] = cols.map((c) => fixed.get(c) ?? { name: c, type: 'Note' });
     await this.ensureFields(LIST_MANAGED, specs);   // 終了時に実在列キャッシュは無効化される
+  }
+
+  // ── 資産 (FQDN/IP) 管理 — MikkeAssets ──────────────────────────────────────
+  async listAssets(): Promise<ManagedAsset[]> {
+    const out: ManagedAsset[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_ASSETS}')/items?$top=5000`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const row of j.d.results) out.push(this.rowToAsset(row));
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+
+  async createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number> {
+    const r = await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_ASSETS}')/items`,
+      { __metadata: { type: 'SP.Data.MikkeAssetsListItem' }, ...this.assetToRow(asset) },
+    );
+    const j = await r.json();
+    return j.d.Id as number;
+  }
+
+  async updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_ASSETS}')/items(${id})`,
+      { __metadata: { type: 'SP.Data.MikkeAssetsListItem' }, ...this.assetToRow(patch) },
+      { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' },
+    );
+  }
+
+  async deleteAsset(id: number): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_ASSETS}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+
+  private rowToAsset(row: any): ManagedAsset {
+    return {
+      id: row.Id,
+      assetKey: row.AssetKey ?? row.Title ?? '',
+      assetType: (row.AssetType === 'IP' ? 'IP' : 'FQDN'),
+      businessCompany: row.BusinessCompany ?? undefined,
+      affiliateCompany: row.AffiliateCompany ?? undefined,
+      mgmtNumber: row.MgmtNumber ?? undefined,
+      identifyReason: row.IdentifyReason ?? undefined,
+      identifyEvidence: row.IdentifyEvidence ?? undefined,
+      updatedAt: row.UpdatedAt ?? undefined,
+    };
+  }
+
+  private assetToRow(p: Partial<ManagedAsset>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (p.assetKey !== undefined) { row.Title = p.assetKey; row.AssetKey = p.assetKey; }
+    if (p.assetType !== undefined) row.AssetType = p.assetType;
+    if (p.businessCompany !== undefined) row.BusinessCompany = p.businessCompany;
+    if (p.affiliateCompany !== undefined) row.AffiliateCompany = p.affiliateCompany;
+    if (p.mgmtNumber !== undefined) row.MgmtNumber = p.mgmtNumber;
+    if (p.identifyReason !== undefined) row.IdentifyReason = p.identifyReason;
+    if (p.identifyEvidence !== undefined) row.IdentifyEvidence = p.identifyEvidence;
+    // DateTime 列は空文字だと SP が 400 → クリアは null で送る
+    if (p.updatedAt !== undefined) row.UpdatedAt = p.updatedAt || null;
+    return row;
   }
 
   /** 取込履歴を MikkeImportLog に記録。 */

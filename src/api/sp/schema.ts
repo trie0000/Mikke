@@ -15,6 +15,7 @@ export interface FieldSpec {
 export const LIST_MANAGED = 'MikkeManagedIssues';
 export const LIST_SETTINGS = 'MikkeSettings';
 export const LIST_IMPORTLOG = 'MikkeImportLog';
+export const LIST_ASSETS = 'MikkeAssets';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -74,6 +75,20 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
 export function settingsFieldSpecs(): FieldSpec[] {
   return [
     { name: 'SettingsJson', type: 'Note' },
+  ];
+}
+
+/** MikkeAssets: 資産 (FQDN/IP) の管理部門情報。 */
+export function assetFieldSpecs(): FieldSpec[] {
+  return [
+    { name: 'AssetKey', type: 'Text', indexed: true },
+    { name: 'AssetType', type: 'Choice', choices: ['FQDN', 'IP'] },
+    { name: 'BusinessCompany', type: 'Text' },
+    { name: 'AffiliateCompany', type: 'Text' },
+    { name: 'MgmtNumber', type: 'Text', indexed: true },
+    { name: 'IdentifyReason', type: 'Note' },
+    { name: 'IdentifyEvidence', type: 'Note' },
+    { name: 'UpdatedAt', type: 'DateTime' },
   ];
 }
 
