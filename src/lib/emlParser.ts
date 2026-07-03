@@ -241,7 +241,9 @@ export function deEncapsulateHtml(rtf: string): string | null {
         i += m[0].length;
         if (word === 'htmltag') { flush(); cur.htmltag = true; cur.ignore = false; }
         else if (word === 'htmlrtf') { flush(); cur.htmlrtf = param !== 0; }
-        else if (word === 'par' || word === 'line') { emitStr('\n'); }
+        // ★ \par / \line は RTF 側の整形であり HTML の改行ではない (改行は htmltag の
+        //   <br>/<p> 等が持つ)。ここで改行を足すと「Cc: の後に余計な改行」等になるため出さない。
+        else if (word === 'par' || word === 'line') { /* 出力しない */ }
         else if (word === 'tab') { emitStr('\t'); }
         else if (word === 'lquote') emitStr('‘'); else if (word === 'rquote') emitStr('’');
         else if (word === 'ldblquote') emitStr('“'); else if (word === 'rdblquote') emitStr('”');

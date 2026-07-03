@@ -142,6 +142,10 @@ describe('deEncapsulateHtml (RTF カプセル化 HTML → 元 HTML)', () => {
     const rtf = "{\\rtf1\\ansi\\ansicpg932\\fromhtml1{\\*\\htmltag <p>}\\'82\\'a0\\'82\\'a2{\\*\\htmltag </p>}}";
     expect(deEncapsulateHtml(rtf)).toBe('<p>あい</p>');
   });
+  it('\\par / \\line は改行を出さない (改行は HTML タグ由来。Cc: 後の余計な改行防止)', () => {
+    expect(deEncapsulateHtml('{\\rtf1\\fromhtml1{\\*\\htmltag <p>}Cc: a@x.com\\par b@x.com{\\*\\htmltag </p>}}'))
+      .toBe('<p>Cc: a@x.comb@x.com</p>');
+  });
   it('非カプセル化 (\\fromhtml なし) は null', () => {
     expect(deEncapsulateHtml('{\\rtf1\\ansi hello}')).toBeNull();
   });
