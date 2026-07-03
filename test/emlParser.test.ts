@@ -137,6 +137,11 @@ describe('deEncapsulateHtml (RTF カプセル化 HTML → 元 HTML)', () => {
     const html = deEncapsulateHtml(rtf);
     expect(html).toBe('<html><body><p>Hello あworld</p></body></html>');
   });
+  it('Shift_JIS(cp932) のマルチバイト \\\'xx\\\'xx を正しくデコード (文字化けしない)', () => {
+    // \'82\'a0 = SJIS「あ」, \'82\'a2 =「い」。1 バイトずつだと文字化けする。
+    const rtf = "{\\rtf1\\ansi\\ansicpg932\\fromhtml1{\\*\\htmltag <p>}\\'82\\'a0\\'82\\'a2{\\*\\htmltag </p>}}";
+    expect(deEncapsulateHtml(rtf)).toBe('<p>あい</p>');
+  });
   it('非カプセル化 (\\fromhtml なし) は null', () => {
     expect(deEncapsulateHtml('{\\rtf1\\ansi hello}')).toBeNull();
   });

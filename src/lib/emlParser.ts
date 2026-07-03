@@ -192,59 +192,66 @@ export function deEncapsulateHtml(rtf: string): string | null {
   if (!/\\fromhtml1?\b/.test(head)) return null; // HTML カプセル化でなければ対象外
   const ansicpg = (rtf.match(/\\ansicpg(\d+)/) || [])[1];
   const decName = cpDecoderName(ansicpg);
-  const decodeByte = (b: number): string => { try { return new TextDecoder(decName).decode(new Uint8Array([b])); } catch { return String.fromCharCode(b); } };
+  // ★ 日本語等はマルチバイト (Shift_JIS/cp932 の \'82\'a0 等) なので、連続する
+  //   バイトを溜めてから codepage 単位でまとめてデコードする (1 バイトずつだと文字化け)。
+  let decoder: TextDecoder;
+  try { decoder = new TextDecoder(decName); } catch { decoder = new TextDecoder('windows-1252'); }
 
   interface Frame { htmlrtf: boolean; ignore: boolean; htmltag: boolean; uc: number }
   let cur: Frame = { htmlrtf: false, ignore: false, htmltag: false, uc: 1 };
   const stack: Frame[] = [];
   let out = '';
+  let byteBuf: number[] = [];   // 未デコードのバイト列 (現在の emit 状態で確定済み)
   let skip = 0;                 // \uN の後に読み飛ばす代替文字数
   let expectDest = false;       // 直前に \* を見た (次の制御語は destination)
-  const emit = (s: string): void => { if (cur.htmltag || (!cur.ignore && !cur.htmlrtf)) out += s; };
+  const canEmit = (): boolean => cur.htmltag || (!cur.ignore && !cur.htmlrtf);
+  const flush = (): void => { if (byteBuf.length) { out += decoder.decode(new Uint8Array(byteBuf)); byteBuf = []; } };
+  const emitByte = (bb: number): void => { if (canEmit()) byteBuf.push(bb); };
+  const emitStr = (t: string): void => { flush(); if (canEmit()) out += t; };
 
   const n = rtf.length;
   let i = 0;
   while (i < n) {
     const c = rtf[i]!;
-    if (c === '{') { stack.push(cur); cur = { ...cur }; cur.htmltag = false; cur.ignore = false; i++; continue; }
-    if (c === '}') { cur = stack.pop() ?? cur; i++; continue; }
+    if (c === '{') { flush(); stack.push(cur); cur = { ...cur }; cur.htmltag = false; cur.ignore = false; i++; continue; }
+    if (c === '}') { flush(); cur = stack.pop() ?? cur; i++; continue; }
     if (c === '\r' || c === '\n') { i++; continue; }
     if (c === '\\') {
       const nx = rtf[i + 1];
       if (nx === '*') { expectDest = true; i += 2; continue; }
-      if (nx === '\\' || nx === '{' || nx === '}') { if (skip > 0) skip--; else emit(nx!); i += 2; continue; }
+      if (nx === '\\' || nx === '{' || nx === '}') { if (skip > 0) skip--; else emitByte(nx!.charCodeAt(0)); i += 2; continue; }
       if (nx === "'") {
         const b = parseInt(rtf.substr(i + 2, 2), 16); i += 4;
         if (skip > 0) { skip--; continue; }
-        if (!Number.isNaN(b)) emit(decodeByte(b));
+        if (!Number.isNaN(b)) emitByte(b);
         continue;
       }
       const m = /^\\([a-zA-Z]+)(-?\d+)? ?/.exec(rtf.slice(i));
       if (m) {
         const word = m[1]!; const param = m[2] !== undefined ? parseInt(m[2], 10) : undefined;
         i += m[0].length;
-        if (word === 'htmltag') { cur.htmltag = true; cur.ignore = false; }
-        else if (word === 'htmlrtf') { cur.htmlrtf = param !== 0; }
-        else if (word === 'par' || word === 'line') { emit('\n'); }
-        else if (word === 'tab') { emit('\t'); }
-        else if (word === 'lquote') emit('‘'); else if (word === 'rquote') emit('’');
-        else if (word === 'ldblquote') emit('“'); else if (word === 'rdblquote') emit('”');
-        else if (word === 'bullet') emit('•'); else if (word === 'endash') emit('–'); else if (word === 'emdash') emit('—');
+        if (word === 'htmltag') { flush(); cur.htmltag = true; cur.ignore = false; }
+        else if (word === 'htmlrtf') { flush(); cur.htmlrtf = param !== 0; }
+        else if (word === 'par' || word === 'line') { emitStr('\n'); }
+        else if (word === 'tab') { emitStr('\t'); }
+        else if (word === 'lquote') emitStr('‘'); else if (word === 'rquote') emitStr('’');
+        else if (word === 'ldblquote') emitStr('“'); else if (word === 'rdblquote') emitStr('”');
+        else if (word === 'bullet') emitStr('•'); else if (word === 'endash') emitStr('–'); else if (word === 'emdash') emitStr('—');
         else if (word === 'uc') { if (param !== undefined) cur.uc = param; }
-        else if (word === 'u') { if (param !== undefined) { const cp = param < 0 ? param + 65536 : param; if (skip > 0) skip--; else emit(String.fromCodePoint(cp)); skip = cur.uc; } }
-        else if (expectDest && word !== 'htmltag') { cur.ignore = true; }
+        else if (word === 'u') { if (param !== undefined) { const cp = param < 0 ? param + 65536 : param; if (skip > 0) skip--; else emitStr(String.fromCodePoint(cp)); skip = cur.uc; } }
+        else if (expectDest && word !== 'htmltag') { flush(); cur.ignore = true; }
         expectDest = false;
         continue;
       }
-      // \<記号> (\~ \_ \- 等)
       const sym = nx!; i += 2;
       if (skip > 0) { skip--; continue; }
-      if (sym === '~') emit(' '); else if (sym === '_') emit('-'); else if (sym === '-') { /* optional hyphen */ } else emit(sym);
+      if (sym === '~') emitStr(' '); else if (sym === '_') emitStr('-'); else if (sym === '-') { /* optional hyphen */ } else emitByte(sym.charCodeAt(0));
       continue;
     }
     if (skip > 0) { skip--; i++; continue; }
-    emit(c); i++;
+    emitByte(c.charCodeAt(0)); i++;
   }
+  flush();
   return out.trim() || null;
 }
 
