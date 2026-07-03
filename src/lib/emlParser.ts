@@ -165,8 +165,10 @@ export function stripHtml(html: string): string {
     //  → 除去。ただし <div><br></div> 等「<br> が唯一の中身=意図的な空行」は残す。
     .replace(/([^>\s])\s*<br\s*\/?>\s*(<\/(?:p|div|li|tr|h[1-6])>)/gi, '$1$2')
     .replace(/<\/(p|div|li|tr|h[1-6])>\s*/gi, '\n')
-    .replace(/\s*<br\s*\/?>\s*/gi, '\n')
-    .replace(/<(p|div|li|tr|h[1-6])[^>]*>\s*/gi, '')
+    // <br> は改行に。前後の空白は詰めるが改行 (\n) は残す (空段落=空行を保持)。
+    .replace(/[ \t]*<br\s*\/?>[ \t]*/gi, '\n')
+    // 開きタグ除去。後続の空白は詰めるが改行 (\n) は残す (空段落=空行を保持)。
+    .replace(/<(p|div|li|tr|h[1-6])[^>]*>[ \t]*/gi, '')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
@@ -360,9 +362,10 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
     }
   }
 
-  // plain 本文: body 優先、無ければ HTML から tag 除去。
-  let body = str('body');
-  if (!body && bodyHtml) body = stripHtml(bodyHtml) || undefined;
+  // plain 本文: HTML があれば HTML から整形して使う。
+  //  ★ msgreader の plain body は「1 行ごとに空行」の二重行間になりがち。HTML は
+  //    行間 (改行/空段落) を正しく表すので、HTML 形式では stripHtml を優先する。
+  let body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : str('body');
 
   // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
   const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');

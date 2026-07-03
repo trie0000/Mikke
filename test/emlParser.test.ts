@@ -127,6 +127,16 @@ describe('stripHtml / 判定', () => {
     expect(stripHtml('<p>a</p>b &amp; c')).toBe('a\nb & c');
     expect(stripHtml('x<br>y')).toBe('x\ny');
   });
+  it('Outlook 風 HTML は二重改行にせず単一行間', () => {
+    // MsoNormal 段落 (改行のみ)
+    expect(stripHtml('<div><p class=MsoNormal>一行目<o:p></o:p></p><p class=MsoNormal>二行目<o:p></o:p></p></div>')).toBe('一行目\n二行目');
+    // <div>text<br></div> の冗長 <br> で二重改行にならない
+    expect(stripHtml('<div>a<br></div><div>b<br></div>')).toBe('a\nb');
+  });
+  it('意図的な空行 (空段落 / <div><br></div>) は 1 空行として保持', () => {
+    expect(stripHtml('<p>一行目</p><p><o:p>&nbsp;</o:p></p><p>二行目</p>')).toBe('一行目\n\n二行目');
+    expect(stripHtml('<div>a</div><div><br></div><div>b</div>')).toBe('a\n\nb');
+  });
   it('looksLikeEml / looksLikeOutlookDrag', () => {
     expect(looksLikeEml('From: a@b.com\nSubject: x\n\nbody')).toBe(true);
     expect(looksLikeEml('ただの文章です')).toBe(false);
