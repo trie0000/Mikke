@@ -197,6 +197,12 @@ export function deEncapsulateHtml(rtf: string): string | null {
   let decoder: TextDecoder;
   try { decoder = new TextDecoder(decName); } catch { decoder = new TextDecoder('windows-1252'); }
 
+  // RTF ヘッダ等の destination グループ (中身は文書テキストではないので出力しない)。
+  //  ★ これを除外しないとフォント名 (MS PGothic 等) や色定義が本文に漏れる。
+  const IGNORE_DEST = new Set(['fonttbl', 'colortbl', 'stylesheet', 'listtable', 'listoverridetable',
+    'revtbl', 'rsidtbl', 'generator', 'info', 'themedata', 'colorschememapping', 'latentstyles',
+    'datastore', 'pntext', 'pntxta', 'pntxtb', 'fldinst', 'filetbl', 'pgdsctbl', 'xmlnstbl', 'wgrffmtfilter']);
+
   interface Frame { htmlrtf: boolean; ignore: boolean; htmltag: boolean; uc: number }
   let cur: Frame = { htmlrtf: false, ignore: false, htmltag: false, uc: 1 };
   const stack: Frame[] = [];
@@ -213,7 +219,10 @@ export function deEncapsulateHtml(rtf: string): string | null {
   let i = 0;
   while (i < n) {
     const c = rtf[i]!;
-    if (c === '{') { flush(); stack.push(cur); cur = { ...cur }; cur.htmltag = false; cur.ignore = false; i++; continue; }
+    // グループ開始: 親の状態 (htmlrtf/ignore/htmltag/uc) を引き継ぐ。destination 制御語が
+    //  後で上書きする。★ ignore/htmltag をここでリセットすると入れ子 (fonttbl 内の
+    //  {\f0 …}) が無視されず漏れるので、リセットしない。
+    if (c === '{') { flush(); stack.push(cur); cur = { ...cur }; i++; continue; }
     if (c === '}') { flush(); cur = stack.pop() ?? cur; i++; continue; }
     if (c === '\r' || c === '\n') { i++; continue; }
     if (c === '\\') {
@@ -239,6 +248,7 @@ export function deEncapsulateHtml(rtf: string): string | null {
         else if (word === 'bullet') emitStr('•'); else if (word === 'endash') emitStr('–'); else if (word === 'emdash') emitStr('—');
         else if (word === 'uc') { if (param !== undefined) cur.uc = param; }
         else if (word === 'u') { if (param !== undefined) { const cp = param < 0 ? param + 65536 : param; if (skip > 0) skip--; else emitStr(String.fromCodePoint(cp)); skip = cur.uc; } }
+        else if (IGNORE_DEST.has(word)) { flush(); cur.ignore = true; }
         else if (expectDest && word !== 'htmltag') { flush(); cur.ignore = true; }
         expectDest = false;
         continue;

@@ -149,6 +149,16 @@ describe('deEncapsulateHtml (RTF カプセル化 HTML → 元 HTML)', () => {
     const rtf = '{\\rtf1\\fromhtml1{\\*\\generator Microsoft}{\\*\\htmltag <b>x</b>}}';
     expect(deEncapsulateHtml(rtf)).toBe('<b>x</b>');
   });
+  it('fonttbl / colortbl 等の RTF ヘッダを出力しない (MS PGothic 漏れ防止)', () => {
+    // 実データは byte 列 (1文字=1バイト) なので本文は ASCII/エスケープで表現。
+    const rtf = '{\\rtf1\\ansi\\fromhtml1\\deff0'
+      + '{\\fonttbl{\\f0\\fnil\\fcharset128 MS PGothic;}{\\f1\\fswiss Arial;}}'
+      + '{\\colortbl;\\red0\\green0\\blue0;}'
+      + '{\\*\\htmltag <p>}hello{\\*\\htmltag </p>}}';
+    const html = deEncapsulateHtml(rtf);
+    expect(html).toBe('<p>hello</p>');
+    expect(html).not.toMatch(/PGothic|Arial/);
+  });
 });
 
 describe('stripHtml / 判定', () => {
