@@ -430,6 +430,16 @@
 }
 #mikke-root .mikke-hist-drop.is-over { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
 
+/* ---------- 更新履歴 (日別カード) ---------- */
+#mikke-root .mikke-changelog-day {
+  font-weight: 600; color: var(--ink-2); font-size: var(--fs-sm);
+  padding-bottom: var(--s-2); margin-bottom: var(--s-2); border-bottom: 1px solid var(--line);
+}
+#mikke-root .mikke-changelog-row {
+  display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-2) 0; line-height: 1.7;
+}
+#mikke-root .mikke-changelog-time { color: var(--ink-4); font-size: var(--fs-xs); white-space: nowrap; min-width: 92px; }
+
 /* ---------- ドロップダウンメニュー項目 ---------- */
 #mikke-root .mikke-menu-item {
   display: block; width: 100%; text-align: left; padding: var(--s-3) var(--s-4);

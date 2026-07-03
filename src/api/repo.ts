@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 export interface Repository {
@@ -36,6 +36,12 @@ export interface Repository {
   listHistory(issueInstanceId: string): Promise<ResponseHistory[]>;
   createHistory(entry: Omit<ResponseHistory, 'id'>): Promise<number>;
   deleteHistory(id: number): Promise<void>;
+  /** 管理対象チケットの更新履歴 (Issue Instance ID で絞り込み)。 */
+  listChangeLog(issueInstanceId: string): Promise<ChangeLogEntry[]>;
+  createChangeLog(entry: Omit<ChangeLogEntry, 'id'>): Promise<number>;
+  deleteChangeLog(id: number): Promise<void>;
+  /** ある issue の更新履歴を全削除 (一括リセット)。 */
+  clearChangeLog(issueInstanceId: string): Promise<void>;
   createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number>;
   updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void>;
   deleteAsset(id: number): Promise<void>;

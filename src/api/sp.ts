@@ -2,12 +2,12 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
 import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
-  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY,
-  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs,
+  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG,
+  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
@@ -82,6 +82,7 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_IMPORTLOG, importLogFieldSpecs());
     await this.ensureList(LIST_ASSETS, assetFieldSpecs());
     await this.ensureList(LIST_HISTORY, historyFieldSpecs());
+    await this.ensureList(LIST_CHANGELOG, changeLogFieldSpecs());
   }
 
   private async ensureList(title: string, fields: FieldSpec[]): Promise<void> {
@@ -446,6 +447,54 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_HISTORY}')/items(${id})`,
       undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
     );
+  }
+
+  // ── 更新履歴 — MikkeChangeLog ──────────────────────────────────────────────
+  async listChangeLog(issueInstanceId: string): Promise<ChangeLogEntry[]> {
+    const q = `IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'`;
+    const out: ChangeLogEntry[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_CHANGELOG}')/items?$top=2000&$filter=${encodeURIComponent(q)}`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const row of j.d.results) out.push(this.rowToChangeLog(row));
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+  async createChangeLog(entry: Omit<ChangeLogEntry, 'id'>): Promise<number> {
+    const r = await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_CHANGELOG}')/items`,
+      {
+        __metadata: { type: 'SP.Data.MikkeChangeLogListItem' },
+        IssueInstanceId: entry.issueInstanceId,
+        ChangedAt: entry.changedAt || null,
+        ChangesJson: JSON.stringify(entry.changes ?? []),
+      },
+    );
+    const j = await r.json();
+    return j.d.Id as number;
+  }
+  async deleteChangeLog(id: number): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_CHANGELOG}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+  async clearChangeLog(issueInstanceId: string): Promise<void> {
+    const items = await this.listChangeLog(issueInstanceId);
+    for (const c of items) { try { await this.deleteChangeLog(c.id); } catch { /* 個別失敗はスキップ */ } }
+  }
+  private rowToChangeLog(row: any): ChangeLogEntry {
+    let changes: ChangeLogEntry['changes'] = [];
+    try { const j = JSON.parse(row.ChangesJson || '[]'); if (Array.isArray(j)) changes = j; } catch { /* noop */ }
+    return {
+      id: row.Id,
+      issueInstanceId: row.IssueInstanceId ?? '',
+      changedAt: row.ChangedAt ?? row.Created ?? '',
+      changedBy: row.Author?.Title ?? undefined,
+      changes,
+    };
   }
   private rowToHistory(row: any): ResponseHistory {
     return {

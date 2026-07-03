@@ -186,5 +186,25 @@ export interface ResponseHistory {
   createdBy?: string;
 }
 
+/** 更新履歴の 1 項目変更 (項目名・更新前・更新後)。 */
+export interface FieldChange {
+  field: string;
+  before: string;
+  after: string;
+}
+
+/** 管理対象チケットの更新履歴 1 件 (SP リスト MikkeChangeLog の 1 行)。 */
+export interface ChangeLogEntry {
+  id: number;
+  /** 対象チケット (Issue Instance ID)。 */
+  issueInstanceId: string;
+  /** 更新日時 (ISO)。 */
+  changedAt: string;
+  /** 更新者 (SP Author)。 */
+  changedBy?: string;
+  /** 変更された項目 (項目名 / 更新前 / 更新後)。 */
+  changes: FieldChange[];
+}
+
 /** メイン画面のビュー。 */
 export type ViewName = 'issues' | 'import' | 'assets';

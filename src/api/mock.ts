@@ -1,13 +1,14 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser } from '../types';
 import type { ImportOp } from '../lib/import';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
 const LS_ASSETS = 'mikke.mock.assets';
 const LS_HISTORY = 'mikke.mock.history';
+const LS_CHANGELOG = 'mikke.mock.changelog';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -52,11 +53,13 @@ export class MockRepository implements Repository {
   private settings: MikkeSettings;
   private assets: ManagedAsset[];
   private history: ResponseHistory[];
+  private changelog: ChangeLogEntry[];
 
   constructor() {
     this.issues = load<ManagedIssue[]>(LS_ISSUES, seedIssues());
     this.assets = load<ManagedAsset[]>(LS_ASSETS, []);
     this.history = load<ResponseHistory[]>(LS_HISTORY, []);
+    this.changelog = load<ChangeLogEntry[]>(LS_CHANGELOG, []);
     this.settings = load<MikkeSettings>(LS_SETTINGS, {
       managedColumns: ['Scan_Asset', 'Scan_CVE'],
       matchConditions: { combinator: 'OR', rules: [{ field: 'Severity', op: 'equals', value: 'Critical' }] },
@@ -124,6 +127,25 @@ export class MockRepository implements Repository {
   async deleteHistory(id: number): Promise<void> {
     const idx = this.history.findIndex((h) => h.id === id);
     if (idx >= 0) { this.history.splice(idx, 1); save(LS_HISTORY, this.history); }
+  }
+
+  // ── 更新履歴 ──────────────────────────────────────────────────────────────
+  async listChangeLog(issueInstanceId: string): Promise<ChangeLogEntry[]> {
+    return this.changelog.filter((c) => c.issueInstanceId === issueInstanceId).map((c) => ({ ...c }));
+  }
+  async createChangeLog(entry: Omit<ChangeLogEntry, 'id'>): Promise<number> {
+    const id = this.changelog.reduce((m, c) => Math.max(m, c.id), 0) + 1;
+    this.changelog.push({ ...entry, id });
+    save(LS_CHANGELOG, this.changelog);
+    return id;
+  }
+  async deleteChangeLog(id: number): Promise<void> {
+    const idx = this.changelog.findIndex((c) => c.id === id);
+    if (idx >= 0) { this.changelog.splice(idx, 1); save(LS_CHANGELOG, this.changelog); }
+  }
+  async clearChangeLog(issueInstanceId: string): Promise<void> {
+    this.changelog = this.changelog.filter((c) => c.issueInstanceId !== issueInstanceId);
+    save(LS_CHANGELOG, this.changelog);
   }
 
   async createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number> {

@@ -4,6 +4,7 @@ import { el } from '../utils/dom';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
+import { diffManagedIssue } from '../lib/issueChangeLog';
 import { MGMT_STATUSES } from '../types';
 import type { ManagedIssue, MgmtStatus } from '../types';
 
@@ -68,6 +69,8 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         toast(root, '対象外にする場合は理由を入力してください', 'warn');
         throw new Error('reason required');
       }
+      // 実際に変わった管理項目 (項目名・更新前・更新後) を更新履歴に記録する。
+      const changes = diffManagedIssue(issue, patch);
       try {
         await getRepo().updateIssue(issue.id, patch);
       } catch (e) {
@@ -75,6 +78,15 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         // ここで失敗理由をトースト表示してから rethrow する。
         toast(root, `保存に失敗しました: ${(e as Error).message}`, 'error');
         throw e;
+      }
+      if (changes.length) {
+        try {
+          await getRepo().createChangeLog({
+            issueInstanceId: issue.issueInstanceId,
+            changedAt: new Date().toISOString(),
+            changes,
+          });
+        } catch { /* 履歴記録の失敗は保存自体を妨げない */ }
       }
       toast(root, '保存しました', 'ok');
       onSaved();

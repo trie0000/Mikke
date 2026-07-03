@@ -15,9 +15,9 @@ import {
   parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag,
   normalizeMailPlainText, splitQuotedReplyText, splitQuotedReplyHtml, stripHtml, type ParsedMail,
 } from '../lib/emlParser';
-import type { ManagedIssue, ResponseHistory, HistoryThread, HistorySource } from '../types';
+import type { ManagedIssue, ResponseHistory, ChangeLogEntry, HistoryThread, HistorySource } from '../types';
 
-type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history';
+type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history' | 'changelog';
 
 // 詳細タブのフォーカス履歴 (表示した順)。アクティブタブを閉じたとき
 // 「前回開いていたタブ」へ戻すために使う。モジュールスコープで再描画を跨いで保持。
@@ -43,6 +43,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   let csvHeaders: string[] = [];
   // 対応履歴 (現在の Issue) と表示スレッド (external/internal/both)。
   let historyEntries: ResponseHistory[] = [];
+  let changeLog: ChangeLogEntry[] = [];
   let historyThread: HistoryThread | 'both' = 'both';
 
   paintTabStrip();
@@ -101,6 +102,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       scanNames = scanDisplayMap([...csvHeaders, ...settings.managedColumns]);
     } catch { /* noop */ }
     await loadHistory();
+    await loadChangeLog();
     paintTabs();
     paintBody();
   }
@@ -112,6 +114,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       { key: 'scanner', label: '検査ツール詳細' },
       { key: 'mgmt', label: '管理情報' },
       { key: 'history', label: '対応履歴' },
+      { key: 'changelog', label: '更新履歴' },
     ];
     for (const t of tabs) {
       detailTabs.appendChild(el('div', {
@@ -194,9 +197,117 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, ['メモ']),
         el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.mgmtNote || '（メモなし）']),
       ]));
-    } else {
+    } else if (activeTab === 'history') {
       body.appendChild(renderHistory());
+    } else {
+      body.appendChild(renderChangeLog());
     }
+  }
+
+  // ── 更新履歴タブ ────────────────────────────────────────────────────────────
+  async function loadChangeLog(): Promise<void> {
+    try { changeLog = current ? await getRepo().listChangeLog(current.issueInstanceId) : []; }
+    catch { changeLog = []; }
+  }
+
+  function renderChangeLog(): HTMLElement {
+    const wrapEl = el('div', {});
+    if (!current) return wrapEl;
+    const i = current;
+
+    // 見出し + 一括リセット
+    const head = el('div', { style: 'display:flex;align-items:center;gap:var(--s-3);margin-bottom:var(--s-5)' }, [
+      el('span', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, ['管理項目の変更を日ごとに記録します（新規追加は作成のみ）。']),
+      el('span', { style: 'flex:1' }),
+    ]);
+    if (changeLog.length) {
+      head.appendChild(el('button', {
+        class: 'mikke-btn mikke-btn--danger', style: 'height:28px;font-size:var(--fs-sm)',
+        onclick: () => void resetChangeLog(),
+        html: icon('trash') + '<span>履歴を一括リセット</span>',
+      }));
+    }
+    wrapEl.appendChild(head);
+
+    // 日ごとにグループ化 (更新エントリ + 作成マーカー)。
+    type DayItem = { time: string; entry?: ChangeLogEntry; created?: boolean };
+    const byDay = new Map<string, DayItem[]>();
+    const push = (iso: string, item: DayItem): void => {
+      const day = localDayOf(iso);   // ローカル日付でグループ化 (表示時刻と一致させる)
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day)!.push(item);
+    };
+    for (const e of changeLog) push(e.changedAt, { time: e.changedAt, entry: e });
+    const createdAt = i.firstSeen || i.lastSyncedAt || '';
+    if (createdAt) push(createdAt, { time: createdAt, created: true });
+
+    const days = [...byDay.keys()].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)); // 新しい日が上
+    if (!days.length) {
+      wrapEl.appendChild(el('div', { class: 'mikke-empty' }, ['更新履歴がありません。管理情報を編集すると記録されます。']));
+      return wrapEl;
+    }
+    for (const day of days) {
+      const items = byDay.get(day)!.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
+      const card = el('div', { class: 'mikke-hist-card' });
+      card.appendChild(el('div', { class: 'mikke-changelog-day' }, [fmtDate(day + 'T00:00:00', false) || day]));
+      for (const it of items) {
+        if (it.created) {
+          card.appendChild(el('div', { class: 'mikke-changelog-row' }, [
+            el('span', { class: 'mikke-changelog-time' }, [fmtDate(it.time) || '']),
+            el('span', { class: 'mikke-badge mikke-badge--accent' }, ['作成']),
+            el('span', { style: 'color:var(--ink-3)' }, ['管理対象に追加']),
+          ]));
+          continue;
+        }
+        const e = it.entry!;
+        const rows = (e.changes ?? []).map((c) => el('div', { style: 'font-size:var(--fs-sm)' }, [
+          el('span', { style: 'color:var(--ink-3)' }, [`${c.field}: `]),
+          el('span', { style: 'text-decoration:line-through;color:var(--ink-4)' }, [c.before || '（空）']),
+          ' → ',
+          el('span', { style: 'color:var(--accent-strong);font-weight:600' }, [c.after || '（空）']),
+        ]));
+        card.appendChild(el('div', { class: 'mikke-changelog-row' }, [
+          el('span', { class: 'mikke-changelog-time' }, [fmtDate(e.changedAt) || '']),
+          el('div', { style: 'flex:1' }, rows),
+          el('button', {
+            class: 'mikke-iconbtn', style: 'width:22px;height:22px', 'aria-label': '削除', title: 'この更新履歴を削除',
+            onclick: () => void deleteChangeLogEntry(e),
+            html: icon('trash'),
+          }),
+        ]));
+      }
+      wrapEl.appendChild(card);
+    }
+    return wrapEl;
+  }
+
+  async function deleteChangeLogEntry(e: ChangeLogEntry): Promise<void> {
+    try { await getRepo().deleteChangeLog(e.id); toast(rootEl, '削除しました', 'ok'); }
+    catch (err) { toast(rootEl, `削除に失敗: ${(err as Error).message}`, 'error'); return; }
+    await loadChangeLog();
+    paintBody();
+  }
+
+  async function resetChangeLog(): Promise<void> {
+    if (!current) return;
+    const iid = current.issueInstanceId;
+    const ok = await new Promise<boolean>((resolve) => {
+      openModal(rootEl, {
+        title: '更新履歴を一括リセット',
+        body: el('div', { style: 'line-height:1.7' }, [
+          `このチケットの更新履歴 (${changeLog.length} 件) をすべて削除します。`, el('br'),
+          el('span', { style: 'color:var(--danger)' }, ['元に戻せません。']),
+          el('br'), el('span', { style: 'color:var(--ink-4);font-size:var(--fs-sm)' }, ['※「作成」表示はチケット情報から算出したものなので残ります。']),
+        ]),
+        primaryLabel: '一括リセット', primaryVariant: 'danger',
+        onPrimary: () => resolve(true), onClose: () => resolve(false),
+      });
+    });
+    if (!ok) return;
+    try { await getRepo().clearChangeLog(iid); toast(rootEl, '更新履歴をリセットしました', 'ok'); }
+    catch (e) { toast(rootEl, `リセットに失敗: ${(e as Error).message}`, 'error'); return; }
+    await loadChangeLog();
+    paintBody();
   }
 
   // ── 対応履歴タブ ────────────────────────────────────────────────────────────
@@ -421,6 +532,14 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
   }
 
   return wrap;
+}
+
+/** ISO 文字列をローカル日付 'YYYY-MM-DD' に変換 (無効なら '—')。 */
+function localDayOf(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /** ISO 文字列を datetime-local 入力用のローカル 'YYYY-MM-DDTHH:MM' に変換。 */

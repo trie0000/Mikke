@@ -17,6 +17,7 @@ export const LIST_SETTINGS = 'MikkeSettings';
 export const LIST_IMPORTLOG = 'MikkeImportLog';
 export const LIST_ASSETS = 'MikkeAssets';
 export const LIST_HISTORY = 'MikkeHistory';
+export const LIST_CHANGELOG = 'MikkeChangeLog';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -110,6 +111,15 @@ export function historyFieldSpecs(): FieldSpec[] {
     { name: 'Body', type: 'Note' },
     { name: 'IsHtml', type: 'Boolean' },
     { name: 'OccurredAt', type: 'DateTime' },
+  ];
+}
+
+/** MikkeChangeLog: 管理対象チケットの更新履歴 (項目単位の before/after)。 */
+export function changeLogFieldSpecs(): FieldSpec[] {
+  return [
+    { name: 'IssueInstanceId', type: 'Text', indexed: true },
+    { name: 'ChangedAt', type: 'DateTime' },
+    { name: 'ChangesJson', type: 'Note' },
   ];
 }
 
