@@ -50,6 +50,7 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
   let query = '';
   let busy = false;
   let visibleCount = 0;
+  const selected = new Set<number>();
 
   const table = new DataTable<ManagedAsset>(tableWrap, {
     storeKey: 'mikke.assets',
@@ -58,6 +59,11 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     virtualMin: 40,
     onRowClick: (a) => openAssetEditModal(a),
     onVisibleChange: (v) => { visibleCount = v.length; updateSubbar(); },
+    selection: {
+      checked: (a) => selected.has(a.id),
+      onToggle: (a, on) => { on ? selected.add(a.id) : selected.delete(a.id); updateSubbar(); },
+      onToggleAll: (on, visible) => { for (const a of visible) { on ? selected.add(a.id) : selected.delete(a.id); } updateSubbar(); table.render(); },
+    },
     emptyText: '該当する資産がありません。',
   });
 
@@ -87,6 +93,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       [assets, issues] = await Promise.all([getRepo().listAssets(), getRepo().listIssues()]);
       // 既存の資産キーに区切り文字 (| , ; 空白) が混入している行を分割して掃除する。
       if (await cleanupDelimitedAssets()) assets = await getRepo().listAssets();
+      const ids = new Set(assets.map((a) => a.id));
+      for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
       issueCounts = countIssuesByAsset(issues, cols);
       paint();
     } catch (e) {
@@ -134,10 +142,48 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
 
   function updateSubbar(): void {
     clear(subbar);
+    subbar.appendChild(el('span', { class: 'mikke-subbar-title' }, ['資産管理']));
+    const sel = selected.size;
+    if (sel === 0) {
+      subbar.appendChild(el('span', { class: 'mikke-subbar-count' }, [`${visibleCount} / ${assets.length} 件`]));
+      return;
+    }
     subbar.append(
-      el('span', { class: 'mikke-subbar-title' }, ['資産管理']),
-      el('span', { class: 'mikke-subbar-count' }, [`${visibleCount} / ${assets.length} 件`]),
+      el('span', { class: 'mikke-subbar-count', style: 'color:var(--accent-strong);font-weight:600' }, [`${sel} 件選択`]),
+      el('button', {
+        class: 'mikke-btn mikke-btn--danger', style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+        ...(busy ? { disabled: 'disabled' } : {}),
+        onclick: () => bulkDeleteAssets(),
+      }, ['削除']),
+      el('button', {
+        class: 'mikke-btn mikke-btn--ghost', style: 'height:28px;padding:0 var(--s-4);font-size:var(--fs-sm)',
+        ...(busy ? { disabled: 'disabled' } : {}),
+        onclick: () => { selected.clear(); table.render(); updateSubbar(); },
+      }, ['選択解除']),
     );
+  }
+
+  // ── 一括削除 (選択した資産・管理情報を完全削除) ──────────────────────────────
+  function bulkDeleteAssets(): void {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const body = el('div', { style: 'line-height:1.7' }, [
+      `選択中の ${ids.length} 件の資産を削除します（事業会社・関連会社・管理番号などの管理情報も削除）。`,
+      el('br'),
+      el('span', { style: 'color:var(--danger)' }, ['元に戻せません。']),
+    ]);
+    openModal(rootEl, {
+      title: '資産を削除', body, primaryLabel: `削除する (${ids.length} 件)`, primaryVariant: 'danger',
+      onPrimary: async () => {
+        busy = true;
+        let ok = 0, fail = 0;
+        for (const id of ids) { try { await getRepo().deleteAsset(id); ok++; } catch { fail++; } }
+        busy = false;
+        toast(rootEl, `削除: ${ok} 件${fail ? ` / 失敗 ${fail} 件` : ''}`, fail ? 'warn' : 'ok');
+        selected.clear();
+        await load();
+      },
+    });
   }
 
   function paint(): void {
@@ -530,11 +576,32 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       field('特定理由', reason),
       field('特定根拠', evidence),
     ]);
-    openModal(rootEl, {
+    const handle = openModal(rootEl, {
       title: `資産の管理情報 — ${a.assetKey}`,
       body,
       size: 'lg',
       primaryLabel: '保存',
+      footerLeft: [
+        el('button', {
+          class: 'mikke-btn mikke-btn--danger', type: 'button',
+          onclick: () => {
+            openModal(rootEl, {
+              title: '資産を削除',
+              body: el('div', { style: 'line-height:1.7' }, [
+                `資産「${a.assetKey}」を管理情報ごと削除します。`, el('br'),
+                el('span', { style: 'color:var(--danger)' }, ['元に戻せません。']),
+              ]),
+              primaryLabel: '削除する', primaryVariant: 'danger',
+              onPrimary: async () => {
+                try { await getRepo().deleteAsset(a.id); } catch (e) { toast(rootEl, `削除に失敗: ${(e as Error).message}`, 'error'); throw e; }
+                toast(rootEl, '削除しました', 'ok');
+                handle.close();
+                await load();
+              },
+            });
+          },
+        }, ['削除']),
+      ],
       onPrimary: async () => {
         try {
           await getRepo().updateAsset(a.id, {
