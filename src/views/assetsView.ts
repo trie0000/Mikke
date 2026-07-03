@@ -330,9 +330,10 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
 
     const byKey = new Map(assets.map((a) => [a.assetKey, a]));
     const creates: Omit<ManagedAsset, 'id'>[] = [];
-    const updates: { id: number; patch: Partial<ManagedAsset> }[] = [];
+    type FieldChange = { label: string; from: string; to: string };
+    const updates: { id: number; assetKey: string; patch: Partial<ManagedAsset>; changes: FieldChange[] }[] = [];
     const createdKeys = new Set<string>();   // 同一取込内の重複 create を防ぐ
-    let skipped = 0;
+    let skipped = 0, unchanged = 0;
     for (const row of sheet.rows) {
       // 1 セルに | 等で複数の FQDN/IP が入っていても個別資産として取り込む。
       const keys = splitAssetCell(pick(row, '資産'));
@@ -344,7 +345,17 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
         const cur = byKey.get(key);
         if (cur) {
           if (!presentFields.length) { skipped++; continue; }
-          updates.push({ id: cur.id, patch: { ...fields, updatedAt: new Date().toISOString() } });
+          // 実際に値が変わる列だけを差分として抽出 (from → to)。
+          const patch: Partial<ManagedAsset> = {};
+          const changes: FieldChange[] = [];
+          for (const f of presentFields) {
+            const to = (fields[f.field] as string) ?? '';
+            const from = (cur[f.field] as string | undefined) ?? '';
+            if (from !== to) { changes.push({ label: f.header, from, to }); (patch as Record<string, string>)[f.field] = to; }
+          }
+          if (!changes.length) { unchanged++; continue; }   // 変更なしはスキップ
+          patch.updatedAt = new Date().toISOString();
+          updates.push({ id: cur.id, assetKey: key, patch, changes });
         } else if (!createdKeys.has(key)) {
           createdKeys.add(key);
           creates.push({
@@ -358,18 +369,55 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       }
     }
     if (!creates.length && !updates.length) {
-      toast(rootEl, `取り込める行がありませんでした（スキップ ${skipped} 行）。`, 'warn', 6000);
+      toast(rootEl, `更新対象の変更がありませんでした（変更なし ${unchanged} / スキップ ${skipped}）。`, 'warn', 6000);
       return;
     }
-    const body = el('div', { style: 'line-height:1.8' }, [
-      `ファイル「${file.name}」から取り込みます。`, el('br'),
-      `・新規追加: ${creates.length} 件`, el('br'),
-      `・更新: ${updates.length} 件`, el('br'),
-      ...(skipped ? [el('span', { style: 'color:var(--ink-4)' }, [`・スキップ (資産キー空 / 更新列なし): ${skipped} 行`])] : []),
-    ]);
+
+    const CAP = 200;
+    const disp = (s: string): string => s || '（空）';
+    const sectionTitle = (t: string): HTMLElement => el('div', { style: 'font-weight:600;margin:var(--s-4) 0 var(--s-2)' }, [t]);
+    const parts: HTMLElement[] = [
+      el('p', { style: 'margin:0;line-height:1.8' }, [
+        `ファイル「${file.name}」から取り込みます。`, el('br'),
+        `新規追加 ${creates.length} 件 / 更新 ${updates.length} 件`,
+        ...(unchanged ? [`（変更なし ${unchanged}）`] : []),
+        ...(skipped ? [`／スキップ ${skipped}` ] : []),
+      ]),
+    ];
+    if (updates.length) {
+      parts.push(sectionTitle(`更新される資産 (${updates.length} 件) — どの項目を書き換えるか`));
+      const thead = el('thead', {}, [el('tr', {}, [el('th', {}, ['資産']), el('th', {}, ['変更内容 (現在 → 取込)'])])]);
+      const tbody = el('tbody', {}, updates.slice(0, CAP).map((u) => el('tr', {}, [
+        el('td', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm);white-space:nowrap' }, [u.assetKey]),
+        el('td', { style: 'font-size:var(--fs-sm)' }, u.changes.map((c) =>
+          el('div', {}, [
+            el('span', { style: 'color:var(--ink-3)' }, [`${c.label}: `]),
+            el('span', { style: 'text-decoration:line-through;color:var(--ink-4)' }, [disp(c.from)]),
+            ' → ',
+            el('span', { style: 'color:var(--accent-strong);font-weight:600' }, [disp(c.to)]),
+          ]))),
+      ])));
+      parts.push(el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:280px' }, [el('table', { class: 'mikke-table' }, [thead, tbody])]));
+      if (updates.length > CAP) parts.push(el('p', { style: 'color:var(--ink-4);font-size:var(--fs-sm)' }, [`(先頭 ${CAP} 件を表示。残り ${updates.length - CAP} 件も更新されます)`]));
+    }
+    if (creates.length) {
+      parts.push(sectionTitle(`新規追加される資産 (${creates.length} 件)`));
+      const thead = el('thead', {}, [el('tr', {}, [el('th', {}, ['資産']), el('th', {}, ['種別']), el('th', {}, ['事業会社']), el('th', {}, ['関連会社']), el('th', {}, ['管理番号'])])]);
+      const tbody = el('tbody', {}, creates.slice(0, CAP).map((c) => el('tr', {}, [
+        el('td', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm)' }, [c.assetKey]),
+        el('td', {}, [c.assetType]),
+        el('td', {}, [disp(c.businessCompany ?? '')]),
+        el('td', {}, [disp(c.affiliateCompany ?? '')]),
+        el('td', {}, [disp(c.mgmtNumber ?? '')]),
+      ])));
+      parts.push(el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:220px' }, [el('table', { class: 'mikke-table' }, [thead, tbody])]));
+      if (creates.length > CAP) parts.push(el('p', { style: 'color:var(--ink-4);font-size:var(--fs-sm)' }, [`(先頭 ${CAP} 件を表示。残り ${creates.length - CAP} 件も追加されます)`]));
+    }
+
     openModal(rootEl, {
       title: 'インポート内容の確認',
-      body,
+      body: el('div', {}, parts),
+      size: 'xl',
       primaryLabel: `取り込む (${creates.length + updates.length} 件)`,
       onPrimary: async () => {
         busy = true;
