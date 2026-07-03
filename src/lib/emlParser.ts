@@ -365,7 +365,17 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
   // plain 本文: HTML があれば HTML から整形して使う。
   //  ★ msgreader の plain body は「1 行ごとに空行」の二重行間になりがち。HTML は
   //    行間 (改行/空段落) を正しく表すので、HTML 形式では stripHtml を優先する。
-  let body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : str('body');
+  const rawPlain = str('body');
+  let body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : rawPlain;
+
+  // 診断ログ (実データ確認用)。F12 コンソールで [mikke/msg] 行を確認できる。
+  try {
+    const prev = (s: string | undefined): string => JSON.stringify((s ?? '').slice(0, 500));
+    console.log('[mikke/msg] keys:', Object.keys(data).join(','));
+    console.log('[mikke/msg] plain(body) len:', rawPlain?.length ?? 0, 'preview:', prev(rawPlain));
+    console.log('[mikke/msg] bodyHtml len:', bodyHtml?.length ?? 0, 'preview:', prev(bodyHtml));
+    console.log('[mikke/msg] chosen body(from ' + (bodyHtml ? 'HTML' : 'plain') + ') preview:', prev(body));
+  } catch { /* noop */ }
 
   // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
   const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');
