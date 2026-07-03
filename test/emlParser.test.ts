@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEml, parseOutlookDragText, stripHtml, looksLikeEml, looksLikeOutlookDrag, normalizeMailPlainText, splitQuotedReplyText } from '../src/lib/emlParser';
+import { parseEml, parseOutlookDragText, stripHtml, looksLikeEml, looksLikeOutlookDrag, normalizeMailPlainText, splitQuotedReplyText, deEncapsulateHtml } from '../src/lib/emlParser';
 
 const b64 = (s: string): string => Buffer.from(s, 'utf-8').toString('base64');
 
@@ -120,6 +120,29 @@ describe('normalizeMailPlainText (連続空行を1つの空行に統一)', () =>
   });
   it('行末の空白除去', () => {
     expect(normalizeMailPlainText('a  \n\nb')).toBe('a\n\nb');
+  });
+});
+
+describe('deEncapsulateHtml (RTF カプセル化 HTML → 元 HTML)', () => {
+  it('\\htmltag の内容を出力し、\\htmlrtf 区間は無視、\\u で日本語復元', () => {
+    // \fromhtml1 = カプセル化 HTML。\htmltag が元 HTML。\htmlrtf..\htmlrtf0 は RTF 専用で無視。
+    const rtf = '{\\rtf1\\ansi\\ansicpg1252\\fromhtml1\\deff0'
+      + '{\\*\\htmltag84 <html><body>}'
+      + '{\\*\\htmltag112 <p>}'
+      + 'Hello \\u12354 ?world'
+      + '{\\*\\htmltag104 </p>}'
+      + '\\htmlrtf \\par \\htmlrtf0'
+      + '{\\*\\htmltag72 </body></html>}'
+      + '}';
+    const html = deEncapsulateHtml(rtf);
+    expect(html).toBe('<html><body><p>Hello あworld</p></body></html>');
+  });
+  it('非カプセル化 (\\fromhtml なし) は null', () => {
+    expect(deEncapsulateHtml('{\\rtf1\\ansi hello}')).toBeNull();
+  });
+  it('{\\*\\generator ...} 等の無視グループは出力しない', () => {
+    const rtf = '{\\rtf1\\fromhtml1{\\*\\generator Microsoft}{\\*\\htmltag <b>x</b>}}';
+    expect(deEncapsulateHtml(rtf)).toBe('<b>x</b>');
   });
 });
 

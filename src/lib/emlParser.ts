@@ -6,6 +6,7 @@
 //   - Outlook ドラッグ: Windows Outlook のドラッグ text/plain ヘッダ。
 // UI 非依存。テストは test/emlParser.test.ts。
 import MsgReader from '@kenjiuno/msgreader';
+import { decompressRTF } from '@kenjiuno/decompressrtf';
 
 export interface ParsedMail {
   subject?: string;
@@ -175,6 +176,88 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
+// ── RTF から埋め込み HTML を復元 (MS-OXRTFEX de-encapsulation) ─────────────────
+// Outlook の .msg は HTML を PidTagBodyHtml ではなく PidTagRtfCompressed
+// (compressedRtf) に「カプセル化 HTML」として持つことがある。decompressRTF で
+// RTF に展開し、\htmltag / \htmlrtf を解釈して元の HTML を取り出す。
+// これがメーラ表示に一致する正しい本文 (plain body は Outlook が二重行間化した劣化版)。
+function cpDecoderName(cp?: string): string {
+  const map: Record<string, string> = { '1252': 'windows-1252', '65001': 'utf-8', '932': 'shift_jis', '936': 'gbk', '949': 'euc-kr', '950': 'big5', '1250': 'windows-1250', '1251': 'windows-1251' };
+  return (cp && map[cp]) || 'windows-1252';
+}
+
+/** カプセル化 HTML の RTF から元 HTML を復元する。非カプセル化 RTF は null。 */
+export function deEncapsulateHtml(rtf: string): string | null {
+  const head = rtf.slice(0, 2000);
+  if (!/\\fromhtml1?\b/.test(head)) return null; // HTML カプセル化でなければ対象外
+  const ansicpg = (rtf.match(/\\ansicpg(\d+)/) || [])[1];
+  const decName = cpDecoderName(ansicpg);
+  const decodeByte = (b: number): string => { try { return new TextDecoder(decName).decode(new Uint8Array([b])); } catch { return String.fromCharCode(b); } };
+
+  interface Frame { htmlrtf: boolean; ignore: boolean; htmltag: boolean; uc: number }
+  let cur: Frame = { htmlrtf: false, ignore: false, htmltag: false, uc: 1 };
+  const stack: Frame[] = [];
+  let out = '';
+  let skip = 0;                 // \uN の後に読み飛ばす代替文字数
+  let expectDest = false;       // 直前に \* を見た (次の制御語は destination)
+  const emit = (s: string): void => { if (cur.htmltag || (!cur.ignore && !cur.htmlrtf)) out += s; };
+
+  const n = rtf.length;
+  let i = 0;
+  while (i < n) {
+    const c = rtf[i]!;
+    if (c === '{') { stack.push(cur); cur = { ...cur }; cur.htmltag = false; cur.ignore = false; i++; continue; }
+    if (c === '}') { cur = stack.pop() ?? cur; i++; continue; }
+    if (c === '\r' || c === '\n') { i++; continue; }
+    if (c === '\\') {
+      const nx = rtf[i + 1];
+      if (nx === '*') { expectDest = true; i += 2; continue; }
+      if (nx === '\\' || nx === '{' || nx === '}') { if (skip > 0) skip--; else emit(nx!); i += 2; continue; }
+      if (nx === "'") {
+        const b = parseInt(rtf.substr(i + 2, 2), 16); i += 4;
+        if (skip > 0) { skip--; continue; }
+        if (!Number.isNaN(b)) emit(decodeByte(b));
+        continue;
+      }
+      const m = /^\\([a-zA-Z]+)(-?\d+)? ?/.exec(rtf.slice(i));
+      if (m) {
+        const word = m[1]!; const param = m[2] !== undefined ? parseInt(m[2], 10) : undefined;
+        i += m[0].length;
+        if (word === 'htmltag') { cur.htmltag = true; cur.ignore = false; }
+        else if (word === 'htmlrtf') { cur.htmlrtf = param !== 0; }
+        else if (word === 'par' || word === 'line') { emit('\n'); }
+        else if (word === 'tab') { emit('\t'); }
+        else if (word === 'lquote') emit('‘'); else if (word === 'rquote') emit('’');
+        else if (word === 'ldblquote') emit('“'); else if (word === 'rdblquote') emit('”');
+        else if (word === 'bullet') emit('•'); else if (word === 'endash') emit('–'); else if (word === 'emdash') emit('—');
+        else if (word === 'uc') { if (param !== undefined) cur.uc = param; }
+        else if (word === 'u') { if (param !== undefined) { const cp = param < 0 ? param + 65536 : param; if (skip > 0) skip--; else emit(String.fromCodePoint(cp)); skip = cur.uc; } }
+        else if (expectDest && word !== 'htmltag') { cur.ignore = true; }
+        expectDest = false;
+        continue;
+      }
+      // \<記号> (\~ \_ \- 等)
+      const sym = nx!; i += 2;
+      if (skip > 0) { skip--; continue; }
+      if (sym === '~') emit(' '); else if (sym === '_') emit('-'); else if (sym === '-') { /* optional hyphen */ } else emit(sym);
+      continue;
+    }
+    if (skip > 0) { skip--; i++; continue; }
+    emit(c); i++;
+  }
+  return out.trim() || null;
+}
+
+/** compressedRtf (Uint8Array) → 埋め込み HTML。取り出せなければ null。 */
+export function htmlFromCompressedRtf(compressed: Uint8Array | number[]): string | null {
+  try {
+    const bytes = decompressRTF(Array.from(compressed) as number[]);
+    let rtf = '';
+    for (let i = 0; i < bytes.length; i++) rtf += String.fromCharCode(bytes[i]! & 0xff);
+    return deEncapsulateHtml(rtf);
+  } catch { return null; }
+}
+
 /** メール本文プレーンテキストの整形。
  *  ★ Outlook のプレーン本文は段落区切りを「空行 + 空白だけの行 + 空行」= 空行を
  *    2 つ以上入れて水増しする (実データで確認)。
@@ -341,8 +424,9 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
     break;
   }
 
-  // HTML 本文: bodyHtml (文字列) → 無ければ html (バイナリ) をデコード。
+  // HTML 本文: bodyHtml (文字列) → html (バイナリ) → compressedRtf のカプセル化 HTML。
   let bodyHtml = str('bodyHtml');
+  let htmlSource = bodyHtml ? 'bodyHtml' : '';
   if (!bodyHtml) {
     const htmlBytes = (data as { html?: unknown }).html;
     if (htmlBytes instanceof Uint8Array && htmlBytes.length) {
@@ -350,13 +434,28 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
       const cm = raw.match(/charset\s*=\s*["']?([\w-]+)/i);
       if (cm && cm[1] && !/utf-?8/i.test(cm[1])) { try { raw = new TextDecoder(cm[1].toLowerCase()).decode(htmlBytes); } catch { /* 非対応 charset は UTF-8 */ } }
       bodyHtml = raw.trim() || undefined;
+      if (bodyHtml) htmlSource = 'html(bin)';
+    }
+  }
+  if (!bodyHtml) {
+    const rtf = (data as { compressedRtf?: unknown }).compressedRtf;
+    if (rtf instanceof Uint8Array && rtf.length) {
+      bodyHtml = htmlFromCompressedRtf(rtf) ?? undefined;
+      if (bodyHtml) htmlSource = 'compressedRtf';
     }
   }
 
-  // plain 本文: HTML があれば HTML から整形して使う。
-  //  ★ msgreader の plain body は「1 行ごとに空行」の二重行間になりがち。HTML は
-  //    行間 (改行/空段落) を正しく表すので、HTML 形式では stripHtml を優先する。
+  // plain 本文: HTML があれば HTML から整形して使う (メーラ表示に一致)。
+  //  ★ plain body は Outlook が二重行間化した劣化版なので、HTML があれば必ず優先。
   const body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : str('body');
+
+  // 診断ログ (実データ確認用・原因確定後に除去)。
+  try {
+    const prev = (s: string | undefined): string => JSON.stringify((s ?? '').slice(0, 400));
+    console.log('[mikke/msg] htmlSource:', htmlSource || 'none(plainのみ)');
+    console.log('[mikke/msg] bodyHtml preview:', prev(bodyHtml));
+    console.log('[mikke/msg] chosen body preview:', prev(body));
+  } catch { /* noop */ }
 
   // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
   const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');
