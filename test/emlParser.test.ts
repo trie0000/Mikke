@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEml, parseOutlookDragText, stripHtml, looksLikeEml, looksLikeOutlookDrag } from '../src/lib/emlParser';
+import { parseEml, parseOutlookDragText, stripHtml, looksLikeEml, looksLikeOutlookDrag, normalizeMailPlainText, splitQuotedReplyText } from '../src/lib/emlParser';
 
 const b64 = (s: string): string => Buffer.from(s, 'utf-8').toString('base64');
 
@@ -75,6 +75,43 @@ describe('parseOutlookDragText', () => {
     expect(p.fromEmail).toBe('hanako@example.com');
     expect(p.subject).toBe('ドラッグ取込');
     expect(p.body).toBe('本文です');
+  });
+});
+
+describe('splitQuotedReplyText (最新本文のみ)', () => {
+  it('----- Original Message ----- で分割', () => {
+    const t = ['了解しました。対応します。', '', '-----Original Message-----', 'From: a@example.com', 'Subject: 元の件名', '', '元の本文'].join('\n');
+    const r = splitQuotedReplyText(t);
+    expect(r.latest).toBe('了解しました。対応します。');
+    expect(r.quoted).toContain('元の本文');
+  });
+  it('差出人: ヘッダブロックで分割', () => {
+    const t = ['ご連絡ありがとうございます。', '', '差出人: 田中 <tanaka@example.com>', '送信日時: 2026年5月1日', '件名: 件名', '', '前のメール本文'].join('\n');
+    const r = splitQuotedReplyText(t);
+    expect(r.latest).toBe('ご連絡ありがとうございます。');
+    expect(r.quoted).toContain('前のメール本文');
+  });
+  it('引用 (>) が2行以上連続で分割', () => {
+    const t = ['最新の返信です。', '', '> 過去行1', '> 過去行2'].join('\n');
+    expect(splitQuotedReplyText(t).latest).toBe('最新の返信です。');
+  });
+  it('引用が無ければ全文を latest に (quoted=null)', () => {
+    const r = splitQuotedReplyText('ふつうの本文\n2行目');
+    expect(r.latest).toBe('ふつうの本文\n2行目');
+    expect(r.quoted).toBeNull();
+  });
+  it('先頭がいきなり引用なら分割しない (最新が空にならない)', () => {
+    const t = ['-----Original Message-----', 'From: a@example.com', '', '本文'].join('\n');
+    expect(splitQuotedReplyText(t).quoted).toBeNull();
+  });
+});
+
+describe('normalizeMailPlainText', () => {
+  it('1行ごとの二重行間を詰める', () => {
+    expect(normalizeMailPlainText('a\n\nb\n\nc\n\nd')).toBe('a\nb\nc\nd');
+  });
+  it('通常の段落 (二重行間でない) は保持', () => {
+    expect(normalizeMailPlainText('段落1\n続き\n\n段落2')).toBe('段落1\n続き\n\n段落2');
   });
 });
 

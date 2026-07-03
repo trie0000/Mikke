@@ -19,6 +19,7 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
+    "@kenjiuno/msgreader": "^1.28.0",
     "dompurify": "^3.1.0"
   }
 }

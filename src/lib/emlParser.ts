@@ -1,9 +1,11 @@
 // メール取込パーサ (.eml / .msg / Outlook ドラッグテキスト)。
 //   - .eml: RFC 2822 を自前解析 (依存なし)。encoded-word / quoted-printable /
 //           base64 / multipart(alternative) / 主要日本語文字コードに対応。
-//   - .msg: Outlook (Windows) バイナリ (CFB/OLE2)。自前パーサ (依存なし・ブラウザ安全)。
+//   - .msg: Outlook (Windows) バイナリ。@kenjiuno/msgreader を使用
+//           (iconv-lite 等の Node 依存は build.js の alias でブラウザスタブに差替)。
 //   - Outlook ドラッグ: Windows Outlook のドラッグ text/plain ヘッダ。
 // UI 非依存。テストは test/emlParser.test.ts。
+import MsgReader from '@kenjiuno/msgreader';
 
 export interface ParsedMail {
   subject?: string;
@@ -153,17 +155,122 @@ function toIso(raw?: string): string | undefined {
   return Number.isNaN(t) ? undefined : new Date(t).toISOString();
 }
 
-/** HTML → プレーンテキスト (簡易)。 */
+/** HTML → プレーンテキスト。ブロック要素を改行化 (開きタグ削除で前段の \n を
+ *  eat しないよう順序に注意)。 */
 export function stripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6])>\s*/gi, '\n')
+    .replace(/\s*<br\s*\/?>\s*/gi, '\n')
+    .replace(/<(p|div|li|tr|h[1-6])[^>]*>\s*/gi, '')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** メール本文プレーンテキストの整形。HTML 由来の「1 行ごとに空行」二重行間を
+ *  検出して詰める。 */
+export function normalizeMailPlainText(s: string): string {
+  let t = s.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n');
+  const lines = t.split('\n');
+  let content = 0, followedByBlank = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim()) { content++; if (i + 1 < lines.length && !lines[i + 1]!.trim()) followedByBlank++; }
+  }
+  const doubleSpaced = content >= 3 && followedByBlank / content >= 0.7;
+  t = doubleSpaced ? t.replace(/\n\s*\n+/g, '\n') : t.replace(/\n{3,}/g, '\n\n');
+  return t.trim();
+}
+
+// ── メールの「最新本文」と「引用(過去履歴)」の分割 ─────────────────────────────
+// 返信メールは Outlook/Gmail 等が引用ヘッダ (-----Original Message----- /
+// 差出人:… / On … wrote: / > 引用 / blockquote 等) を付けて過去スレを累積する。
+// UI では「最新の本文だけ」を表示したいので境界を控えめに検出して分割する。
+export function splitQuotedReplyText(text: string): { latest: string; quoted: string | null } {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? '';
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^-{2,}\s*(Original Message|元のメッセージ|転送されたメッセージ|Forwarded message)\s*-{2,}$/i.test(line)) { cut = i; break; }
+    if (/^[_=]{20,}$/.test(line)) {
+      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+        if (/^(差出人|From|送信者|送信日時|Sent|To|宛先|Subject|件名)\s*[:：]/.test((lines[j] ?? '').trim())) { cut = i; break; }
+      }
+      if (cut >= 0) break;
+    }
+    if (/^On\b.+\bwrote\s*:?\s*$/i.test(line)
+        || /^\d{4}[/年\-].+(さん|様)?[\s　]*(が|より)?[\s　]*(書きました|書いた|wrote)[\s　]*[:：]?\s*$/.test(line)) { cut = i; break; }
+    if (/^(差出人|From|送信者)\s*[:：]/.test(line)) {
+      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        if (/^(送信日時|Sent|To|宛先|Cc|Subject|件名)\s*[:：]/.test((lines[j] ?? '').trim())) { cut = i; break; }
+      }
+      if (cut >= 0) break;
+    }
+    if (/^>/.test(raw)) {
+      let consec = 1;
+      for (let j = i + 1; j < lines.length && consec < 2; j++) {
+        const ln = lines[j] ?? '';
+        if (/^>/.test(ln)) consec++;
+        else if (ln.trim() === '') continue;
+        else break;
+      }
+      if (consec >= 2) { cut = i; break; }
+    }
+  }
+  if (cut < 0) return { latest: text, quoted: null };
+  const latest = lines.slice(0, cut).join('\n').replace(/\s+$/, '');
+  const quoted = lines.slice(cut).join('\n');
+  if (!latest.trim()) return { latest: text, quoted: null };
+  return { latest, quoted };
+}
+
+/** HTML メール本文の「最新返信」と「引用部」を分割する (ブラウザ専用: DOMParser)。 */
+export function splitQuotedReplyHtml(html: string): { latest: string; quoted: string | null } {
+  if (typeof DOMParser === 'undefined') return { latest: html, quoted: null };
+  const doc = new DOMParser().parseFromString('<div id="__r">' + html + '</div>', 'text/html');
+  const root = doc.getElementById('__r');
+  if (!root) return { latest: html, quoted: null };
+  const stripCheck = (h: string): string => h.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  const HDR_FROM = /(差出人|From|送信者)\s*[:：]/;
+  const HDR_OTHER = /(送信日時|Sent|To|宛先|Cc|CC|Subject|件名)\s*[:：]/;
+
+  let marker: Element | null = null;
+  for (const sel of ['div#divRplyFwdMsg', 'div#appendonsend', 'div.gmail_quote', 'div.gmail_quote_container', 'hr#stopSpelling', 'blockquote']) {
+    const f = root.querySelector(sel); if (f) { marker = f; break; }
+  }
+  if (!marker) {
+    for (const div of Array.from(root.querySelectorAll('div'))) {
+      const style = (div.getAttribute('style') || '').toLowerCase();
+      if (!/border-top\s*:/.test(style)) continue;
+      const text = (div.textContent || '').trim().slice(0, 250);
+      if (HDR_FROM.test(text)) { marker = div; break; }
+    }
+  }
+  if (!marker) {
+    for (const elem of Array.from(root.querySelectorAll('div, p, blockquote, table, section, article'))) {
+      const text = (elem.textContent || '').trim().slice(0, 800);
+      if (text && HDR_FROM.test(text) && HDR_OTHER.test(text)) { marker = elem; break; }
+    }
+  }
+  if (!marker) return { latest: html, quoted: null };
+  let top: Element = marker;
+  while (top.parentElement && top.parentElement !== root) top = top.parentElement;
+
+  const latestParts: string[] = [];
+  const quotedParts: string[] = [];
+  let inQuoted = false;
+  for (const child of Array.from(root.childNodes)) {
+    if (child === top) inQuoted = true;
+    const h = child instanceof Element ? child.outerHTML : (child.textContent ?? '');
+    (inQuoted ? quotedParts : latestParts).push(h);
+  }
+  const latest = latestParts.join('');
+  if (!stripCheck(latest).trim()) return { latest: html, quoted: null };
+  return { latest, quoted: quotedParts.join('') };
 }
 
 /** .eml (RFC 2822) を解析する。 */
@@ -204,133 +311,60 @@ export function parseOutlookDragText(text: string): ParsedMail {
   return out;
 }
 
-// ── .msg (CFB/OLE2) 自前パーサ ────────────────────────────────────────────────
-// .msg は OLE2 複合ファイル。MAPI プロパティは "__substg1.0_<PROPID><TYPE>" という
-// ストリーム名で格納される。必要な文字列/HTML/日時だけ取り出す。
-const CFB_ENDOFCHAIN = 0xfffffffe;
-const CFB_FREESECT = 0xffffffff;
-
-function readCfbStreams(buf: ArrayBuffer): Map<string, Uint8Array> {
-  const b = new Uint8Array(buf);
-  const dv = new DataView(buf);
-  const sig = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
-  for (let i = 0; i < 8; i++) if (b[i] !== sig[i]) throw new Error('.msg (CFB) 形式ではありません');
-  const u16 = (o: number): number => dv.getUint16(o, true);
-  const u32 = (o: number): number => dv.getUint32(o, true);
-  const sectorSize = 1 << u16(30);
-  const miniSectorSize = 1 << u16(32);
-  const firstDirSector = u32(48);
-  const miniCutoff = u32(56);
-  const firstMiniFat = u32(60);
-  const firstDifat = u32(68);
-  const numDifat = u32(72);
-  const secOff = (sid: number): number => 512 + sid * sectorSize;
-
-  // FAT (DIFAT: ヘッダ内 109 個 + チェーン)
-  const fatSectors: number[] = [];
-  for (let i = 0; i < 109; i++) { const s = u32(76 + i * 4); if (s !== CFB_FREESECT) fatSectors.push(s); }
-  let difat = firstDifat, guard = 0;
-  while (difat !== CFB_ENDOFCHAIN && difat !== CFB_FREESECT && numDifat > 0 && guard++ < 1000) {
-    const base = secOff(difat);
-    const perSector = sectorSize / 4;
-    for (let i = 0; i < perSector - 1; i++) { const s = u32(base + i * 4); if (s !== CFB_FREESECT) fatSectors.push(s); }
-    difat = u32(base + (perSector - 1) * 4);
-  }
-  const fat: number[] = [];
-  for (const fs of fatSectors) { const base = secOff(fs); for (let i = 0; i < sectorSize / 4; i++) fat.push(u32(base + i * 4)); }
-
-  const readChain = (start: number, size?: number): Uint8Array => {
-    const parts: number[] = [];
-    let sid = start, g = 0;
-    while (sid !== CFB_ENDOFCHAIN && sid !== CFB_FREESECT && g++ < 1_000_000) {
-      const o = secOff(sid);
-      for (let i = 0; i < sectorSize; i++) parts.push(b[o + i] ?? 0);
-      sid = fat[sid] ?? CFB_ENDOFCHAIN;
-    }
-    const arr = new Uint8Array(parts);
-    return size != null && size < arr.length ? arr.subarray(0, size) : arr;
-  };
-
-  // ディレクトリ
-  const dir = readChain(firstDirSector);
-  const ddv = new DataView(dir.buffer, dir.byteOffset, dir.byteLength);
-  const entries: { name: string; type: number; start: number; size: number }[] = [];
-  for (let off = 0; off + 128 <= dir.length; off += 128) {
-    const nameLen = ddv.getUint16(off + 64, true);
-    if (nameLen <= 0) continue;
-    let name = '';
-    for (let i = 0; i < nameLen - 2; i += 2) name += String.fromCharCode(ddv.getUint16(off + i, true));
-    entries.push({ name, type: dir[off + 66]!, start: ddv.getUint32(off + 116, true), size: ddv.getUint32(off + 120, true) });
-  }
-  const root = entries.find((e) => e.type === 5);
-  const miniStream = root ? readChain(root.start, root.size) : new Uint8Array(0);
-  const miniFatRaw = firstMiniFat !== CFB_ENDOFCHAIN ? readChain(firstMiniFat) : new Uint8Array(0);
-  const miniFat: number[] = [];
-  { const mdv = new DataView(miniFatRaw.buffer, miniFatRaw.byteOffset, miniFatRaw.byteLength);
-    for (let i = 0; i + 4 <= miniFatRaw.length; i += 4) miniFat.push(mdv.getUint32(i, true)); }
-  const readMini = (start: number, size: number): Uint8Array => {
-    const parts: number[] = [];
-    let sid = start, g = 0;
-    while (sid !== CFB_ENDOFCHAIN && sid !== CFB_FREESECT && g++ < 1_000_000) {
-      const o = sid * miniSectorSize;
-      for (let i = 0; i < miniSectorSize; i++) parts.push(miniStream[o + i] ?? 0);
-      sid = miniFat[sid] ?? CFB_ENDOFCHAIN;
-    }
-    return new Uint8Array(parts).subarray(0, size);
-  };
-
-  const out = new Map<string, Uint8Array>();
-  for (const e of entries) {
-    if (e.type !== 2) continue;
-    out.set(e.name, e.size < miniCutoff ? readMini(e.start, e.size) : readChain(e.start, e.size));
-  }
-  return out;
-}
-
-function filetimeToIso(bytes: Uint8Array): string | undefined {
-  if (bytes.length < 8) return undefined;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, 8);
-  const lo = dv.getUint32(0, true), hi = dv.getUint32(4, true);
-  const ft = hi * 4294967296 + lo; // 100ns since 1601
-  if (ft === 0) return undefined;
-  const ms = Math.floor(ft / 10000) - 11644473600000;
-  const d = new Date(ms);
-  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
-}
-/** __properties ストリームから FILETIME プロパティ (tag) を探す。 */
-function findFiletime(props: Uint8Array | undefined, tag: number): string | undefined {
-  if (!props) return undefined;
-  const t = [tag & 0xff, (tag >>> 8) & 0xff, (tag >>> 16) & 0xff, (tag >>> 24) & 0xff];
-  for (let i = 0; i + 16 <= props.length; i += 8) {
-    if (props[i] === t[0] && props[i + 1] === t[1] && props[i + 2] === t[2] && props[i + 3] === t[3]) {
-      return filetimeToIso(props.subarray(i + 8, i + 16));
-    }
-  }
-  return undefined;
-}
-
-/** .msg (Outlook for Windows バイナリ) を解析する。 */
+/** .msg (Outlook for Windows バイナリ) を @kenjiuno/msgreader で解析する。 */
 export async function parseMsgFile(file: File): Promise<ParsedMail> {
-  const streams = readCfbStreams(await file.arrayBuffer());
-  const getStr = (propId: string): string | undefined => {
-    const uni = streams.get(`__substg1.0_${propId}001F`);
-    if (uni) { let s = ''; const dv = new DataView(uni.buffer, uni.byteOffset, uni.byteLength); for (let i = 0; i + 2 <= uni.length; i += 2) s += String.fromCharCode(dv.getUint16(i, true)); return s || undefined; }
-    const asc = streams.get(`__substg1.0_${propId}001E`);
-    if (asc) return decodeBytes(asc).replace(/\0+$/, '') || undefined;
-    return undefined;
-  };
-  const html = getStr('1013') ?? (() => { const bin = streams.get('__substg1.0_10130102'); return bin ? decodeBytes(bin) : undefined; })();
-  const plain = getStr('1000') ?? (html ? stripHtml(html) : undefined);
-  const props = streams.get('__properties_version1.0');
-  const dateISO = findFiletime(props, 0x00390040) ?? findFiletime(props, 0x0e060040);
-  const smtp = getStr('5D01') ?? getStr('0C1F');
+  const buf = await file.arrayBuffer();
+  // CJS default 取り扱いは esbuild に任せる (dynamic import だと二段ネストになる
+  // ケースがあったため静的 import に統一)。
+  const Ctor = ((MsgReader as unknown) as { default?: unknown }).default ?? MsgReader;
+  const reader = new (Ctor as new (b: ArrayBuffer) => { getFileData: () => Record<string, unknown> })(buf);
+  const data = reader.getFileData();
+  const str = (k: string): string | undefined => { const v = data[k]; return typeof v === 'string' && v.trim() ? v.trim() : undefined; };
+
+  // 送信日時: clientSubmitTime → messageDeliveryTime → creation/modification。
+  // msgreader は PT_SYSTIME を UTCString で返す。1980〜2100 外は壊れ値として排除。
+  let dateISO: string | undefined;
+  for (const k of ['clientSubmitTime', 'messageDeliveryTime', 'creationTime', 'lastModificationTime']) {
+    const v = str(k);
+    if (!v) continue;
+    const t = Date.parse(v);
+    if (Number.isNaN(t)) continue;
+    const y = new Date(t).getUTCFullYear();
+    if (y < 1980 || y > 2100) continue;
+    dateISO = new Date(t).toISOString();
+    break;
+  }
+
+  // HTML 本文: bodyHtml (文字列) → 無ければ html (バイナリ) をデコード。
+  let bodyHtml = str('bodyHtml');
+  if (!bodyHtml) {
+    const htmlBytes = (data as { html?: unknown }).html;
+    if (htmlBytes instanceof Uint8Array && htmlBytes.length) {
+      let raw = new TextDecoder('utf-8').decode(htmlBytes);
+      const cm = raw.match(/charset\s*=\s*["']?([\w-]+)/i);
+      if (cm && cm[1] && !/utf-?8/i.test(cm[1])) { try { raw = new TextDecoder(cm[1].toLowerCase()).decode(htmlBytes); } catch { /* 非対応 charset は UTF-8 */ } }
+      bodyHtml = raw.trim() || undefined;
+    }
+  }
+
+  // plain 本文: body 優先、無ければ HTML から tag 除去。
+  let body = str('body');
+  if (!body && bodyHtml) body = stripHtml(bodyHtml) || undefined;
+
+  // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
+  const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');
+  const senderEx = str('senderEmail');
+  let fromEmail: string | undefined;
+  if (senderSmtp && /@/.test(senderSmtp)) fromEmail = senderSmtp;
+  else if (senderEx && /@/.test(senderEx)) fromEmail = senderEx;
+
   return {
-    subject: getStr('0037'),
-    fromName: getStr('0C1A'),
-    fromEmail: smtp && smtp.includes('@') ? smtp : undefined,
+    subject: str('subject'),
+    fromName: str('senderName'),
+    fromEmail,
     dateISO,
-    body: plain?.replace(/\r\n/g, '\n').replace(/\0+$/, '').trim(),
-    bodyHtml: html,
+    body: body?.replace(/\r\n/g, '\n').trim(),
+    bodyHtml,
   };
 }
 

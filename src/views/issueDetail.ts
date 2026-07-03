@@ -12,7 +12,8 @@ import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detect
 import { openModal } from '../components/modal';
 import { sanitizeNoteHtml } from '../utils/sanitize';
 import {
-  parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag, type ParsedMail,
+  parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag,
+  normalizeMailPlainText, splitQuotedReplyText, splitQuotedReplyHtml, type ParsedMail,
 } from '../lib/emlParser';
 import type { ManagedIssue, ResponseHistory, HistoryThread, HistorySource } from '../types';
 
@@ -259,21 +260,25 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         html: icon('trash'),
       }),
     ]);
+    // メールは「最新本文のみ」を表示し、引用(過去履歴)はトグルで開閉する。
+    const { latest, quoted } = h.isHtml ? splitQuotedReplyHtml(h.body) : splitQuotedReplyText(h.body);
     const bodyEl = el('div', { class: 'mikke-hist-body' });
-    if (h.isHtml) bodyEl.innerHTML = sanitizeNoteHtml(h.body);
-    else bodyEl.textContent = h.body;
+    if (h.isHtml) bodyEl.innerHTML = sanitizeNoteHtml(latest);
+    else bodyEl.textContent = latest;
     if (h.subject) bodyEl.prepend(el('div', { class: 'mikke-hist-subject' }, [`件名: ${h.subject}`]));
 
     const card = el('div', { class: 'mikke-hist-card', 'data-thread': h.thread }, [head, bodyEl]);
-    // 長い本文は折りたたむ
-    if ((h.body?.length ?? 0) > 400) {
-      bodyEl.classList.add('is-clamped');
-      const toggle = el('button', { class: 'mikke-hist-toggle' }, ['全文表示']);
+    if (quoted) {
+      const qEl = el('div', { class: 'mikke-hist-quoted', style: 'display:none' });
+      if (h.isHtml) qEl.innerHTML = sanitizeNoteHtml(quoted);
+      else qEl.textContent = quoted;
+      const toggle = el('button', { class: 'mikke-hist-toggle' }, ['引用部 (履歴) を表示']);
       toggle.addEventListener('click', () => {
-        const on = bodyEl.classList.toggle('is-clamped');
-        toggle.textContent = on ? '全文表示' : '折りたたむ';
+        const showing = qEl.style.display !== 'none';
+        qEl.style.display = showing ? 'none' : 'block';
+        toggle.textContent = showing ? '引用部 (履歴) を表示' : '引用部 (履歴) を隠す';
       });
-      card.appendChild(toggle);
+      card.append(toggle, qEl);
     }
     return card;
   }
@@ -322,7 +327,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       if (p.fromName && !authorInput.value) authorInput.value = p.fromName;
       if (p.dateISO) dtInput.value = toLocalDateTime(p.dateISO);
       if (p.subject) subjectInput.value = p.subject;
-      if (p.body) { bodyArea.value = p.body; bodyArea.defaultValue = p.body; }
+      if (p.body) { const b = normalizeMailPlainText(p.body); bodyArea.value = b; bodyArea.defaultValue = b; }
       pendingHtml = p.bodyHtml;
       pendingFromEmail = p.fromEmail;
     };

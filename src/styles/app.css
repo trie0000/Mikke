@@ -415,8 +415,9 @@
 #mikke-root .mikke-hist-body {
   font-size: var(--fs-md); line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: var(--ink);
 }
-#mikke-root .mikke-hist-body.is-clamped {
-  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+#mikke-root .mikke-hist-quoted {
+  margin-top: var(--s-3); padding-left: var(--s-4); border-left: 3px solid var(--line-strong);
+  color: var(--ink-3); font-size: var(--fs-sm); line-height: 1.7; white-space: pre-wrap; word-break: break-word;
 }
 #mikke-root .mikke-hist-toggle {
   margin-top: var(--s-3); padding: 3px 12px; background: var(--paper); border: 1px solid var(--line);

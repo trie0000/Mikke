@@ -49,6 +49,15 @@ const buildOptions = {
     __MIKKE_BUILD_SHA__: JSON.stringify(gitSha + gitDirty),
     __MIKKE_VERSION__: JSON.stringify(pkg.version),
   },
+  // @kenjiuno/msgreader (.msg 解析) が iconv-lite (→ safer-buffer → buffer +
+  // string_decoder) を持ち込むが、現代の Unicode .msg では実呼びしないため、
+  // Node 専用モジュールをブラウザ向け空スタブに差し替える。
+  alias: {
+    'iconv-lite':     path.resolve('src/lib/_browser-shims.ts'),
+    'safer-buffer':   path.resolve('src/lib/_browser-shims.ts'),
+    'buffer':         path.resolve('src/lib/_browser-shims.ts'),
+    'string_decoder': path.resolve('src/lib/_browser-shims.ts'),
+  },
   logLevel: 'info',
 };
 
