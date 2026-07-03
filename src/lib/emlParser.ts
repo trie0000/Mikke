@@ -445,7 +445,6 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
 
   // HTML 本文: bodyHtml (文字列) → html (バイナリ) → compressedRtf のカプセル化 HTML。
   let bodyHtml = str('bodyHtml');
-  let htmlSource = bodyHtml ? 'bodyHtml' : '';
   if (!bodyHtml) {
     const htmlBytes = (data as { html?: unknown }).html;
     if (htmlBytes instanceof Uint8Array && htmlBytes.length) {
@@ -453,28 +452,18 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
       const cm = raw.match(/charset\s*=\s*["']?([\w-]+)/i);
       if (cm && cm[1] && !/utf-?8/i.test(cm[1])) { try { raw = new TextDecoder(cm[1].toLowerCase()).decode(htmlBytes); } catch { /* 非対応 charset は UTF-8 */ } }
       bodyHtml = raw.trim() || undefined;
-      if (bodyHtml) htmlSource = 'html(bin)';
     }
   }
   if (!bodyHtml) {
     const rtf = (data as { compressedRtf?: unknown }).compressedRtf;
     if (rtf instanceof Uint8Array && rtf.length) {
       bodyHtml = htmlFromCompressedRtf(rtf) ?? undefined;
-      if (bodyHtml) htmlSource = 'compressedRtf';
     }
   }
 
   // plain 本文: HTML があれば HTML から整形して使う (メーラ表示に一致)。
   //  ★ plain body は Outlook が二重行間化した劣化版なので、HTML があれば必ず優先。
   const body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : str('body');
-
-  // 診断ログ (実データ確認用・原因確定後に除去)。
-  try {
-    const prev = (s: string | undefined): string => JSON.stringify((s ?? '').slice(0, 400));
-    console.log('[mikke/msg] htmlSource:', htmlSource || 'none(plainのみ)');
-    console.log('[mikke/msg] bodyHtml preview:', prev(bodyHtml));
-    console.log('[mikke/msg] chosen body preview:', prev(body));
-  } catch { /* noop */ }
 
   // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
   const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');
