@@ -11,7 +11,7 @@ import { toast } from '../components/toast';
 import { filePicker } from '../components/filePicker';
 import { parseCsv } from '../lib/csv';
 import {
-  DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf, normalizeAsset,
+  DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf, splitAssetCell,
   buildAssetDirectory, matchAssets,
 } from '../lib/assets';
 import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile } from '../lib/xlsx';
@@ -85,6 +85,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       const settings = await getRepo().getSettings();
       const cols = resolveAssetColumns(settings);
       [assets, issues] = await Promise.all([getRepo().listAssets(), getRepo().listIssues()]);
+      // 既存の資産キーに区切り文字 (| , ; 空白) が混入している行を分割して掃除する。
+      if (await cleanupDelimitedAssets()) assets = await getRepo().listAssets();
       issueCounts = countIssuesByAsset(issues, cols);
       paint();
     } catch (e) {
@@ -93,6 +95,34 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
         `資産一覧の取得に失敗しました: ${(e as Error).message}`,
       ]));
     }
+  }
+
+  /** 資産キーに区切り文字 (| , ; 空白) が含まれる行を、個別資産に分割して置き換える。
+   *  分割後の各資産は元の管理情報を引き継ぐ。掃除した場合 true を返す。 */
+  async function cleanupDelimitedAssets(): Promise<boolean> {
+    const isDirty = (k: string): boolean => /[|,;\s　]/.test(k);
+    const dirty = assets.filter((a) => isDirty(a.assetKey));
+    if (!dirty.length) return false;
+    const existing = new Set(assets.filter((a) => !isDirty(a.assetKey)).map((a) => a.assetKey));
+    let added = 0, removed = 0;
+    for (const a of dirty) {
+      for (const key of splitAssetCell(a.assetKey)) {
+        if (existing.has(key)) continue;
+        existing.add(key);
+        try {
+          await getRepo().createAsset({
+            assetKey: key, assetType: assetTypeOf(key),
+            businessCompany: a.businessCompany, affiliateCompany: a.affiliateCompany,
+            mgmtNumber: a.mgmtNumber, identifyReason: a.identifyReason, identifyEvidence: a.identifyEvidence,
+            updatedAt: new Date().toISOString(),
+          });
+          added++;
+        } catch { /* 個別失敗はスキップ */ }
+      }
+      try { await getRepo().deleteAsset(a.id); removed++; } catch { /* noop */ }
+    }
+    toast(rootEl, `区切り文字入りの資産キーを整理しました: ${removed} 件を分割し ${added} 件に展開。`, 'ok', 6000);
+    return true;
   }
 
   function searchFiltered(): ManagedAsset[] {
@@ -255,24 +285,30 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     const byKey = new Map(assets.map((a) => [a.assetKey, a]));
     const creates: Omit<ManagedAsset, 'id'>[] = [];
     const updates: { id: number; patch: Partial<ManagedAsset> }[] = [];
+    const createdKeys = new Set<string>();   // 同一取込内の重複 create を防ぐ
     let skipped = 0;
     for (const row of sheet.rows) {
-      const key = normalizeAsset(pick(row, '資産'));
-      if (!key) { skipped++; continue; }
+      // 1 セルに | 等で複数の FQDN/IP が入っていても個別資産として取り込む。
+      const keys = splitAssetCell(pick(row, '資産'));
+      if (!keys.length) { skipped++; continue; }
       const fields: Partial<ManagedAsset> = {};
       for (const f of presentFields) fields[f.field] = pick(row, f.header);
-      const cur = byKey.get(key);
-      if (cur) {
-        if (!presentFields.length) { skipped++; continue; }
-        updates.push({ id: cur.id, patch: { ...fields, updatedAt: new Date().toISOString() } });
-      } else {
-        const typeRaw = pick(row, '種別').toUpperCase();
-        creates.push({
-          assetKey: key,
-          assetType: typeRaw === 'IP' ? 'IP' : typeRaw === 'FQDN' ? 'FQDN' : assetTypeOf(key),
-          ...fields,
-          updatedAt: new Date().toISOString(),
-        });
+      const typeRaw = pick(row, '種別').toUpperCase();
+      for (const key of keys) {
+        const cur = byKey.get(key);
+        if (cur) {
+          if (!presentFields.length) { skipped++; continue; }
+          updates.push({ id: cur.id, patch: { ...fields, updatedAt: new Date().toISOString() } });
+        } else if (!createdKeys.has(key)) {
+          createdKeys.add(key);
+          creates.push({
+            assetKey: key,
+            // 複数値セルの「種別」は資産キーから自動判定 (混在するため列値は使わない)
+            assetType: keys.length > 1 ? assetTypeOf(key) : (typeRaw === 'IP' ? 'IP' : typeRaw === 'FQDN' ? 'FQDN' : assetTypeOf(key)),
+            ...fields,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
     }
     if (!creates.length && !updates.length) {
