@@ -161,6 +161,9 @@ export function stripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    // テキスト直後の <br> がブロック閉じの直前にある場合は冗長 (二重改行になる)
+    //  → 除去。ただし <div><br></div> 等「<br> が唯一の中身=意図的な空行」は残す。
+    .replace(/([^>\s])\s*<br\s*\/?>\s*(<\/(?:p|div|li|tr|h[1-6])>)/gi, '$1$2')
     .replace(/<\/(p|div|li|tr|h[1-6])>\s*/gi, '\n')
     .replace(/\s*<br\s*\/?>\s*/gi, '\n')
     .replace(/<(p|div|li|tr|h[1-6])[^>]*>\s*/gi, '')
@@ -171,15 +174,27 @@ export function stripHtml(html: string): string {
 }
 
 /** メール本文プレーンテキストの整形。
- *  ★ 空行 (段落区切り) は保持する。以前は「1 行ごとに空行」を二重行間とみなして
- *    すべての空行を潰していたが、通常メールの段落区切りまで消してしまうため廃止。
- *  行末の空白除去と、3 行を超える連続空行の抑制のみ行う (改行は保持)。 */
+ *  ★ 段落区切り (空行) は保持しつつ、HTML 由来の「1 行ごとに空行」水増しだけ詰める。
+ *  - 明らかに二重行間 (十分な行数があり、7 割以上の行が直後に空行) の時だけ、
+ *    1 個の空行 (= 改行の水増し) を詰める。空行 2 個以上 (= 段落区切り) は残す。
+ *  - それ以外の通常メールは空行をそのまま保持 (過剰な連続だけ抑制)。 */
 export function normalizeMailPlainText(s: string): string {
-  return s
-    .replace(/\r\n?/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim();
+  let t = s.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n');
+  const lines = t.split('\n');
+  let content = 0, followedByBlank = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim()) { content++; if (i + 1 < lines.length && !lines[i + 1]!.trim()) followedByBlank++; }
+  }
+  const doubleSpaced = content >= 5 && followedByBlank / content >= 0.7;
+  if (doubleSpaced) {
+    const MARK = '\u0000';
+    t = t.replace(/\n{3,}/g, MARK)          // 空行2個以上 (段落区切り) を退避
+      .replace(/\n\n/g, '\n')                // 空行1個 (改行の水増し) を詰める
+      .replace(new RegExp(MARK, 'g'), '\n\n'); // 段落区切りを復元
+  } else {
+    t = t.replace(/\n{4,}/g, '\n\n\n');   // 通常メールは保持 (過剰な連続だけ抑制)
+  }
+  return t.trim();
 }
 
 // ── メールの「最新本文」と「引用(過去履歴)」の分割 ─────────────────────────────
