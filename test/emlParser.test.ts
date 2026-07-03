@@ -106,16 +106,17 @@ describe('splitQuotedReplyText (最新本文のみ)', () => {
   });
 });
 
-describe('normalizeMailPlainText (段落は保持・水増しは詰める)', () => {
-  it('通常メールの段落区切り(空行)は保持', () => {
-    expect(normalizeMailPlainText('a\n\nb\n\nc\n\nd')).toBe('a\n\nb\n\nc\n\nd'); // 短い→非二重行間
-    expect(normalizeMailPlainText('段落1\n続き\n\n段落2')).toBe('段落1\n続き\n\n段落2');
+describe('normalizeMailPlainText (連続空行を1つの空行に統一)', () => {
+  it('Outlook の「空行+空白行+空行」水増しを 1 空行に', () => {
+    // 実データ相当: 段落区切りが \r\n\r\n (空白行) \r\n\r\n
+    expect(normalizeMailPlainText('曲様\r\n\r\n \r\n\r\nお世話に\r\n\r\n \r\n\r\n契約書'))
+      .toBe('曲様\n\nお世話に\n\n契約書');
+    expect(normalizeMailPlainText('a\n\n　\n\nb')).toBe('a\n\nb'); // 全角スペースの空行
+    expect(normalizeMailPlainText('a\n\n\n\n\n\nb')).toBe('a\n\nb');
   });
-  it('二重行間(1行ごとに空行)は詰める。段落区切り(空行2つ)は残す', () => {
-    // 6行すべてが直後に空行 = 改行の水増し → 1行ずつに詰める
-    expect(normalizeMailPlainText('l1\n\nl2\n\nl3\n\nl4\n\nl5\n\nl6')).toBe('l1\nl2\nl3\nl4\nl5\nl6');
-    // 空行2つ(段落区切り)は水増しの中でも残す
-    expect(normalizeMailPlainText('l1\n\nl2\n\nl3\n\nl4\n\nl5\n\n\np2')).toBe('l1\nl2\nl3\nl4\nl5\n\np2');
+  it('段落区切り(1空行)と行内改行は保持', () => {
+    expect(normalizeMailPlainText('段落1\n続き\n\n段落2')).toBe('段落1\n続き\n\n段落2');
+    expect(normalizeMailPlainText('a\n\nb\n\nc')).toBe('a\n\nb\n\nc');
   });
   it('行末の空白除去', () => {
     expect(normalizeMailPlainText('a  \n\nb')).toBe('a\n\nb');

@@ -176,27 +176,18 @@ export function stripHtml(html: string): string {
 }
 
 /** メール本文プレーンテキストの整形。
- *  ★ 段落区切り (空行) は保持しつつ、HTML 由来の「1 行ごとに空行」水増しだけ詰める。
- *  - 明らかに二重行間 (十分な行数があり、7 割以上の行が直後に空行) の時だけ、
- *    1 個の空行 (= 改行の水増し) を詰める。空行 2 個以上 (= 段落区切り) は残す。
- *  - それ以外の通常メールは空行をそのまま保持 (過剰な連続だけ抑制)。 */
+ *  ★ Outlook のプレーン本文は段落区切りを「空行 + 空白だけの行 + 空行」= 空行を
+ *    2 つ以上入れて水増しする (実データで確認)。
+ *  そこで「連続する空行 (空白だけの行を含む) は 1 つの空行にまとめる」方針にする。
+ *  - 空白だけの行 (半角/全角スペース・タブ) は空行とみなす。
+ *  - 空行の連続 (=段落区切りの水増し) は 1 つの空行 (\n\n) に統一。
+ *  - 段落内の 1 行改行 (\n) と 1 つの空行 (段落区切り) はそのまま保持。 */
 export function normalizeMailPlainText(s: string): string {
-  let t = s.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n');
-  const lines = t.split('\n');
-  let content = 0, followedByBlank = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.trim()) { content++; if (i + 1 < lines.length && !lines[i + 1]!.trim()) followedByBlank++; }
-  }
-  const doubleSpaced = content >= 5 && followedByBlank / content >= 0.7;
-  if (doubleSpaced) {
-    const MARK = '\u0000';
-    t = t.replace(/\n{3,}/g, MARK)          // 空行2個以上 (段落区切り) を退避
-      .replace(/\n\n/g, '\n')                // 空行1個 (改行の水増し) を詰める
-      .replace(new RegExp(MARK, 'g'), '\n\n'); // 段落区切りを復元
-  } else {
-    t = t.replace(/\n{4,}/g, '\n\n\n');   // 通常メールは保持 (過剰な連続だけ抑制)
-  }
-  return t.trim();
+  return s
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\u3000]+\n/g, '\n')   // 空白だけの行 → 空行
+    .replace(/\n{2,}/g, '\n\n')          // 連続する空行を 1 つの空行に統一
+    .trim();
 }
 
 // ── メールの「最新本文」と「引用(過去履歴)」の分割 ─────────────────────────────
@@ -365,17 +356,7 @@ export async function parseMsgFile(file: File): Promise<ParsedMail> {
   // plain 本文: HTML があれば HTML から整形して使う。
   //  ★ msgreader の plain body は「1 行ごとに空行」の二重行間になりがち。HTML は
   //    行間 (改行/空段落) を正しく表すので、HTML 形式では stripHtml を優先する。
-  const rawPlain = str('body');
-  let body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : rawPlain;
-
-  // 診断ログ (実データ確認用)。F12 コンソールで [mikke/msg] 行を確認できる。
-  try {
-    const prev = (s: string | undefined): string => JSON.stringify((s ?? '').slice(0, 500));
-    console.log('[mikke/msg] keys:', Object.keys(data).join(','));
-    console.log('[mikke/msg] plain(body) len:', rawPlain?.length ?? 0, 'preview:', prev(rawPlain));
-    console.log('[mikke/msg] bodyHtml len:', bodyHtml?.length ?? 0, 'preview:', prev(bodyHtml));
-    console.log('[mikke/msg] chosen body(from ' + (bodyHtml ? 'HTML' : 'plain') + ') preview:', prev(body));
-  } catch { /* noop */ }
+  const body = bodyHtml ? (stripHtml(bodyHtml) || undefined) : str('body');
 
   // 送信元: SMTP を優先。EX アドレス (/o=ExchangeLabs/…) は @ が無いので除外。
   const senderSmtp = str('senderSmtpAddress') ?? str('sentRepresentingSmtpAddress');
