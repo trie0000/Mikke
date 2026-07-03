@@ -170,18 +170,16 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
-/** メール本文プレーンテキストの整形。HTML 由来の「1 行ごとに空行」二重行間を
- *  検出して詰める。 */
+/** メール本文プレーンテキストの整形。
+ *  ★ 空行 (段落区切り) は保持する。以前は「1 行ごとに空行」を二重行間とみなして
+ *    すべての空行を潰していたが、通常メールの段落区切りまで消してしまうため廃止。
+ *  行末の空白除去と、3 行を超える連続空行の抑制のみ行う (改行は保持)。 */
 export function normalizeMailPlainText(s: string): string {
-  let t = s.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n');
-  const lines = t.split('\n');
-  let content = 0, followedByBlank = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.trim()) { content++; if (i + 1 < lines.length && !lines[i + 1]!.trim()) followedByBlank++; }
-  }
-  const doubleSpaced = content >= 3 && followedByBlank / content >= 0.7;
-  t = doubleSpaced ? t.replace(/\n\s*\n+/g, '\n') : t.replace(/\n{3,}/g, '\n\n');
-  return t.trim();
+  return s
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
 }
 
 // ── メールの「最新本文」と「引用(過去履歴)」の分割 ─────────────────────────────

@@ -13,7 +13,7 @@ import { openModal } from '../components/modal';
 import { sanitizeNoteHtml } from '../utils/sanitize';
 import {
   parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag,
-  normalizeMailPlainText, splitQuotedReplyText, splitQuotedReplyHtml, type ParsedMail,
+  normalizeMailPlainText, splitQuotedReplyText, splitQuotedReplyHtml, stripHtml, type ParsedMail,
 } from '../lib/emlParser';
 import type { ManagedIssue, ResponseHistory, HistoryThread, HistorySource } from '../types';
 
@@ -260,27 +260,13 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         html: icon('trash'),
       }),
     ]);
-    // メールは「最新本文のみ」を表示し、引用(過去履歴)はトグルで開閉する。
-    const { latest, quoted } = h.isHtml ? splitQuotedReplyHtml(h.body) : splitQuotedReplyText(h.body);
+    // メールは「最新本文のみ」を表示する (引用=過去履歴は表示しない。記録は保持)。
+    const { latest } = h.isHtml ? splitQuotedReplyHtml(h.body) : splitQuotedReplyText(h.body);
     const bodyEl = el('div', { class: 'mikke-hist-body' });
     if (h.isHtml) bodyEl.innerHTML = sanitizeNoteHtml(latest);
     else bodyEl.textContent = latest;
     if (h.subject) bodyEl.prepend(el('div', { class: 'mikke-hist-subject' }, [`件名: ${h.subject}`]));
-
-    const card = el('div', { class: 'mikke-hist-card', 'data-thread': h.thread }, [head, bodyEl]);
-    if (quoted) {
-      const qEl = el('div', { class: 'mikke-hist-quoted', style: 'display:none' });
-      if (h.isHtml) qEl.innerHTML = sanitizeNoteHtml(quoted);
-      else qEl.textContent = quoted;
-      const toggle = el('button', { class: 'mikke-hist-toggle' }, ['引用部 (履歴) を表示']);
-      toggle.addEventListener('click', () => {
-        const showing = qEl.style.display !== 'none';
-        qEl.style.display = showing ? 'none' : 'block';
-        toggle.textContent = showing ? '引用部 (履歴) を表示' : '引用部 (履歴) を隠す';
-      });
-      card.append(toggle, qEl);
-    }
-    return card;
+    return el('div', { class: 'mikke-hist-card', 'data-thread': h.thread }, [head, bodyEl]);
   }
 
   async function deleteHistory(h: ResponseHistory): Promise<void> {
@@ -316,7 +302,6 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     const dtInput = el('input', { class: 'mikke-input', type: 'datetime-local', value: toLocalDateTime(new Date().toISOString()) }) as HTMLInputElement;
     const subjectInput = el('input', { class: 'mikke-input', type: 'text', placeholder: '件名 (任意)' }) as HTMLInputElement;
     const bodyArea = el('textarea', { class: 'mikke-input', style: 'min-height:160px;width:100%;font-family:inherit', placeholder: '対応内容。ここに .msg / .eml をドラッグするとメールを取り込みます。' }) as HTMLTextAreaElement;
-    let pendingHtml: string | undefined;
     let pendingFromEmail: string | undefined;
 
     const field = (label: string, control: HTMLElement): HTMLElement =>
@@ -327,8 +312,10 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       if (p.fromName && !authorInput.value) authorInput.value = p.fromName;
       if (p.dateISO) dtInput.value = toLocalDateTime(p.dateISO);
       if (p.subject) subjectInput.value = p.subject;
-      if (p.body) { const b = normalizeMailPlainText(p.body); bodyArea.value = b; bodyArea.defaultValue = b; }
-      pendingHtml = p.bodyHtml;
+      // 本文はプレーンテキストで取り込む (HTML の style 依存で空行が消える問題を避け、
+      //  表示を pre-wrap で統一。改行・空行はそのまま保持)。
+      const src = p.body ?? (p.bodyHtml ? stripHtml(p.bodyHtml) : '');
+      if (src) { const b = normalizeMailPlainText(src); bodyArea.value = b; bodyArea.defaultValue = b; }
       pendingFromEmail = p.fromEmail;
     };
 
@@ -392,8 +379,6 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
           isHtml: false,
           occurredAt: dtInput.value ? new Date(dtInput.value).toISOString() : new Date().toISOString(),
         };
-        // 本文を編集していなければ HTML 版を保存 (見た目を保持)
-        if (pendingHtml && bodyArea.defaultValue === bodyArea.value) { entry.body = sanitizeNoteHtml(pendingHtml); entry.isHtml = true; }
         try { await getRepo().createHistory(entry); }
         catch (e) { toast(rootEl, `登録に失敗: ${(e as Error).message}`, 'error'); throw e; }
         toast(rootEl, '対応履歴を登録しました', 'ok');
