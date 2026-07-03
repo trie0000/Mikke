@@ -74,6 +74,7 @@ export class DataTable<T> {
   private headCheck: HTMLInputElement | null = null;
   private openMenu: HTMLElement | null = null;
   private openMenuCol: string | null = null;
+  private keepMenuOnRender = false;   // フィルタ適用時に列メニューを閉じない
   private menuDocHandler: (() => void) | null = null;
 
   constructor(container: HTMLElement, opts: DataTableOptions<T>) {
@@ -159,7 +160,9 @@ export class DataTable<T> {
 
   // ── 描画 ────────────────────────────────────────────────────────────────────
   render(): void {
-    this.closeMenu();
+    // フィルタ適用による再描画では列メニューを閉じない (QAM 挙動)。
+    if (this.keepMenuOnRender) this.keepMenuOnRender = false;
+    else this.closeMenu();
     clear(this.container);
     this.vVirtual = false; this.vTop = this.vBot = this.vTbody = null;
 
@@ -419,10 +422,12 @@ export class DataTable<T> {
       const allCb = el('input', { type: 'checkbox' }) as HTMLInputElement;
       const listWrap = el('div', { class: 'mikke-colmenu-vlist' });
       if (values.length > 2000) menu.appendChild(el('div', { class: 'mikke-colmenu-note' }, [`先頭 2000 件のみ表示 (全 ${values.length} 件)`]));
+      // フィルタ適用: 表を再描画するが、メニューは開いたままにする (QAM 挙動)。
       const apply = (): void => {
         const arr = [...ex];
         if (arr.length) this.colExcluded[col.id] = arr; else delete this.colExcluded[col.id];
         lsSet(`${this.opts.storeKey}.colFilters`, this.colExcluded);
+        this.keepMenuOnRender = true;
         this.render();
       };
       const label = (v: string): string => (v === '' ? '(空白)' : v);
@@ -447,8 +452,16 @@ export class DataTable<T> {
         if (allCb.checked) shown.forEach((v) => ex.delete(v)); else shown.forEach((v) => ex.add(v));
         apply(); renderList(search.value);
       });
-      search.addEventListener('input', () => renderList(search.value));
-      search.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') this.closeMenu(); });
+      // 値検索: 入力に合致する値だけを「選択(チェック)」状態にして即フィルタ (QAM 挙動)。
+      //  一致しない値を除外セットに入れる。空にすると全解除。Enter は確定してメニューを閉じる。
+      search.addEventListener('input', () => {
+        const ql = search.value.trim().toLowerCase();
+        ex.clear();
+        if (ql) for (const v of values) if (!label(v).toLowerCase().includes(ql)) ex.add(v);
+        apply();
+        renderList(search.value);
+      });
+      search.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') { e.preventDefault(); this.closeMenu(); } });
       menu.append(
         search,
         el('div', { style: 'padding:0 var(--s-2)' }, [el('label', { class: 'mikke-colmenu-item mikke-colmenu-all' }, [allCb, el('span', {}, ['(すべて選択)'])])]),
