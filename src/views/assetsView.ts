@@ -8,13 +8,11 @@ import { icon } from '../icons';
 import { getRepo } from '../api/repo';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
-import { filePicker } from '../components/filePicker';
-import { parseCsv } from '../lib/csv';
 import {
   DEFAULT_ASSET_COLUMN, extractAssets, countIssuesByAsset, assetTypeOf, splitAssetCell,
   buildAssetDirectory, matchAssets,
 } from '../lib/assets';
-import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile } from '../lib/xlsx';
+import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile, type Sheet } from '../lib/xlsx';
 import { DataTable, type DataColumn } from './dataTable';
 import type { ManagedAsset, ManagedIssue, MikkeSettings } from '../types';
 
@@ -532,23 +530,67 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
   }
 
   // ── 管理部門 CSV (基本情報 + サイトURL情報) の取込 ─────────────────────────────
+  // ヘッダから2種類の管理部門ファイルを自動判別する。
+  //  基本情報: 一行目(ヘッダ) の B 列 が「並び順」/ サイトURL情報: ヘッダに「サイト名称」。
+  function detectDeptKind(sheet: Sheet): 'base' | 'site' | null {
+    const norm = (h: string): string => (h ?? '').replace(/[\s　]+/g, '');
+    const headers = sheet.headers.map(norm);
+    if (headers.includes('サイト名称')) return 'site';
+    if (norm(sheet.headers[1] ?? '') === '並び順' || headers.includes('並び順')) return 'base';
+    return null;
+  }
+
   function openDeptCsvModal(): void {
-    const basePicker = filePicker({ accept: '.csv,text/csv', placeholder: '基本情報 CSV を選択' });
-    const sitePicker = filePicker({ accept: '.csv,text/csv', placeholder: 'サイトURL情報 CSV を選択' });
+    let baseSheet: Sheet | null = null, siteSheet: Sheet | null = null;
+    let baseName = '', siteName = '';
+
+    const statRow = (label: string): HTMLElement => el('div', {
+      class: 'mikke-deptfile-stat', style: 'display:flex;align-items:center;gap:var(--s-3);padding:var(--s-2) 0',
+    }, [el('span', { style: 'min-width:120px;color:var(--ink-2)' }, [label]), el('span', { class: 'mikke-deptfile-val', style: 'color:var(--ink-4)' }, ['未取込'])]);
+    const baseStat = statRow('基本情報');
+    const siteStat = statRow('サイトURL情報');
+    const setVal = (row: HTMLElement, name: string): void => {
+      const v = row.querySelector('.mikke-deptfile-val') as HTMLElement;
+      v.textContent = name ? `${name} ✓` : '未取込';
+      v.style.color = name ? 'var(--accent-strong)' : 'var(--ink-4)';
+      v.style.fontWeight = name ? '600' : '400';
+    };
+
+    const drop = el('div', { class: 'mikke-hist-drop', style: 'margin:var(--s-4) 0' }, [
+      el('div', {}, [
+        el('span', { html: icon('upload'), style: 'display:inline-flex;vertical-align:-2px;margin-right:6px' }),
+        'ここに管理部門リスト (CSV / Excel) をドラッグ',
+      ]),
+      el('div', { style: 'color:var(--ink-4);font-size:var(--fs-xs);margin-top:4px' }, ['2 ファイル同時OK・種類は自動判別（基本情報=B列「並び順」／URL=ヘッダ「サイト名称」）。クリックで選択も可']),
+    ]);
+    const fileInput = el('input', { type: 'file', accept: '.csv,.xlsx,text/csv', multiple: 'multiple', style: 'display:none' }) as HTMLInputElement;
+
+    const ingest = async (files: File[]): Promise<void> => {
+      for (const f of files) {
+        let sheet: Sheet;
+        try { sheet = await parseSpreadsheetFile(f); } catch { toast(rootEl, `「${f.name}」を読み込めませんでした。`, 'error'); continue; }
+        if (!sheet.headers.length) { toast(rootEl, `「${f.name}」のヘッダを読み取れませんでした。`, 'warn'); continue; }
+        const kind = detectDeptKind(sheet);
+        if (kind === 'base') { baseSheet = sheet; baseName = f.name; setVal(baseStat, baseName); }
+        else if (kind === 'site') { siteSheet = sheet; siteName = f.name; setVal(siteStat, siteName); }
+        else { toast(rootEl, `「${f.name}」は種類を判別できませんでした（基本情報=B列「並び順」／URL=ヘッダ「サイト名称」）。`, 'warn', 7000); }
+      }
+    };
+
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); if ((e as DragEvent).dataTransfer) (e as DragEvent).dataTransfer!.dropEffect = 'copy'; drop.classList.add('is-over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('is-over'));
+    drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('is-over'); void ingest([...((e as DragEvent).dataTransfer?.files ?? [])]); });
+    drop.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => { void ingest([...(fileInput.files ?? [])]); fileInput.value = ''; });
+
     const body = el('div', {}, [
       el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7;color:var(--ink-2)' }, [
-        '社内の資産管理部門リスト (CSV 2種) を読み込み、FQDN が一致した資産の',
+        '社内の資産管理部門リスト (2種) を読み込み、FQDN が一致した資産の',
         el('b', {}, ['事業会社・関連会社・Web資産管理番号']),
         ' を更新します。1 行目 = 列名、2 行目 = 列の説明 (読み飛ばし)、3 行目以降 = 値。',
       ]),
-      el('div', { class: 'mikke-field' }, [
-        el('label', { class: 'mikke-field-label' }, ['基本情報 CSV（管理番号 / 組織区分 第１階層名 / 関係会社/事業場略称）']),
-        basePicker.root,
-      ]),
-      el('div', { class: 'mikke-field' }, [
-        el('label', { class: 'mikke-field-label' }, ['サイトURL情報 CSV（管理番号 / サブドメイン / ドメインネーム）']),
-        sitePicker.root,
-      ]),
+      drop, fileInput,
+      el('div', { style: 'margin:var(--s-3) 0' }, [baseStat, siteStat]),
       el('p', { style: 'margin:var(--s-3) 0 0;color:var(--ink-4);font-size:var(--fs-xs);line-height:1.6' }, [
         '同一脆弱性に紐づく資産 (例: FQDN と IP) のうち 1 つでも FQDN 一致で特定できた場合、',
         '残りの資産にも同じ事業会社・関連会社・管理番号を引き継ぎます (根拠に明記)。',
@@ -559,21 +601,13 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       body,
       primaryLabel: '突合する',
       onPrimary: async () => {
-        const baseFile = basePicker.getFile();
-        const siteFile = sitePicker.getFile();
-        if (!baseFile || !siteFile) {
-          toast(rootEl, '基本情報とサイトURL情報の両方の CSV を選択してください。', 'warn');
+        if (!baseSheet || !siteSheet) {
+          toast(rootEl, `基本情報とサイトURL情報の両方が必要です（現在: 基本情報=${baseSheet ? '取込済' : '未'} / URL=${siteSheet ? '取込済' : '未'}）。`, 'warn', 6000);
           throw new Error('files required');
-        }
-        const base = parseCsv(await baseFile.text());
-        const site = parseCsv(await siteFile.text());
-        if (!base.headers.length || !site.headers.length) {
-          toast(rootEl, 'CSV のヘッダを読み取れませんでした。', 'error');
-          throw new Error('bad csv');
         }
         const settings = await getRepo().getSettings();
         const { groups } = extractAssets(issues, resolveAssetColumns(settings));
-        const dir = buildAssetDirectory(base, site);
+        const dir = buildAssetDirectory(baseSheet, siteSheet);
         const plan = matchAssets(assets, dir, new Date().toISOString(), groups);
         if (plan.length === 0) {
           toast(rootEl, `FQDN が一致する資産はありませんでした (部門リスト側 ${dir.size} FQDN)。`, 'warn', 6000);
