@@ -175,6 +175,10 @@ if (watch || serve) {
   if (fs.existsSync('SCANNER-ADAPTER-SPEC.md')) {
     fs.copyFileSync('SCANNER-ADAPTER-SPEC.md', 'dist/SCANNER-ADAPTER-SPEC.md');
   }
+  // 一括ダウンロードアダプタの実装依頼テンプレ (お客様環境へ渡す用)
+  if (fs.existsSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md')) {
+    fs.copyFileSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md', 'dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md');
+  }
   // 同梱 OSS のライセンス表記 (配布物に含める)
   if (fs.existsSync('THIRD_PARTY_NOTICES.md')) {
     fs.copyFileSync('THIRD_PARTY_NOTICES.md', 'dist/THIRD_PARTY_NOTICES.md');
