@@ -476,7 +476,14 @@ export class DataTable<T> {
     menu.addEventListener('mousedown', (e) => e.stopPropagation());
     this.container.closest('#mikke-root')!.appendChild(menu);
     this.openMenu = menu;
-    this.menuDocHandler = (): void => this.closeMenu();
+    // メニュー外の mousedown で閉じる。その直後に発火する click (行クリック=詳細を開く等)
+    //  を capture で握り潰し、フィルタを閉じる動作だけにする。
+    this.menuDocHandler = (): void => {
+      this.closeMenu();
+      const swallow = (ev: Event): void => { ev.stopPropagation(); ev.preventDefault(); };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener('click', swallow, true), 350);
+    };
     setTimeout(() => document.addEventListener('mousedown', this.menuDocHandler!), 0);
   }
 }

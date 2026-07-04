@@ -105,32 +105,57 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     }
   }
 
-  /** 資産キーに区切り文字 (| , ; 空白) が含まれる行を、個別資産に分割して置き換える。
-   *  分割後の各資産は元の管理情報を引き継ぐ。掃除した場合 true を返す。 */
+  /** 資産キーの整理: ①区切り文字(| , ; 空白)入りを個別資産に分割 ②同一キーの重複を
+   *  1 件に統合。分割・統合を行った場合 true (呼び出し側で再取得)。 */
   async function cleanupDelimitedAssets(): Promise<boolean> {
     const isDirty = (k: string): boolean => /[|,;\s　]/.test(k);
+    let changed = false;
+
+    // ① 区切り文字入りキーを分割
     const dirty = assets.filter((a) => isDirty(a.assetKey));
-    if (!dirty.length) return false;
-    const existing = new Set(assets.filter((a) => !isDirty(a.assetKey)).map((a) => a.assetKey));
-    let added = 0, removed = 0;
-    for (const a of dirty) {
-      for (const key of splitAssetCell(a.assetKey)) {
-        if (existing.has(key)) continue;
-        existing.add(key);
-        try {
-          await getRepo().createAsset({
-            assetKey: key, assetType: assetTypeOf(key),
-            businessCompany: a.businessCompany, affiliateCompany: a.affiliateCompany,
-            mgmtNumber: a.mgmtNumber, identifyReason: a.identifyReason, identifyEvidence: a.identifyEvidence,
-            updatedAt: new Date().toISOString(),
-          });
-          added++;
-        } catch { /* 個別失敗はスキップ */ }
+    if (dirty.length) {
+      const existing = new Set(assets.filter((a) => !isDirty(a.assetKey)).map((a) => a.assetKey));
+      let added = 0, removed = 0;
+      for (const a of dirty) {
+        for (const key of splitAssetCell(a.assetKey)) {
+          if (existing.has(key)) continue;
+          existing.add(key);
+          try {
+            await getRepo().createAsset({
+              assetKey: key, assetType: assetTypeOf(key),
+              businessCompany: a.businessCompany, affiliateCompany: a.affiliateCompany,
+              mgmtNumber: a.mgmtNumber, identifyReason: a.identifyReason, identifyEvidence: a.identifyEvidence,
+              updatedAt: new Date().toISOString(),
+            });
+            added++;
+          } catch { /* 個別失敗はスキップ */ }
+        }
+        try { await getRepo().deleteAsset(a.id); removed++; } catch { /* noop */ }
       }
-      try { await getRepo().deleteAsset(a.id); removed++; } catch { /* noop */ }
+      toast(rootEl, `区切り文字入りの資産キーを整理しました: ${removed} 件を分割し ${added} 件に展開。`, 'ok', 6000);
+      changed = true;
+      assets = await getRepo().listAssets();   // 分割結果で最新化してから重複統合
     }
-    toast(rootEl, `区切り文字入りの資産キーを整理しました: ${removed} 件を分割し ${added} 件に展開。`, 'ok', 6000);
-    return true;
+
+    // ② 同一 assetKey の重複を統合 (管理情報が最も充実した 1 件を残し他を削除)
+    const byKey = new Map<string, ManagedAsset[]>();
+    for (const a of assets) { const g = byKey.get(a.assetKey) ?? []; g.push(a); byKey.set(a.assetKey, g); }
+    const infoScore = (a: ManagedAsset): number =>
+      [a.businessCompany, a.affiliateCompany, a.mgmtNumber, a.identifyReason, a.identifyEvidence].filter((v) => (v ?? '').trim()).length;
+    let dupRemoved = 0;
+    for (const group of byKey.values()) {
+      if (group.length < 2) continue;
+      // 情報量が多い→更新が新しい→id 小 の順で残す
+      group.sort((x, y) => infoScore(y) - infoScore(x) || (y.updatedAt ?? '').localeCompare(x.updatedAt ?? '') || x.id - y.id);
+      for (const dup of group.slice(1)) {
+        try { await getRepo().deleteAsset(dup.id); dupRemoved++; } catch { /* noop */ }
+      }
+    }
+    if (dupRemoved) {
+      toast(rootEl, `重複していた資産を統合しました: ${dupRemoved} 件を削除。`, 'ok', 6000);
+      changed = true;
+    }
+    return changed;
   }
 
   function searchFiltered(): ManagedAsset[] {
