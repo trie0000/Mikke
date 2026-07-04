@@ -244,3 +244,104 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 - [ ] API キー・URL はスクリプトに直書きせず `mikke-relay.env` 参照
 - [ ] 秘密情報をログ (`Write-Host`) に出していない
 - [ ] §7 のテスト 3 段階がすべて通る
+
+---
+
+## 9. 一括ダウンロード（脆弱性 / 資産データ）
+
+「ダウンロードデータ」画面の**取得**で、検査ツールから脆弱性および登録資産情報（IP / IP Range / Domain / Cert / WebAPPS）を**一括取得**する。§1〜§8 の Issue 取得（`Invoke-MikkeScannerFetch`）と**同じ relay + アダプタ方式**で、アダプタに**もう 1 つ関数を足す**だけでよい。
+
+### 9-1. 全体像（どこで呼ばれるか）
+
+```
+[ブラウザ UI]  「ダウンロードデータ」→「取得」→ 対象種別を選択
+   │  POST http://127.0.0.1:18080/mikke/download   body: {"types":["vuln","ip",...]}
+   ▼
+[mikke-relay.ps1]  毎リクエスト mikke-scanner-adapter.ps1 を dot-source し、
+   │               Invoke-MikkeScannerDownload -Types <string[]> を呼ぶ
+   ▼
+[mikke-scanner-adapter.ps1]  ★この関数を実装する
+   │  検査ツールから各種別のエクスポートを取得し、Base64 で返す
+   ▼
+[検査ツール API]
+```
+
+- **役割分担**: アダプタは「検査ツールからデータを取得して Base64 で返す」中継のみ。
+  **zip 圧縮・SharePoint ドキュメントライブラリへの保存・一覧記録はブラウザ側**（SP 認証を持つ）が行う。アダプタは SP を触らない。
+- ブラウザは取得結果を**種別ごとに 1 つの zip** にまとめ、設定で指定した SP フォルダの**日時サブフォルダ**（例: `Shared Documents/MikkeDownloads/20260704-153000/`）に `vuln.zip` / `ip.zip` … として保存し、一覧に記録する。
+
+### 9-2. 契約（インターフェース — 変更不可）
+
+```powershell
+function Invoke-MikkeScannerDownload {
+    param([Parameter(Mandatory = $true)][string[]]$Types)
+    # ...実装...
+    return @{ items = @( ... ) }
+}
+```
+
+#### 入力
+
+| パラメータ | 型 | 説明 |
+| --- | --- | --- |
+| `Types` | string[] | 取得する種別の配列。`vuln` / `ip` / `iprange` / `domain` / `cert` / `webapps` の**部分集合**（利用者がモーダルで選んだもの） |
+
+種別の意味:
+
+| 種別 | 内容 |
+| --- | --- |
+| `vuln` | 脆弱性一覧 |
+| `ip` | 登録資産: IP |
+| `iprange` | 登録資産: IP Range |
+| `domain` | 登録資産: Domain |
+| `cert` | 登録資産: Cert（証明書） |
+| `webapps` | 登録資産: WebAPPS（Web アプリ） |
+
+#### 戻り値（hashtable）
+
+```powershell
+@{
+    items = @(
+        @{
+            type                = 'vuln'                 # 上記種別のいずれか
+            fileName            = 'vulnerabilities.csv'  # 元ファイル名 (拡張子で中身が分かる名前)
+            contentBase64       = '<base64>'             # ファイル内容の Base64 (CSV/xlsx 等バイナリ安全)
+            scannerDownloadTime = '2026-07-04T15:29:00'  # 任意。検査ツール側のエクスポート日時 (ISO8601 推奨)
+            itemCount           = 1234                   # 任意。件数 (一覧の参考表示に使う)
+        }
+        # 種別ごとに 1 要素。1 種別で複数ファイルを返してもよい (同 type を複数要素)。
+    )
+}
+```
+
+- `contentBase64` は**ファイルのバイト列を Base64 化**したもの。CSV でも Excel(.xlsx) でも可。バイナリで受けるなら `Invoke-WebRequest` の `.Content`（byte[]）を `[Convert]::ToBase64String(...)` する。文字列（CSV テキスト）なら `[System.Text.Encoding]::UTF8.GetBytes($csv)` を Base64 化する。
+- **要求された `Types` のうち取得できたものだけ**返せばよい（0 件の種別は要素を省略。全体が空なら `items = @()`）。
+- `scannerDownloadTime` / `itemCount` は任意（省略可）。`scannerDownloadTime` は一覧の「検査ツールDL時間」列に表示される。
+
+#### エラー
+
+§3-4 と同じ。**`throw` で投げる**（relay が 502 + メッセージで UI のトーストに表示）。タイムアウトは長め（例: `-TimeoutSec 120`）に。診断ログ規約（§5-1）も同じ。
+
+### 9-3. テスト方法
+
+単体（relay なし）:
+
+```powershell
+powershell -NoProfile -Command ". .\mikke-scanner-adapter.ps1; (Invoke-MikkeScannerDownload -Types @('vuln','ip')).items | ForEach-Object { $_.type + ' ' + $_.fileName + ' (' + $_.contentBase64.Length + ' b64chars)' }"
+```
+
+relay 経由:
+
+```powershell
+Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/download' -Method Post `
+  -ContentType 'application/json' -Body '{"types":["vuln","ip"]}'
+```
+
+→ `ok: true` と `items`（各要素に type / fileName / contentBase64）が返れば OK。relay コンソールに `[download] vuln,ip -> N file(s)` が出る。
+
+### 9-4. チェックリスト（追加分）
+
+- [ ] `Invoke-MikkeScannerDownload -Types <string[]>` を定義（既存の Fetch 関数と同じファイルに追記）
+- [ ] 戻り値は §9-2 のスキーマ（`items` 配列。`contentBase64` は Base64）
+- [ ] 6 種別（vuln/ip/iprange/domain/cert/webapps）のうち、環境で取得できるものをマッピング
+- [ ] エラーは日本語メッセージで throw / タイムアウト設定あり / 秘密をログに出さない

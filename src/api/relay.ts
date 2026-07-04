@@ -145,3 +145,39 @@ export async function relayGetIssue(issueInstanceId: string): Promise<RelayIssue
   }
   return await r.json();
 }
+
+/** /mikke/download が返す 1 ファイル。content は base64 (バイナリ安全)。 */
+export interface RelayDownloadItem {
+  /** 種別 (vuln / ip / iprange / domain / cert / webapps)。 */
+  type: string;
+  /** 元ファイル名 (例: vulnerabilities.csv)。 */
+  fileName: string;
+  /** ファイル内容 (base64)。 */
+  contentBase64: string;
+  /** 検査ツール側のエクスポート日時 (ISO 文字列。任意)。 */
+  scannerDownloadTime?: string;
+  /** 元データ件数 (任意・参考)。 */
+  itemCount?: number;
+}
+
+export interface RelayDownloadResult {
+  ok: boolean;
+  items: RelayDownloadItem[];
+}
+
+/** /mikke/download — 検査ツールから脆弱性/資産データを一括取得 (アダプタ委譲)。
+ *  実装は relay 側の mikke-scanner-adapter.ps1 の Invoke-MikkeScannerDownload に委譲。
+ *  未配置 (501) / アダプタエラー (502) は detail をそのままエラーメッセージにする。 */
+export async function relayDownloadFromScanner(types: string[]): Promise<RelayDownloadResult> {
+  const r = await fetch(`${getRelayBase()}/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ types }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    throw new Error(detail);
+  }
+  return await r.json();
+}

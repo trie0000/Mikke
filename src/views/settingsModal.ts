@@ -148,6 +148,9 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
           { key: 'conditions', label: '管理対象条件 (F7)', render: () => renderConditionsPanel(root) },
           { key: 'individual', label: '個別追加 (Issue ID)', render: () => renderIndividualPanel(root) },
         ] },
+        { title: 'ダウンロード', items: [
+          { key: 'downloadFolder', label: '保存先フォルダ', render: () => renderDownloadPanel(root) },
+        ] },
       ],
     },
     {
@@ -540,6 +543,32 @@ async function renderIndividualPanel(root: HTMLElement): Promise<SettingPanel> {
       const ids = ta.value.split('\n').map((x) => x.trim()).filter(Boolean);
       await getRepo().saveSettings({ ...s, individualIds: ids });
       toast(root, `個別追加 ${ids.length} 件を保存しました`, 'ok');
+    },
+  };
+}
+
+// ── 共通設定: ダウンロード保存先 ──
+async function renderDownloadPanel(root: HTMLElement): Promise<SettingPanel> {
+  const s = await getRepo().getSettings();
+  const input = el('input', {
+    type: 'text', class: 'mikke-input',
+    value: s.downloadFolder ?? 'Shared Documents/MikkeDownloads',
+    placeholder: 'Shared Documents/MikkeDownloads',
+    style: 'width:100%',
+  }) as HTMLInputElement;
+  const body = el('div', {}, [
+    panelHead('ダウンロードデータの保存先',
+      '「ダウンロードデータ」で取得した zip を保存する SP ドキュメントライブラリのフォルダ（サイト相対パス）です。取得時にこの配下へ日時フォルダを作成し、種別ごとに zip を置きます。無ければ自動作成します。'),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['保存先フォルダ (サイト相対)']), input,
+    ]),
+  ]);
+  return {
+    body,
+    save: async () => {
+      const folder = input.value.trim().replace(/^\/+|\/+$/g, '') || 'Shared Documents/MikkeDownloads';
+      await getRepo().saveSettings({ ...s, downloadFolder: folder });
+      toast(root, '保存先フォルダを保存しました', 'ok');
     },
   };
 }

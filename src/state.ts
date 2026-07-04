@@ -75,7 +75,7 @@ function loadPersistedTabs(): Pick<State, 'view' | 'selectedIssueId' | 'openIssu
       ? j.openIssueIds.filter((x): x is number => typeof x === 'number')
       : [];
     const sel = typeof j.selectedIssueId === 'number' ? j.selectedIssueId : null;
-    const validViews: ViewName[] = ['issues', 'import', 'assets'];
+    const validViews: ViewName[] = ['issues', 'import', 'assets', 'downloads'];
     const view = (typeof j.view === 'string' && validViews.includes(j.view as ViewName))
       ? (j.view as ViewName) : 'issues';
     return { view, selectedIssueId: sel, openIssueIds: ids };

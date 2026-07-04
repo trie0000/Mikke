@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord } from '../types';
 import type { ImportOp } from '../lib/import';
 
 export interface Repository {
@@ -47,6 +47,17 @@ export interface Repository {
   deleteAsset(id: number): Promise<void>;
   /** 資産の 特定根拠 / 備考 に貼り付けた画像を添付ファイル化し、絶対 URL を返す。 */
   uploadAssetImage(assetId: number, file: File): Promise<{ url: string }>;
+  /** 検査ツールからのダウンロードデータ (種別ごとの zip 記録)。 */
+  listDownloads(): Promise<DownloadRecord[]>;
+  createDownload(rec: Omit<DownloadRecord, 'id'>): Promise<number>;
+  deleteDownload(id: number): Promise<void>;
+  /** SP ドキュメントライブラリの <folder>/<fileName> に zip を保存し、サーバ相対 URL を返す。
+   *  folder はサイト相対 (例: 'Shared Documents/MikkeDownloads/20260704-120000')。無ければ作成。 */
+  uploadDownloadFile(folder: string, fileName: string, data: Blob): Promise<{ url: string }>;
+  /** SP のファイルをサーバ相対 URL で削除 (ダウンロードデータの実体削除)。 */
+  deleteDocFile(serverRelativeUrl: string): Promise<void>;
+  /** 保存済みファイルをブラウザで開く/保存するための href を返す (SP=絶対URL / mock=data URL)。 */
+  docFileHref(serverRelativeUrl: string): Promise<string>;
 }
 
 /** 取込履歴の 1 レコード。 */

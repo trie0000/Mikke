@@ -91,3 +91,62 @@ function Invoke-MikkeScannerFetch {
 
     throw 'mikke-scanner-adapter: 未実装です。example をコピーして実 API 呼び出しを実装してください。'
 }
+
+# =============================================================================
+# 契約 (一括ダウンロード — /mikke/download が呼び出す I/F。変更しないこと):
+#   関数名:  Invoke-MikkeScannerDownload
+#   入力:    -Types <string[]>   ('vuln','ip','iprange','domain','cert','webapps' の部分集合)
+#   戻り値:  hashtable
+#     @{
+#       items = @(
+#         @{
+#           type                = <string>   # 'vuln' / 'ip' / 'iprange' / 'domain' / 'cert' / 'webapps'
+#           fileName            = <string>   # 元ファイル名 (例: 'vulnerabilities.csv')
+#           contentBase64       = <string>   # ファイル内容の Base64 (CSV/xlsx 等バイナリ安全)
+#           scannerDownloadTime = <string>   # 任意。検査ツール側のエクスポート日時 (ISO8601 推奨)
+#           itemCount           = <int>      # 任意。件数 (参考表示用)
+#         }, ...
+#       )
+#     }
+#   ・zip 圧縮・SP ドキュメントライブラリへの保存はブラウザ側が行う。アダプタは
+#     「検査ツールからデータを取得し Base64 で返す」中継のみを担う。
+#   ・1 種別につき複数ファイルを返してもよい (同 type の items が複数)。ブラウザ側で
+#     種別ごとに 1 つの zip にまとめる。
+#   ・エラーは throw する (relay が 502 + メッセージで UI に返す)。診断ログ規約は
+#     Fetch と同じ (SPEC §5-1)。詳細は SCANNER-ADAPTER-SPEC.md §9 を参照。
+# =============================================================================
+
+function Invoke-MikkeScannerDownload {
+    param([Parameter(Mandatory = $true)][string[]]$Types)
+
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+    $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
+    $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
+    if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)' }
+
+    # ── TODO: 種別ごとに検査ツールからエクスポートを取得して Base64 で返す ──────
+    # $items = @()
+    # foreach ($t in $Types) {
+    #     # 種別 → 検査ツールのエンドポイント/エクスポート種別へのマッピングは環境依存。
+    #     $url = "$apiBase/export/$([uri]::EscapeDataString($t))"
+    #     Write-Host "[adapter] GET $url" -ForegroundColor DarkGray   # 秘密は出さない
+    #     $headers = @{ Authorization = "Bearer $apiKey" }
+    #     # バイナリで受けたい場合は Invoke-WebRequest を使い .Content (byte[]) を Base64 化する。
+    #     $resp  = Invoke-WebRequest -Uri $url -Headers $headers -Method Get -TimeoutSec 120
+    #     $bytes = $resp.Content
+    #     if ($bytes -is [string]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($bytes) }
+    #     $items += @{
+    #         type                = $t
+    #         fileName            = "$t.csv"
+    #         contentBase64       = [Convert]::ToBase64String($bytes)
+    #         scannerDownloadTime = (Get-Date).ToString('s')
+    #         itemCount           = 0
+    #     }
+    # }
+    # return @{ items = $items }
+    # ──────────────────────────────────────────────────────────────────────────
+
+    throw 'mikke-scanner-adapter: Invoke-MikkeScannerDownload は未実装です。example をコピーして実装してください。'
+}

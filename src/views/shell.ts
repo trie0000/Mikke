@@ -7,6 +7,7 @@ import { renderIssueList } from './issueList';
 import { renderIssueDetail } from './issueDetail';
 import { renderImportView } from './importView';
 import { renderAssetsView } from './assetsView';
+import { renderDownloadsView } from './downloadsView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { toast } from '../components/toast';
@@ -151,6 +152,8 @@ function paintMain(main: HTMLElement, root: HTMLElement): void {
     main.appendChild(renderImportView(root));
   } else if (s.view === 'assets') {
     main.appendChild(renderAssetsView(root));
+  } else if (s.view === 'downloads') {
+    main.appendChild(renderDownloadsView(root));
   }
 }
 
@@ -219,7 +222,7 @@ function renderSidebar(): HTMLElement {
   const item = (view: string, ic: string, label: string) =>
     el('div', {
       class: `mikke-nav-item${s.view === view ? ' is-active' : ''}`,
-      onclick: () => setState({ view: view as 'issues' | 'import' | 'assets', selectedIssueId: null }),
+      onclick: () => setState({ view: view as 'issues' | 'import' | 'assets' | 'downloads', selectedIssueId: null }),
     }, [el('span', { html: icon(ic) }), el('span', {}, [label])]);
 
   let buildId = '';
@@ -229,6 +232,7 @@ function renderSidebar(): HTMLElement {
     item('issues', 'list', '管理対象一覧'),
     item('import', 'upload', 'CSV 取込'),
     item('assets', 'building', '資産管理'),
+    item('downloads', 'download', 'ダウンロードデータ'),
     el('div', { class: 'mikke-side-foot' }, [
       el('div', {}, [`mode: ${getRepoMode()}`]),
       el('div', { style: 'margin-top:2px;word-break:break-all' }, [buildId]),

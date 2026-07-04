@@ -113,8 +113,33 @@ export interface MikkeSettings {
   assetColumn?: string;
   /** 資産管理: 資産 (FQDN/IP) が入っている列 (複数可。例: FQDN 列 + IP 列)。 */
   assetColumns?: string[];
+  /** ダウンロードデータ: SP ドキュメントライブラリ上の保存先フォルダ (サイト相対パス。
+   *  例: 'Shared Documents/MikkeDownloads')。取得時に日時サブフォルダを掘って zip を置く。 */
+  downloadFolder?: string;
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
+}
+
+/** 検査ツールから一括ダウンロードする対象の種別。 */
+export type DownloadType = 'vuln' | 'ip' | 'iprange' | 'domain' | 'cert' | 'webapps';
+
+/** ダウンロードデータ 1 件 (種別ごと)。SP リスト MikkeDownloads の 1 行。 */
+export interface DownloadRecord {
+  id: number;
+  /** 種別 (脆弱性 / IP / IP Range / Domain / Cert / WebAPPS)。 */
+  type: DownloadType;
+  /** Mikke が SP に保存した日時 (ISO。表では JST 表示)。 */
+  downloadedAt: string;
+  /** 検査ツール側でエクスポートされた日時 (アダプタが返す。ISO 文字列)。 */
+  scannerDownloadTime?: string;
+  /** 保存した zip のファイル名 (例: vuln.zip)。 */
+  fileName: string;
+  /** 保存先フォルダ (サイト相対。日時サブフォルダ込み)。 */
+  folder: string;
+  /** zip のサーバ相対 URL (ダウンロード/削除に使う)。 */
+  fileUrl: string;
+  /** 元データの件数 (任意・参考表示)。 */
+  itemCount?: number;
 }
 
 /** CSV 取込の差分サマリ。 */
@@ -207,4 +232,4 @@ export interface ChangeLogEntry {
 }
 
 /** メイン画面のビュー。 */
-export type ViewName = 'issues' | 'import' | 'assets';
+export type ViewName = 'issues' | 'import' | 'assets' | 'downloads';

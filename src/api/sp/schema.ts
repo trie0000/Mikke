@@ -18,6 +18,7 @@ export const LIST_IMPORTLOG = 'MikkeImportLog';
 export const LIST_ASSETS = 'MikkeAssets';
 export const LIST_HISTORY = 'MikkeHistory';
 export const LIST_CHANGELOG = 'MikkeChangeLog';
+export const LIST_DOWNLOADS = 'MikkeDownloads';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -120,6 +121,19 @@ export function changeLogFieldSpecs(): FieldSpec[] {
     { name: 'IssueInstanceId', type: 'Text', indexed: true },
     { name: 'ChangedAt', type: 'DateTime' },
     { name: 'ChangesJson', type: 'Note' },
+  ];
+}
+
+/** MikkeDownloads: 検査ツールから取得したデータ (種別ごとの zip) の記録。 */
+export function downloadFieldSpecs(): FieldSpec[] {
+  return [
+    { name: 'DlType', type: 'Text', indexed: true },
+    { name: 'DownloadedAt', type: 'DateTime', indexed: true },
+    { name: 'ScannerDownloadTime', type: 'Text' },
+    { name: 'FileName', type: 'Text' },
+    { name: 'Folder', type: 'Note' },
+    { name: 'FileUrl', type: 'Note' },
+    { name: 'ItemCount', type: 'Number' },
   ];
 }
 

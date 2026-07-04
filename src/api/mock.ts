@@ -1,7 +1,7 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord } from '../types';
 import type { ImportOp } from '../lib/import';
 
 const LS_ISSUES = 'mikke.mock.issues';
@@ -9,6 +9,8 @@ const LS_SETTINGS = 'mikke.mock.settings';
 const LS_ASSETS = 'mikke.mock.assets';
 const LS_HISTORY = 'mikke.mock.history';
 const LS_CHANGELOG = 'mikke.mock.changelog';
+const LS_DOWNLOADS = 'mikke.mock.downloads';
+const LS_DOCFILES = 'mikke.mock.docfiles';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -54,16 +56,19 @@ export class MockRepository implements Repository {
   private assets: ManagedAsset[];
   private history: ResponseHistory[];
   private changelog: ChangeLogEntry[];
+  private downloads: DownloadRecord[];
 
   constructor() {
     this.issues = load<ManagedIssue[]>(LS_ISSUES, seedIssues());
     this.assets = load<ManagedAsset[]>(LS_ASSETS, []);
     this.history = load<ResponseHistory[]>(LS_HISTORY, []);
     this.changelog = load<ChangeLogEntry[]>(LS_CHANGELOG, []);
+    this.downloads = load<DownloadRecord[]>(LS_DOWNLOADS, []);
     this.settings = load<MikkeSettings>(LS_SETTINGS, {
       managedColumns: ['Scan_Asset', 'Scan_CVE'],
       matchConditions: { combinator: 'OR', rules: [{ field: 'Severity', op: 'equals', value: 'Critical' }] },
       individualIds: [],
+      downloadFolder: 'Shared Documents/MikkeDownloads',
     });
   }
 
@@ -124,6 +129,46 @@ export class MockRepository implements Repository {
       rd.readAsDataURL(file);
     });
     return { url };
+  }
+
+  // ── ダウンロードデータ ────────────────────────────────────────────────────
+  async listDownloads(): Promise<DownloadRecord[]> {
+    return this.downloads
+      .slice()
+      .sort((a, b) => (b.downloadedAt ?? '').localeCompare(a.downloadedAt ?? ''))
+      .map((d) => ({ ...d }));
+  }
+  async createDownload(rec: Omit<DownloadRecord, 'id'>): Promise<number> {
+    const id = this.downloads.reduce((m, d) => Math.max(m, d.id), 0) + 1;
+    this.downloads.push({ ...rec, id });
+    save(LS_DOWNLOADS, this.downloads);
+    return id;
+  }
+  async deleteDownload(id: number): Promise<void> {
+    const idx = this.downloads.findIndex((d) => d.id === id);
+    if (idx >= 0) { this.downloads.splice(idx, 1); save(LS_DOWNLOADS, this.downloads); }
+  }
+  /** モックでは実 SP に置けないので data URL を localStorage に退避し、疑似 URL を返す。 */
+  async uploadDownloadFile(folder: string, fileName: string, data: Blob): Promise<{ url: string }> {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve(rd.result as string);
+      rd.onerror = () => reject(new Error('read failed'));
+      rd.readAsDataURL(data);
+    });
+    const url = `/${folder}/${fileName}`;
+    const store = load<Record<string, string>>(LS_DOCFILES, {});
+    store[url] = dataUrl;
+    save(LS_DOCFILES, store);
+    return { url };
+  }
+  async deleteDocFile(serverRelativeUrl: string): Promise<void> {
+    const store = load<Record<string, string>>(LS_DOCFILES, {});
+    if (store[serverRelativeUrl]) { delete store[serverRelativeUrl]; save(LS_DOCFILES, store); }
+  }
+  async docFileHref(serverRelativeUrl: string): Promise<string> {
+    const store = load<Record<string, string>>(LS_DOCFILES, {});
+    return store[serverRelativeUrl] ?? '';
   }
 
   // ── 対応履歴 ──────────────────────────────────────────────────────────────

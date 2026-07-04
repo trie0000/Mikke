@@ -2,12 +2,12 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason, DownloadRecord, DownloadType } from '../types';
 import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
-  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG,
-  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs,
+  LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG, LIST_DOWNLOADS,
+  managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs, downloadFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { getSelectedSiteUrl } from '../utils/spSites';
@@ -92,6 +92,7 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_ASSETS, assetFieldSpecs());
     await this.ensureList(LIST_HISTORY, historyFieldSpecs());
     await this.ensureList(LIST_CHANGELOG, changeLogFieldSpecs());
+    await this.ensureList(LIST_DOWNLOADS, downloadFieldSpecs());
   }
 
   private async ensureList(title: string, fields: FieldSpec[]): Promise<void> {
@@ -450,6 +451,106 @@ export class SpRepository implements Repository {
     const j = await r.json();
     const rel: string = j.d?.ServerRelativeUrl ?? '';
     return { url: rel ? location.origin + rel : '' };
+  }
+
+  // ── ダウンロードデータ — MikkeDownloads + ドキュメントライブラリ ─────────────
+  async listDownloads(): Promise<DownloadRecord[]> {
+    const out: DownloadRecord[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_DOWNLOADS}')/items?$top=5000&$orderby=DownloadedAt desc`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const row of j.d.results) out.push(this.rowToDownload(row));
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+
+  async createDownload(rec: Omit<DownloadRecord, 'id'>): Promise<number> {
+    const r = await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_DOWNLOADS}')/items`,
+      { __metadata: { type: 'SP.Data.MikkeDownloadsListItem' }, ...this.downloadToRow(rec) },
+    );
+    const j = await r.json();
+    return j.d.Id as number;
+  }
+
+  async deleteDownload(id: number): Promise<void> {
+    await this.spPost(
+      `/_api/web/lists/getbytitle('${LIST_DOWNLOADS}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+
+  /** サイト相対フォルダを 1 階層ずつ ensure しながら掘る (無ければ作成)。 */
+  private async ensureFolderPath(siteRelFolder: string): Promise<string> {
+    const webRel = new URL(this.webUrl).pathname.replace(/\/$/, ''); // 例: /sites/xxx
+    let cur = webRel;
+    for (const seg of siteRelFolder.split('/').map((s) => s.trim()).filter(Boolean)) {
+      cur = `${cur}/${seg}`;
+      try {
+        await this.spGet(`/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(cur)}')?$select=Exists`);
+      } catch {
+        await this.spPost(`/_api/web/folders`, { __metadata: { type: 'SP.Folder' }, ServerRelativeUrl: cur });
+      }
+    }
+    return cur; // サーバ相対の最終フォルダ
+  }
+
+  async uploadDownloadFile(folder: string, fileName: string, data: Blob): Promise<{ url: string }> {
+    const serverRelFolder = await this.ensureFolderPath(folder);
+    const digest = await this.getDigest();
+    const buf = await data.arrayBuffer();
+    const addUrl =
+      `/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(serverRelFolder)}')`
+      + `/Files/add(overwrite=true,url='${encodeURIComponent(fileName)}')`;
+    const r = await fetch(`${this.webUrl}${addUrl}`, {
+      method: 'POST',
+      headers: { Accept: V, 'X-RequestDigest': digest },
+      credentials: 'same-origin',
+      body: buf,
+    });
+    if (!r.ok) throw new Error(`file add: HTTP ${r.status}`);
+    const j = await r.json();
+    const rel: string = j.d?.ServerRelativeUrl ?? `${serverRelFolder}/${fileName}`;
+    return { url: rel };
+  }
+
+  async deleteDocFile(serverRelativeUrl: string): Promise<void> {
+    await this.spPost(
+      `/_api/web/GetFileByServerRelativeUrl('${encodeURIComponent(serverRelativeUrl)}')`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
+    );
+  }
+
+  async docFileHref(serverRelativeUrl: string): Promise<string> {
+    // サーバ相対 URL を同一オリジンの絶対 URL に。空白等はパス単位でエンコード。
+    return location.origin + serverRelativeUrl.split('/').map((s) => encodeURIComponent(s)).join('/');
+  }
+
+  private rowToDownload(row: any): DownloadRecord {
+    return {
+      id: row.Id,
+      type: (row.DlType ?? 'vuln') as DownloadType,
+      downloadedAt: row.DownloadedAt ?? '',
+      scannerDownloadTime: row.ScannerDownloadTime ?? undefined,
+      fileName: row.FileName ?? '',
+      folder: row.Folder ?? '',
+      fileUrl: row.FileUrl ?? '',
+      itemCount: typeof row.ItemCount === 'number' ? row.ItemCount : undefined,
+    };
+  }
+
+  private downloadToRow(p: Partial<DownloadRecord>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (p.type !== undefined) { row.Title = p.fileName ?? p.type; row.DlType = p.type; }
+    if (p.downloadedAt !== undefined) row.DownloadedAt = p.downloadedAt || null;
+    if (p.scannerDownloadTime !== undefined) row.ScannerDownloadTime = p.scannerDownloadTime;
+    if (p.fileName !== undefined) row.FileName = p.fileName;
+    if (p.folder !== undefined) row.Folder = p.folder;
+    if (p.fileUrl !== undefined) row.FileUrl = p.fileUrl;
+    if (p.itemCount !== undefined) row.ItemCount = p.itemCount;
+    return row;
   }
 
   // ── 対応履歴 — MikkeHistory ────────────────────────────────────────────────

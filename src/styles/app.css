@@ -318,6 +318,14 @@
 /* テーブルセル内の 特定根拠 / 備考 プレビュー (画像は小さめ) */
 #mikke-root .mikke-cell-rich img { max-height: 2.4em; width: auto; vertical-align: middle; border-radius: var(--r-1); }
 
+/* ---------- ダウンロード取得: 対象選択 ---------- */
+#mikke-root .mikke-dl-picks { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2) var(--s-5); }
+#mikke-root .mikke-dl-pick {
+  display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) 0;
+  cursor: pointer; user-select: none; font-size: var(--fs-md); color: var(--ink);
+}
+#mikke-root .mikke-dl-pick input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+
 /* ---------- empty / loading / error ---------- */
 #mikke-root .mikke-empty { text-align: center; padding: var(--s-10); color: var(--ink-3); }
 #mikke-root .mikke-empty-title { font-size: var(--fs-lg); color: var(--ink-2); margin-bottom: var(--s-3); }
