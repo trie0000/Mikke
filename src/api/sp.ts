@@ -14,6 +14,15 @@ import { getSelectedSiteUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
 
+/** 旧「特定理由」列 (IdentifyReason) を「特定根拠」(IdentifyEvidence) に畳み込む。
+ *  新スキーマでは理由列は廃止。旧データが残っていれば根拠の先頭に併記する。 */
+function mergeLegacyEvidence(reason: unknown, evidence: unknown): string | undefined {
+  const r = typeof reason === 'string' ? reason.trim() : '';
+  const e = typeof evidence === 'string' ? evidence.trim() : '';
+  if (r && e) return e.includes(r) ? e : `${r}: ${e}`;
+  return (e || r) || undefined;
+}
+
 export class SpRepository implements Repository {
   private webUrl: string;
   private digest = '';
@@ -421,6 +430,28 @@ export class SpRepository implements Repository {
     );
   }
 
+  /** 資産の 特定根拠 / 備考 に貼り付けた画像を MikkeAssets の添付ファイルとして
+   *  アップロードし、絶対 URL を返す (base64 インライン肥大化を避ける)。 */
+  async uploadAssetImage(assetId: number, file: File): Promise<{ url: string }> {
+    const digest = await this.getDigest();
+    const name = file.name.replace(/[^\w.\-]/g, '_');
+    const buf = await file.arrayBuffer();
+    const r = await fetch(
+      `${this.webUrl}/_api/web/lists/getbytitle('${LIST_ASSETS}')`
+      + `/items(${assetId})/AttachmentFiles/add(FileName='${encodeURIComponent(name)}')`,
+      {
+        method: 'POST',
+        headers: { Accept: V, 'X-RequestDigest': digest },
+        credentials: 'same-origin',
+        body: buf,
+      },
+    );
+    if (!r.ok) throw new Error(`attachment add: HTTP ${r.status}`);
+    const j = await r.json();
+    const rel: string = j.d?.ServerRelativeUrl ?? '';
+    return { url: rel ? location.origin + rel : '' };
+  }
+
   // ── 対応履歴 — MikkeHistory ────────────────────────────────────────────────
   async listHistory(issueInstanceId: string): Promise<ResponseHistory[]> {
     const q = `IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'`;
@@ -534,8 +565,9 @@ export class SpRepository implements Repository {
       businessCompany: row.BusinessCompany ?? undefined,
       affiliateCompany: row.AffiliateCompany ?? undefined,
       mgmtNumber: row.MgmtNumber ?? undefined,
-      identifyReason: row.IdentifyReason ?? undefined,
-      identifyEvidence: row.IdentifyEvidence ?? undefined,
+      // 旧 IdentifyReason は 特定根拠 に統合。旧データがあれば根拠の頭に畳み込む。
+      identifyEvidence: mergeLegacyEvidence(row.IdentifyReason, row.IdentifyEvidence),
+      remarks: row.Remarks ?? undefined,
       updatedAt: row.UpdatedAt ?? undefined,
     };
   }
@@ -547,8 +579,8 @@ export class SpRepository implements Repository {
     if (p.businessCompany !== undefined) row.BusinessCompany = p.businessCompany;
     if (p.affiliateCompany !== undefined) row.AffiliateCompany = p.affiliateCompany;
     if (p.mgmtNumber !== undefined) row.MgmtNumber = p.mgmtNumber;
-    if (p.identifyReason !== undefined) row.IdentifyReason = p.identifyReason;
     if (p.identifyEvidence !== undefined) row.IdentifyEvidence = p.identifyEvidence;
+    if (p.remarks !== undefined) row.Remarks = p.remarks;
     // DateTime 列は空文字だと SP が 400 → クリアは null で送る
     if (p.updatedAt !== undefined) row.UpdatedAt = p.updatedAt || null;
     return row;

@@ -93,8 +93,8 @@ export function assetFieldSpecs(): FieldSpec[] {
     { name: 'BusinessCompany', type: 'Text' },
     { name: 'AffiliateCompany', type: 'Text' },
     { name: 'MgmtNumber', type: 'Text', indexed: true },
-    { name: 'IdentifyReason', type: 'Note' },
     { name: 'IdentifyEvidence', type: 'Note' },
+    { name: 'Remarks', type: 'Note' },
     { name: 'UpdatedAt', type: 'DateTime' },
   ];
 }

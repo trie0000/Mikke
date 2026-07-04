@@ -300,6 +300,24 @@
 }
 #mikke-root .mikke-field textarea { min-height: 80px; resize: vertical; }
 
+/* ---------- 画像貼付エディタ (特定根拠 / 備考) ---------- */
+#mikke-root .mikke-imgedit {
+  width: 100%; min-height: 80px; padding: var(--s-3);
+  border: 1px solid var(--line-strong); border-radius: var(--r-2);
+  background: var(--paper); color: var(--ink);
+  font-family: var(--font-sans); font-size: var(--fs-md); line-height: 1.6;
+  overflow-y: auto; max-height: 320px; outline: none;
+}
+#mikke-root .mikke-imgedit:focus { border-color: var(--accent); }
+#mikke-root .mikke-imgedit:empty::before {
+  content: attr(data-placeholder); color: var(--ink-4); pointer-events: none;
+}
+#mikke-root .mikke-imgedit img { max-width: 100%; height: auto; border-radius: var(--r-1); margin: var(--s-1) 0; }
+#mikke-root .mikke-imgedit.is-drop { border-color: var(--accent); background: rgba(123,151,196,0.08); }
+#mikke-root .mikke-imgedit-hint { margin-top: var(--s-1); font-size: var(--fs-sm); color: var(--ink-4); }
+/* テーブルセル内の 特定根拠 / 備考 プレビュー (画像は小さめ) */
+#mikke-root .mikke-cell-rich img { max-height: 2.4em; width: auto; vertical-align: middle; border-radius: var(--r-1); }
+
 /* ---------- empty / loading / error ---------- */
 #mikke-root .mikke-empty { text-align: center; padding: var(--s-10); color: var(--ink-3); }
 #mikke-root .mikke-empty-title { font-size: var(--fs-lg); color: var(--ink-2); margin-bottom: var(--s-3); }

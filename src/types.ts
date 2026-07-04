@@ -146,10 +146,10 @@ export interface ManagedAsset {
   affiliateCompany?: string;
   /** Web 資産管理番号 (両 CSV の「管理番号」)。 */
   mgmtNumber?: string;
-  /** 特定理由 (CSV 突合 / 手動 等)。 */
-  identifyReason?: string;
-  /** 特定根拠 (どの情報から特定したか)。 */
+  /** 特定根拠 (どの情報から特定したか。旧「特定理由」を統合)。画像貼付可の HTML。 */
   identifyEvidence?: string;
+  /** 備考 (自由記入)。画像貼付可の HTML。 */
+  remarks?: string;
   /** 最終更新日時 (ISO)。 */
   updatedAt?: string;
 }

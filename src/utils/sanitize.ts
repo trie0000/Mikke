@@ -28,6 +28,19 @@ export function sanitizeNoteHtml(input: string): string {
   });
 }
 
+/** 資産の 特定根拠 / 備考 用。上記に加えて貼り付け画像 (<img>) を許可する。
+ *  src は data: (貼付直後のプレビュー) と http(s): (添付アップロード後) を許容。 */
+export function sanitizeAssetHtml(input: string): string {
+  return DOMPurify.sanitize(input, {
+    ALLOWED_TAGS: [...ALLOWED_TAGS, 'img'],
+    ALLOWED_ATTR: [...ALLOWED_ATTR, 'src', 'alt', 'width', 'height', 'style'],
+    ALLOW_DATA_ATTR: false,
+    ADD_URI_SAFE_ATTR: ['src'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|data):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'meta', 'link', 'style'],
+  });
+}
+
 /** プレーンテキストを HTML エスケープ。 */
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => (

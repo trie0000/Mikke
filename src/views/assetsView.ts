@@ -1,7 +1,7 @@
 // 資産管理ビュー: 脆弱性に該当した資産 (FQDN/IP 単位) の管理部門リスト。
 //   - 「脆弱性から資産を抽出」で ManagedIssues の資産列からユニーク資産を登録
 //   - 「管理部門CSVを取込」で社内の資産管理部門リスト (基本情報 + サイトURL情報)
-//     を突合し、事業会社 / 関連会社 / Web資産管理番号 / 特定理由 / 特定根拠 を更新
+//     を突合し、事業会社 / 関連会社 / Web資産管理番号 / 特定根拠 を更新
 //   - 行クリックで編集モーダル (手動記入も可能)
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
@@ -14,17 +14,34 @@ import {
 } from '../lib/assets';
 import { toCsv, buildXlsxBlob, parseSpreadsheetFile, downloadFile, type Sheet } from '../lib/xlsx';
 import { DataTable, type DataColumn } from './dataTable';
+import { createImageEditor } from '../components/imageEditor';
+import { sanitizeAssetHtml } from '../utils/sanitize';
 import type { ManagedAsset, ManagedIssue, MikkeSettings } from '../types';
 
+/** リッチ HTML (特定根拠 / 備考) からプレーンテキストを抽出 (フィルタ/ソート/CSV 用)。 */
+function plainText(html?: string): string {
+  if (!html) return '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** リッチ HTML をテーブルセル用に描画 (画像は縮小表示)。 */
+function richCell(html?: string): HTMLElement {
+  const d = document.createElement('div');
+  d.className = 'mikke-cell-rich';
+  d.innerHTML = sanitizeAssetHtml(html ?? '');
+  return d;
+}
+
 /** エクスポート/インポートの列 (ヘッダ = 表示名)。 */
-const EXPORT_HEADERS = ['資産', '種別', '事業会社', '関連会社', '管理番号', '特定理由', '特定根拠', '脆弱性件数', '更新日時'];
+const EXPORT_HEADERS = ['資産', '種別', '事業会社', '関連会社', '管理番号', '特定根拠', '備考', '脆弱性件数', '更新日時'];
 /** ヘッダ名 → ManagedAsset の編集可能フィールド。インポート時の取込対象。 */
-const IMPORT_FIELDS: { header: string; field: 'businessCompany' | 'affiliateCompany' | 'mgmtNumber' | 'identifyReason' | 'identifyEvidence' }[] = [
+const IMPORT_FIELDS: { header: string; field: 'businessCompany' | 'affiliateCompany' | 'mgmtNumber' | 'identifyEvidence' | 'remarks' }[] = [
   { header: '事業会社', field: 'businessCompany' },
   { header: '関連会社', field: 'affiliateCompany' },
   { header: '管理番号', field: 'mgmtNumber' },
-  { header: '特定理由', field: 'identifyReason' },
   { header: '特定根拠', field: 'identifyEvidence' },
+  { header: '備考', field: 'remarks' },
 ];
 const normHeader = (h: string): string => (h ?? '').replace(/[\s　]+/g, '');
 
@@ -74,7 +91,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       { id: 'businessCompany', label: '事業会社', width: 140, text: (a) => a.businessCompany ?? '' },
       { id: 'affiliateCompany', label: '関連会社', width: 140, text: (a) => a.affiliateCompany ?? '' },
       { id: 'mgmtNumber', label: '管理番号', width: 120, text: (a) => a.mgmtNumber ?? '' },
-      { id: 'identifyReason', label: '特定理由', width: 180, text: (a) => a.identifyReason ?? '', cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
+      { id: 'identifyEvidence', label: '特定根拠', width: 200, text: (a) => plainText(a.identifyEvidence), render: (a) => richCell(a.identifyEvidence), cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
+      { id: 'remarks', label: '備考', width: 160, text: (a) => plainText(a.remarks), render: (a) => richCell(a.remarks), cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
       { id: 'vulns', label: '脆弱性', width: 72, text: (a) => String(issueCounts[a.assetKey] ?? 0), sortValue: (a) => issueCounts[a.assetKey] ?? 0 },
       { id: 'updatedAt', label: '更新', width: 150, text: (a) => fmtDate(a.updatedAt) || '', sortValue: (a) => a.updatedAt ?? '', cellStyle: 'color:var(--ink-3);font-size:var(--fs-sm)' },
     ];
@@ -122,7 +140,7 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
             await getRepo().createAsset({
               assetKey: key, assetType: assetTypeOf(key),
               businessCompany: a.businessCompany, affiliateCompany: a.affiliateCompany,
-              mgmtNumber: a.mgmtNumber, identifyReason: a.identifyReason, identifyEvidence: a.identifyEvidence,
+              mgmtNumber: a.mgmtNumber, identifyEvidence: a.identifyEvidence, remarks: a.remarks,
               updatedAt: new Date().toISOString(),
             });
             added++;
@@ -139,7 +157,7 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     const byKey = new Map<string, ManagedAsset[]>();
     for (const a of assets) { const g = byKey.get(a.assetKey) ?? []; g.push(a); byKey.set(a.assetKey, g); }
     const infoScore = (a: ManagedAsset): number =>
-      [a.businessCompany, a.affiliateCompany, a.mgmtNumber, a.identifyReason, a.identifyEvidence].filter((v) => (v ?? '').trim()).length;
+      [a.businessCompany, a.affiliateCompany, a.mgmtNumber, a.identifyEvidence, a.remarks].filter((v) => (v ?? '').trim()).length;
     let dupRemoved = 0;
     for (const group of byKey.values()) {
       if (group.length < 2) continue;
@@ -281,8 +299,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       '事業会社': a.businessCompany ?? '',
       '関連会社': a.affiliateCompany ?? '',
       '管理番号': a.mgmtNumber ?? '',
-      '特定理由': a.identifyReason ?? '',
-      '特定根拠': a.identifyEvidence ?? '',
+      '特定根拠': plainText(a.identifyEvidence),
+      '備考': plainText(a.remarks),
       '脆弱性件数': String(issueCounts[a.assetKey] ?? 0),
       '更新日時': a.updatedAt ?? '',
     };
@@ -620,25 +638,25 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
 
   /** 突合プレビュー → 確定で更新。 */
   function openMatchPreview(plan: ReturnType<typeof matchAssets>, dirSize: number): void {
-    const propagatedCount = plan.filter((p) => p.patch.identifyReason === '同一脆弱性の関連資産から特定').length;
+    const propagatedCount = plan.filter((p) => p.via === 'propagated').length;
     const thead = el('thead', {}, [el('tr', {}, [
-      el('th', {}, ['資産']), el('th', {}, ['種別']), el('th', {}, ['管理番号']), el('th', {}, ['事業会社']), el('th', {}, ['関連会社']), el('th', {}, ['特定理由']),
+      el('th', {}, ['資産']), el('th', {}, ['種別']), el('th', {}, ['管理番号']), el('th', {}, ['事業会社']), el('th', {}, ['関連会社']), el('th', {}, ['特定']),
     ])]);
-    const tbody = el('tbody', {}, plan.slice(0, 100).map(({ asset, patch }) => el('tr', {}, [
+    const tbody = el('tbody', {}, plan.slice(0, 100).map(({ asset, patch, via }) => el('tr', {}, [
       el('td', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm)' }, [asset.assetKey]),
       el('td', {}, [asset.assetType]),
       el('td', {}, [patch.mgmtNumber ?? '—']),
       el('td', {}, [patch.businessCompany || '—']),
       el('td', {}, [patch.affiliateCompany || '—']),
       el('td', { style: 'font-size:var(--fs-sm);color:var(--ink-3)' }, [
-        patch.identifyReason === '同一脆弱性の関連資産から特定' ? '関連資産から伝播' : '直接一致',
+        via === 'propagated' ? '関連資産から伝播' : '直接一致',
       ]),
     ])));
     const body = el('div', {}, [
       el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7' }, [
         `部門リスト側 ${dirSize} FQDN と突合し、${plan.length} 件の資産を更新します`,
         propagatedCount ? `（うち ${propagatedCount} 件は同一脆弱性の関連資産からの伝播）` : '',
-        '。特定理由・根拠 (一致した FQDN / 管理番号、または伝播元の脆弱性と資産) を記録します。',
+        '。特定根拠 (一致した FQDN / 管理番号、または伝播元の脆弱性と資産) を記録します。',
       ]),
       el('div', { class: 'mikke-table-wrap', style: 'padding:0;max-height:320px' }, [
         el('table', { class: 'mikke-table' }, [thead, tbody]),
@@ -668,10 +686,17 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
     const biz = el('input', { type: 'text', value: a.businessCompany ?? '' }) as HTMLInputElement;
     const aff = el('input', { type: 'text', value: a.affiliateCompany ?? '' }) as HTMLInputElement;
     const num = el('input', { type: 'text', value: a.mgmtNumber ?? '' }) as HTMLInputElement;
-    const reason = el('textarea', { style: 'min-height:60px' }, [a.identifyReason ?? '']) as HTMLTextAreaElement;
-    const evidence = el('textarea', { style: 'min-height:80px' }, [a.identifyEvidence ?? '']) as HTMLTextAreaElement;
+    const evidence = createImageEditor('特定根拠 (画像を貼り付け / ドラッグできます)');
+    evidence.setHtml(a.identifyEvidence ?? '');
+    const remarks = createImageEditor('備考 (画像を貼り付け / ドラッグできます)');
+    remarks.setHtml(a.remarks ?? '');
     const field = (label: string, control: HTMLElement) =>
       el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, [label]), control]);
+    const richField = (label: string, ed: HTMLElement) =>
+      el('div', { class: 'mikke-field' }, [
+        el('label', { class: 'mikke-field-label' }, [label]), ed,
+        el('div', { class: 'mikke-imgedit-hint' }, ['画像は貼り付け / ドラッグで挿入できます。']),
+      ]);
     const body = el('div', {}, [
       el('div', { class: 'mikke-field' }, [
         el('label', { class: 'mikke-field-label' }, ['資産 (変更不可)']),
@@ -680,8 +705,8 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       field('事業会社', biz),
       field('関連会社', aff),
       field('Web資産管理番号', num),
-      field('特定理由', reason),
-      field('特定根拠', evidence),
+      richField('特定根拠', evidence.root),
+      richField('備考', remarks.root),
     ]);
     const handle = openModal(rootEl, {
       title: `資産の管理情報 — ${a.assetKey}`,
@@ -711,12 +736,17 @@ export function renderAssetsView(rootEl: HTMLElement): HTMLElement {
       ],
       onPrimary: async () => {
         try {
+          // 貼り付け画像を添付にアップロードしてから HTML を確定 (data: URL 肥大化回避)。
+          const [evidenceHtml, remarksHtml] = await Promise.all([
+            evidence.getFinalHtml(a.id),
+            remarks.getFinalHtml(a.id),
+          ]);
           await getRepo().updateAsset(a.id, {
             businessCompany: biz.value.trim(),
             affiliateCompany: aff.value.trim(),
             mgmtNumber: num.value.trim(),
-            identifyReason: reason.value.trim(),
-            identifyEvidence: evidence.value.trim(),
+            identifyEvidence: evidenceHtml,
+            remarks: remarksHtml,
             updatedAt: new Date().toISOString(),
           });
         } catch (e) {

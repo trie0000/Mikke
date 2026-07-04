@@ -172,6 +172,8 @@ export function buildAssetDirectory(baseInfo: ParsedCsv, siteUrl: ParsedCsv): Ma
 export interface AssetMatch {
   asset: ManagedAsset;
   patch: Partial<ManagedAsset>;
+  /** 特定の仕方 (プレビュー表示用。永続化しない)。 */
+  via: 'direct' | 'propagated';
 }
 
 /**
@@ -213,25 +215,26 @@ export function matchAssets(
   const out: AssetMatch[] = [];
   for (const a of assets) {
     let patch: Partial<ManagedAsset> | null = null;
+    let via: 'direct' | 'propagated' = 'direct';
     const hit = direct.get(a.assetKey);
     if (hit) {
       patch = {
         mgmtNumber: hit.mgmtNumber,
         businessCompany: hit.businessCompany,
         affiliateCompany: hit.affiliateCompany,
-        identifyReason: '資産管理部門リスト CSV 突合',
-        identifyEvidence: hit.evidence,
+        // 特定理由は「特定根拠」に統合 (先頭に理由、続けて根拠を併記)。
+        identifyEvidence: `資産管理部門リスト CSV 突合: ${hit.evidence}`,
         updatedAt: nowIso,
       };
     } else {
       const p = propagated.get(a.assetKey);
       if (p) {
+        via = 'propagated';
         patch = {
           mgmtNumber: p.entry.mgmtNumber,
           businessCompany: p.entry.businessCompany,
           affiliateCompany: p.entry.affiliateCompany,
-          identifyReason: '同一脆弱性の関連資産から特定',
-          identifyEvidence: `同一脆弱性(${p.iid})で検出された ${p.viaKey}`
+          identifyEvidence: `同一脆弱性の関連資産から特定: 同一脆弱性(${p.iid})で検出された ${p.viaKey}`
             + (p.entry.mgmtNumber ? ` (管理番号 ${p.entry.mgmtNumber})` : '')
             + ' と同一資産群のため',
           updatedAt: nowIso,
@@ -242,7 +245,7 @@ export function matchAssets(
     // 変化が無ければスキップ (無駄な書き込みをしない)
     const changed = (['mgmtNumber', 'businessCompany', 'affiliateCompany'] as const)
       .some((k) => (a[k] ?? '') !== (patch![k] ?? ''));
-    if (changed) out.push({ asset: a, patch });
+    if (changed) out.push({ asset: a, patch, via });
   }
   return out;
 }

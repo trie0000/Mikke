@@ -142,9 +142,12 @@ describe('matchAssets', () => {
     expect(plan[0]!.asset.id).toBe(1);
     expect(plan[0]!.patch).toMatchObject({
       mgmtNumber: 'W-0001', businessCompany: 'エナジー事業',
-      affiliateCompany: 'ABC株式会社', identifyReason: '資産管理部門リスト CSV 突合',
+      affiliateCompany: 'ABC株式会社',
       updatedAt: now,
     });
+    expect(plan[0]!.via).toBe('direct');
+    // 特定理由は特定根拠に統合され、先頭に併記される
+    expect(plan[0]!.patch.identifyEvidence).toContain('資産管理部門リスト CSV 突合');
     expect(plan[0]!.patch.identifyEvidence).toContain('www.example.com');
     expect(plan[0]!.patch.identifyEvidence).toContain('W-0001');
   });
@@ -167,12 +170,13 @@ describe('matchAssets', () => {
     const plan = matchAssets(assets, dir, now, groups);
     const byId = Object.fromEntries(plan.map((p) => [p.asset.id, p]));
     // 直接一致
-    expect(byId[1]!.patch.identifyReason).toBe('資産管理部門リスト CSV 突合');
+    expect(byId[1]!.via).toBe('direct');
     // 伝播: 10.0.0.1 は www.example.com の会社/番号を引き継ぐ
     expect(byId[2]!.patch).toMatchObject({
       mgmtNumber: 'W-0001', businessCompany: 'エナジー事業', affiliateCompany: 'ABC株式会社',
-      identifyReason: '同一脆弱性の関連資産から特定',
     });
+    expect(byId[2]!.via).toBe('propagated');
+    expect(byId[2]!.patch.identifyEvidence).toContain('同一脆弱性の関連資産から特定');
     expect(byId[2]!.patch.identifyEvidence).toContain('i-1');
     expect(byId[2]!.patch.identifyEvidence).toContain('www.example.com');
     // 無関係の 10.0.0.9 は対象外
@@ -189,6 +193,6 @@ describe('matchAssets', () => {
     // 両者とも自分自身の直接一致が優先される
     expect(byId[1]!.patch.mgmtNumber).toBe('W-0001');
     expect(byId[2]!.patch.mgmtNumber).toBe('W-0002');
-    expect(byId[2]!.patch.identifyReason).toBe('資産管理部門リスト CSV 突合');
+    expect(byId[2]!.via).toBe('direct');
   });
 });

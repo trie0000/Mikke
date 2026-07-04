@@ -114,6 +114,18 @@ export class MockRepository implements Repository {
     if (idx >= 0) { this.assets.splice(idx, 1); save(LS_ASSETS, this.assets); }
   }
 
+  /** モックでは添付をアップロードできないので、貼り付け画像は data URL のまま
+   *  インライン保持する (= dev では base64 が localStorage に入る)。 */
+  async uploadAssetImage(_assetId: number, file: File): Promise<{ url: string }> {
+    const url = await new Promise<string>((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve(rd.result as string);
+      rd.onerror = () => reject(new Error('read failed'));
+      rd.readAsDataURL(file);
+    });
+    return { url };
+  }
+
   // ── 対応履歴 ──────────────────────────────────────────────────────────────
   async listHistory(issueInstanceId: string): Promise<ResponseHistory[]> {
     return this.history.filter((h) => h.issueInstanceId === issueInstanceId).map((h) => ({ ...h }));

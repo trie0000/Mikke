@@ -45,6 +45,8 @@ export interface Repository {
   createAsset(asset: Omit<ManagedAsset, 'id'>): Promise<number>;
   updateAsset(id: number, patch: Partial<ManagedAsset>): Promise<void>;
   deleteAsset(id: number): Promise<void>;
+  /** 資産の 特定根拠 / 備考 に貼り付けた画像を添付ファイル化し、絶対 URL を返す。 */
+  uploadAssetImage(assetId: number, file: File): Promise<{ url: string }>;
 }
 
 /** 取込履歴の 1 レコード。 */
