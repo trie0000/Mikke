@@ -1,4 +1,4 @@
-// 設定ハブ (Spira 準拠の master-detail モーダル)。右上の歯車から開く。
+// 設定ハブ (既存の内製ツール準拠の master-detail モーダル)。右上の歯車から開く。
 // 大分類: 個人設定 / 共通設定 / その他。左ナビ + 右詳細 + 右下に単一保存ボタン。
 import { el, clear } from '../utils/dom';
 import { openModal } from '../components/modal';

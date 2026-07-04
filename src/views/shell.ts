@@ -1,4 +1,4 @@
-// シェル: topbar + sidebar + main。Spira のレイアウトを踏襲。
+// シェル: topbar + sidebar + main。既存の内製ツールのレイアウトを踏襲。
 import { el, clear } from '../utils/dom';
 import { icon, brandMark } from '../icons';
 import { getState, setState, subscribe } from '../state';

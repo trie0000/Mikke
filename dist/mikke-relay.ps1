@@ -12,12 +12,12 @@
 #
 # 動作環境:
 #   - Windows PowerShell 5.1 以上 / PowerShell 7+ どちらでも動く。
-#     委託先 PC は Windows 標準の 5.1 で起動する想定 (Spira relay と同じ)。
+#     委託先 PC は Windows 標準の 5.1 で起動する想定 (既存の内製ツールの relay と同じ)。
 #     .bat は `powershell.exe` を呼ぶ (= 5.1)。開発時の mac は pwsh(7) で検証。
 #   - 7 専用構文 (?. / ?? / 三項 ?: / ConvertFrom-Json -AsHashtable) は不使用。
 #   - HttpListener が 127.0.0.1 で listen するので管理者権限は不要。Python 不要。
 #   - ★ CSV/JSON の文字コード: 5.1 既定は CP932。本実装で CSV を読む際は
-#     -Encoding を明示し、出力 JSON は UTF-8 で書き出すこと (Spira 踏襲)。
+#     -Encoding を明示し、出力 JSON は UTF-8 で書き出すこと (既存の内製ツール踏襲)。
 # ============================================================================
 param(
     # 0 = 未指定。優先順位 = -Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18080。

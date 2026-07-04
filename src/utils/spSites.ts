@@ -1,4 +1,4 @@
-// 選択した SP サイト URL の永続化 (Spira 同方式)。
+// 選択した SP サイト URL の永続化 (既存の内製ツールと同方式)。
 // 初回はサイト選択モーダルで決定し、2 回目以降は localStorage から継続。
 
 const KEY = 'mikke.selectedSiteUrl';

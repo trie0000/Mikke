@@ -39,10 +39,10 @@ export function icon(name: keyof typeof ICONS | string, className = ''): string 
   return className ? svg.replace('<svg ', `<svg class="${className}" `) : svg;
 }
 
-/** ブランドマーク「N」(Spira 踏襲、色は淡いブルー = currentColor で継承)。
+/** ブランドマーク「N」(既存の内製ツール踏襲、色は淡いブルー = currentColor で継承)。
  *  topbar / favicon / install ページで共通利用。作者・自作ツールの識別子。 */
 export function brandMark(className = ''): string {
-  // Spira の「N」マークを踏襲した角丸スクエア + N グリフ。fill=currentColor で
+  // 既存の内製ツールの「N」マークを踏襲した角丸スクエア + N グリフ。fill=currentColor で
   // アクセント色 (淡いブルー) を継承する。
   const svg =
     `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">` +
