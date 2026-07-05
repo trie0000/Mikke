@@ -10,17 +10,16 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
 import { relayDownloadFromScanner, type RelayDownloadItem } from '../api/relay';
-import { zipFiles } from '../lib/zip';
 import type { DownloadRecord, DownloadType } from '../types';
 
-/** 種別のメタ (表示名・既定ファイル名・並び順)。 */
-const TYPE_META: { type: DownloadType; label: string; file: string }[] = [
-  { type: 'vuln', label: '脆弱性', file: 'vulnerabilities.csv' },
-  { type: 'ip', label: 'IP', file: 'ip.csv' },
-  { type: 'iprange', label: 'IP Range', file: 'ip-range.csv' },
-  { type: 'domain', label: 'Domain', file: 'domain.csv' },
-  { type: 'cert', label: 'Cert', file: 'cert.csv' },
-  { type: 'webapps', label: 'WebAPPS', file: 'webapps.csv' },
+/** 種別のメタ (表示名・並び順)。 */
+const TYPE_META: { type: DownloadType; label: string }[] = [
+  { type: 'vuln', label: '脆弱性' },
+  { type: 'ip', label: 'IP' },
+  { type: 'iprange', label: 'IP Range' },
+  { type: 'domain', label: 'Domain' },
+  { type: 'cert', label: 'Cert' },
+  { type: 'webapps', label: 'WebAPPS' },
 ];
 const LABEL_OF: Record<string, string> = Object.fromEntries(TYPE_META.map((m) => [m.type, m.label]));
 
@@ -67,11 +66,11 @@ function sampleItems(types: DownloadType[]): RelayDownloadItem[] {
   const enc = new TextEncoder();
   const nowIso = new Date().toISOString();
   return types.map((t) => {
-    const meta = TYPE_META.find((m) => m.type === t)!;
     const csv = `type,sample\n${t},row-1\n${t},row-2\n`;
+    // 実際の検査ツールは日付入りのファイル名 (zip) を返す想定。そのまま保存する。
     return {
       type: t,
-      fileName: meta.file,
+      fileName: `${t}_export_2026_Jul_05.zip`,
       contentBase64: btoa(String.fromCharCode(...enc.encode(csv))),
       scannerDownloadTime: nowIso,
       itemCount: 2,
@@ -238,11 +237,8 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     try {
       const href = await getRepo().docFileHref(d.fileUrl);
       if (!href) { toast(rootEl, 'ファイルが見つかりません（削除済みの可能性）。', 'warn'); return; }
-      // 保存名にダウンロード日時(JST)を付与 (例: ip_20260705-193646.zip)。
-      const stamp = jstStamp(d.downloadedAt);
-      const base = d.fileName.replace(/\.zip$/i, '');
-      const dlName = stamp ? `${base}_${stamp}.zip` : d.fileName;
-      const a = el('a', { href, download: dlName, style: 'display:none' });
+      // 元ファイル名のまま保存 (検査ツール由来の名前に日付が含まれる)。
+      const a = el('a', { href, download: d.fileName, style: 'display:none' });
       rootEl.appendChild(a);
       a.click();
       a.remove();
@@ -328,43 +324,42 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     }
     if (!items || items.length === 0) { toast(rootEl, '取得データがありませんでした。', 'warn'); return; }
 
-    // 2) 種別ごとに zip 化 → SP 保存 → 記録。
-    const runFolder = `${baseFolder}/${jstStamp()}`;
+    // 2) 取得したファイルをそのまま SP に保存 → 記録。
+    //    アダプタが返すのは検査ツールの元ファイル (通常 zip)。再 zip 化・リネームは
+    //    しない (元ファイル名に日付が含まれるため)。1 ファイル = 1 レコード。
     const nowIso = new Date().toISOString();
-    const byType = new Map<string, RelayDownloadItem[]>();
-    for (const it of items) { const g = byType.get(it.type) ?? []; g.push(it); byType.set(it.type, g); }
+    const runFolder = `${baseFolder}/${jstStamp(nowIso)}`; // 保管は日時フォルダ
 
     busy = true;
-    // 種別ごとに zip 化 → SP 保存 → 記録。SP への保存も並列化する (最大 4 並列)。
-    // relay 側は取得を種別ごとに並列化済み。ここは保存 I/O を重ねて全体時間を短縮する。
+    // SP への保存を並列化 (最大 4 並列)。relay 側は取得を種別ごとに並列化済み。
     let ok = 0, fail = 0;
     const errs: string[] = [];
-    await mapLimit([...byType.entries()], 4, async ([type, group]) => {
+    await mapLimit(items, 4, async (it) => {
       try {
-        const blob = await zipFiles(group.map((it) => ({ name: it.fileName, data: base64ToBytes(it.contentBase64) })));
-        const fileName = `${type}.zip`;
+        const blob = new Blob([base64ToBytes(it.contentBase64) as BlobPart], { type: 'application/octet-stream' });
+        const fileName = it.fileName; // 元ファイル名のまま (リネームしない)
         const { url } = await getRepo().uploadDownloadFile(runFolder, fileName, blob);
         await getRepo().createDownload({
-          type: type as DownloadType,
+          type: it.type as DownloadType,
           downloadedAt: nowIso,
-          scannerDownloadTime: group.find((g) => g.scannerDownloadTime)?.scannerDownloadTime,
+          scannerDownloadTime: it.scannerDownloadTime,
           fileName, folder: runFolder, fileUrl: url,
-          itemCount: group.reduce((n, g) => n + (g.itemCount ?? 0), 0) || undefined,
+          itemCount: it.itemCount,
         });
         ok++;
       } catch (e) {
         fail++;
         const msg = (e as Error).message;
-        errs.push(`${LABEL_OF[type] ?? type}: ${msg}`);
-        console.warn(`[mikke/downloads] ${type} の保存に失敗:`, msg);
+        errs.push(`${LABEL_OF[it.type] ?? it.type}: ${msg}`);
+        console.warn(`[mikke/downloads] ${it.type} (${it.fileName}) の保存に失敗:`, msg);
       }
     });
     busy = false;
     if (fail) {
-      // 失敗理由 (SP フォルダ作成 / zip アップロード / 一覧書込の HTTP ステータス等) を明示。
-      toast(rootEl, `保存に失敗しました (成功 ${ok} / 失敗 ${fail} 種別) — ${errs.slice(0, 2).join(' / ')}`, ok ? 'warn' : 'error', 12000);
+      // 失敗理由 (SP フォルダ作成 / アップロード / 一覧書込の HTTP ステータス等) を明示。
+      toast(rootEl, `保存に失敗しました (成功 ${ok} / 失敗 ${fail} 件) — ${errs.slice(0, 2).join(' / ')}`, ok ? 'warn' : 'error', 12000);
     } else {
-      toast(rootEl, `取得・保存: ${ok} 種別`, 'ok', 6000);
+      toast(rootEl, `取得・保存: ${ok} 件`, 'ok', 6000);
     }
     await load();
   }
