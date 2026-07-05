@@ -131,7 +131,10 @@ export function downloadFieldSpecs(): FieldSpec[] {
     { name: 'DownloadedAt', type: 'DateTime', indexed: true },
     { name: 'ScannerDownloadTime', type: 'Text' },
     { name: 'FileName', type: 'Text' },
-    { name: 'Folder', type: 'Note' },
+    // ★ 'Folder' / 'File' は SP リストアイテムのナビゲーションプロパティ名なので
+    //   カスタム列名に使うと POST 時に 400 (PrimitiveValue vs navigation property)。
+    //   → 'FolderPath' 等の非予約名にする。
+    { name: 'FolderPath', type: 'Note' },
     { name: 'FileUrl', type: 'Note' },
     { name: 'ItemCount', type: 'Number' },
   ];

@@ -584,7 +584,7 @@ export class SpRepository implements Repository {
       downloadedAt: row.DownloadedAt ?? '',
       scannerDownloadTime: row.ScannerDownloadTime ?? undefined,
       fileName: row.FileName ?? '',
-      folder: row.Folder ?? '',
+      folder: row.FolderPath ?? '',
       fileUrl: row.FileUrl ?? '',
       itemCount: typeof row.ItemCount === 'number' ? row.ItemCount : undefined,
     };
@@ -596,7 +596,7 @@ export class SpRepository implements Repository {
     if (p.downloadedAt !== undefined) row.DownloadedAt = p.downloadedAt || null;
     if (p.scannerDownloadTime !== undefined) row.ScannerDownloadTime = p.scannerDownloadTime;
     if (p.fileName !== undefined) row.FileName = p.fileName;
-    if (p.folder !== undefined) row.Folder = p.folder;
+    if (p.folder !== undefined) row.FolderPath = p.folder;
     if (p.fileUrl !== undefined) row.FileUrl = p.fileUrl;
     if (p.itemCount !== undefined) row.ItemCount = p.itemCount;
     return row;
