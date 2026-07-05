@@ -48,6 +48,18 @@ function base64ToBytes(b64: string): Uint8Array {
   return arr;
 }
 
+/** 最大 limit 並列で items を処理する (順不同)。各 fn は自身で例外を処理する前提。 */
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let idx = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (idx < items.length) {
+      const cur = items[idx++]!;
+      await fn(cur);
+    }
+  });
+  await Promise.all(runners);
+}
+
 /** mock (dev) 用のサンプルデータ。relay が無い環境で UI を検証するため。 */
 function sampleItems(types: DownloadType[]): RelayDownloadItem[] {
   const enc = new TextEncoder();
@@ -317,8 +329,10 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     for (const it of items) { const g = byType.get(it.type) ?? []; g.push(it); byType.set(it.type, g); }
 
     busy = true;
+    // 種別ごとに zip 化 → SP 保存 → 記録。SP への保存も並列化する (最大 4 並列)。
+    // relay 側は取得を種別ごとに並列化済み。ここは保存 I/O を重ねて全体時間を短縮する。
     let ok = 0, fail = 0;
-    for (const [type, group] of byType) {
+    await mapLimit([...byType.entries()], 4, async ([type, group]) => {
       try {
         const blob = await zipFiles(group.map((it) => ({ name: it.fileName, data: base64ToBytes(it.contentBase64) })));
         const fileName = `${type}.zip`;
@@ -335,7 +349,7 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
         fail++;
         console.warn(`[mikke/downloads] ${type} の保存に失敗:`, (e as Error).message);
       }
-    }
+    });
     busy = false;
     toast(rootEl, `取得・保存: ${ok} 種別${fail ? ` / 失敗 ${fail} 種別` : ''}`, fail ? 'warn' : 'ok', 6000);
     await load();

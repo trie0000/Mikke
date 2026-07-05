@@ -17,6 +17,7 @@ dist/*
 !dist/mikke-relay.env.example
 !dist/mikke-scanner-adapter.example.ps1
 !dist/SCANNER-ADAPTER-SPEC.md
+!dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md
 !dist/SETUP-README.md
 !dist/README.md
 *.log

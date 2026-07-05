@@ -6,7 +6,7 @@
 #   - /mikke/health        起動確認
 #   - /mikke/csv-parse     大容量 CSV (約2万件/100MB) のサーバ側解析 (主経路)
 #   - /mikke/issue         脆弱性検査ツール API の Issue 単位中継 (雛形 / スタブ)
-#   - /mikke/download      脆弱性/資産データの一括ダウンロード中継 (アダプタ委譲)
+#   - /mikke/download      脆弱性/資産データの一括ダウンロード中継 (種別ごと並列・アダプタ委譲)
 #   - /mikke/relay/version relay スクリプト群のバージョン
 #   - /mikke/relay/self-update  ps1/bat の自己更新
 #
@@ -27,7 +27,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.8'
+$MIKKE_RELAY_VERSION = '1.0.9'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -414,6 +414,13 @@ function Invoke-IssueFetch {
 #   契約: Invoke-MikkeScannerDownload -Types <string[]> を定義し、上記 items を返す。
 #   contentBase64 はファイル内容の Base64 (CSV/xlsx 等バイナリ安全)。zip 化・SP 保存は
 #   ブラウザ側 (SP 認証あり) が行う。relay は取得の中継のみ。
+#
+# ★ 並列ダウンロード: 要求された種別を runspace プールで**種別ごとに並列取得**する。
+#   1 種別 = 1 runspace で adapter を dot-source し Invoke-MikkeScannerDownload -Types @(<種別>)
+#   を呼ぶ (各 runspace は隔離。共有状態なし)。全体の所要 ≒ 最も遅い 1 種別 (直列の総和ではない)。
+#   1 種別の失敗は他を巻き込まない (部分成功を許容)。全滅時のみ 502。
+$MIKKE_DOWNLOAD_MAX_PARALLEL = 6
+
 function Invoke-Download {
     param([System.Net.HttpListenerContext]$Context)
     $request = $Context.Request
@@ -439,37 +446,71 @@ function Invoke-Download {
         }
         return
     }
-    try {
-        . $adapterPath
+
+    # 1 種別を取得する worker (隔離 runspace 内で実行される)。adapter を dot-source し
+    # 1 種別ぶんの items を返す。診断ログ (Write-Host) は Information ストリームに溜まる。
+    $worker = {
+        param($AdapterPath, $Type)
+        . $AdapterPath
         if (-not (Get-Command Invoke-MikkeScannerDownload -ErrorAction SilentlyContinue)) {
-            Send-Error $response 500 'adapter_invalid' 'アダプタに Invoke-MikkeScannerDownload 関数が定義されていません'
-            return
+            throw 'アダプタに Invoke-MikkeScannerDownload 関数が定義されていません'
         }
-        $result = Invoke-MikkeScannerDownload -Types $types
-        $items = @()
-        if ($result -and $result.items) {
-            foreach ($it in $result.items) {
-                $items += @{
-                    type                = [string]$it.type
-                    fileName            = [string]$it.fileName
-                    contentBase64       = [string]$it.contentBase64
-                    scannerDownloadTime = [string]$it.scannerDownloadTime
-                    itemCount           = [int]$it.itemCount
+        $r = Invoke-MikkeScannerDownload -Types @($Type)
+        if ($r -and $r.items) { return @($r.items) }
+        return @()
+    }
+
+    $cap = [Math]::Min($types.Count, $MIKKE_DOWNLOAD_MAX_PARALLEL)
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $cap)
+    $pool.Open()
+    $jobs = @()
+    foreach ($t in $types) {
+        $ps = [PowerShell]::Create()
+        $ps.RunspacePool = $pool
+        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($t)
+        $jobs += [pscustomobject]@{ Type = $t; PS = $ps; Handle = $ps.BeginInvoke() }
+    }
+
+    $items = @()
+    $errors = @()
+    foreach ($j in $jobs) {
+        try {
+            $out = $j.PS.EndInvoke($j.Handle)
+            # adapter の診断ログ (Write-Host → Information) を relay コンソールへ再出力。
+            foreach ($info in $j.PS.Streams.Information) {
+                Write-Host ("[download:{0}] {1}" -f $j.Type, $info.ToString()) -ForegroundColor DarkGray
+            }
+            if ($out) {
+                foreach ($it in $out) {
+                    $items += @{
+                        type                = [string]$it.type
+                        fileName            = [string]$it.fileName
+                        contentBase64       = [string]$it.contentBase64
+                        scannerDownloadTime = [string]$it.scannerDownloadTime
+                        itemCount           = [int]$it.itemCount
+                    }
                 }
             }
+        } catch {
+            # EndInvoke は worker が throw すると再スローする。1 種別の失敗は記録して継続。
+            $errors += ("{0}: {1}" -f $j.Type, $_.Exception.Message)
+            Write-Host ("[download:{0}] ERROR: {1}" -f $j.Type, $_.Exception.Message) -ForegroundColor Red
+        } finally {
+            $j.PS.Dispose()
         }
-        Write-Host ("[download] {0} -> {1} file(s)" -f ($types -join ','), $items.Count) -ForegroundColor Green
-        Send-Json -Response $response -Status 200 -Body @{ ok = $true; items = $items }
-    } catch {
-        Write-Host "[download] ($($types -join ',')) -> ERROR: $($_.Exception.Message)" -ForegroundColor Red
-        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptName) {
-            Write-Host ("  at   : {0}:{1}" -f (Split-Path -Leaf $_.InvocationInfo.ScriptName), $_.InvocationInfo.ScriptLineNumber) -ForegroundColor DarkGray
-        }
-        if ($_.ScriptStackTrace) {
-            Write-Host "  stack: $($_.ScriptStackTrace -replace "`r?`n", ' <- ')" -ForegroundColor DarkGray
-        }
-        Send-Error $response 502 'adapter_error' $_.Exception.Message
     }
+    $pool.Close(); $pool.Dispose()
+
+    $errNote = ''
+    if ($errors.Count -gt 0) { $errNote = " / errors: $($errors.Count)" }
+    Write-Host ("[download] {0} -> {1} file(s){2}" -f ($types -join ','), $items.Count, $errNote) -ForegroundColor Green
+
+    # 全種別が失敗した時のみエラー応答。一部でも取得できればそれを返す (部分成功)。
+    if ($items.Count -eq 0 -and $errors.Count -gt 0) {
+        Send-Error $response 502 'adapter_error' ($errors -join ' | ')
+        return
+    }
+    Send-Json -Response $response -Status 200 -Body @{ ok = $true; items = $items }
 }
 
 # ─── /mikke/relay/self-update ───────────────────────────────────────────────
