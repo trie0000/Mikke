@@ -14,6 +14,21 @@ import { getSelectedSiteUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
 
+/** SP のエラー応答ボディから理由テキストを抜き出す (verbose: error.message.value)。
+ *  診断用。読めない/無ければ空文字。先頭 200 文字に切り詰める。 */
+async function spErrorText(r: Response): Promise<string> {
+  try {
+    const t = await r.text();
+    if (!t) return '';
+    try {
+      const j = JSON.parse(t);
+      const msg = j?.error?.message?.value ?? j?.error?.message ?? j?.['odata.error']?.message?.value;
+      if (msg) return `- ${String(msg).slice(0, 200)}`;
+    } catch { /* JSON でなければ生テキスト */ }
+    return `- ${t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
+  } catch { return ''; }
+}
+
 /** 旧「特定理由」列 (IdentifyReason) を「特定根拠」(IdentifyEvidence) に畳み込む。
  *  新スキーマでは理由列は廃止。旧データが残っていれば根拠の先頭に併記する。 */
 function mergeLegacyEvidence(reason: unknown, evidence: unknown): string | undefined {
@@ -482,16 +497,32 @@ export class SpRepository implements Repository {
     );
   }
 
+  /** OData の GetFolderByServerRelativeUrl('...') 等に渡すサーバ相対 URL 引数。
+   *  パス区切り '/' は保持し (SP がパスとして解決できるように)、各セグメントのみ
+   *  URL エンコード。OData 文字列リテラルの単一引用符は '' に二重化する。
+   *  ※ パス全体を encodeURIComponent すると '/' が %2F になり SP がフォルダを
+   *    解決できず 404 になる (ダウンロード保存が失敗する原因)。 */
+  private srUrlArg(serverRel: string): string {
+    return serverRel.split('/').map((s) => encodeURIComponent(s)).join('/').replace(/'/g, "''");
+  }
+
   /** サイト相対フォルダを 1 階層ずつ ensure しながら掘る (無ければ作成)。 */
   private async ensureFolderPath(siteRelFolder: string): Promise<string> {
     const webRel = new URL(this.webUrl).pathname.replace(/\/$/, ''); // 例: /sites/xxx
     let cur = webRel;
     for (const seg of siteRelFolder.split('/').map((s) => s.trim()).filter(Boolean)) {
       cur = `${cur}/${seg}`;
+      let exists = false;
       try {
-        await this.spGet(`/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(cur)}')?$select=Exists`);
-      } catch {
+        const j: any = await this.spGet(`/_api/web/GetFolderByServerRelativeUrl('${this.srUrlArg(cur)}')?$select=Exists`);
+        exists = j?.d?.Exists === true;
+      } catch { exists = false; }
+      if (exists) continue;
+      try {
         await this.spPost(`/_api/web/folders`, { __metadata: { type: 'SP.Folder' }, ServerRelativeUrl: cur });
+      } catch {
+        // 作成失敗 = 既存 / 予約フォルダ (ライブラリ直下) 等の可能性。ここでは致命にしない。
+        // 本当に無ければ後続の Files/add が明確なエラーを返す。
       }
     }
     return cur; // サーバ相対の最終フォルダ
@@ -502,7 +533,7 @@ export class SpRepository implements Repository {
     const digest = await this.getDigest();
     const buf = await data.arrayBuffer();
     const addUrl =
-      `/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(serverRelFolder)}')`
+      `/_api/web/GetFolderByServerRelativeUrl('${this.srUrlArg(serverRelFolder)}')`
       + `/Files/add(overwrite=true,url='${encodeURIComponent(fileName)}')`;
     const r = await fetch(`${this.webUrl}${addUrl}`, {
       method: 'POST',
@@ -510,7 +541,7 @@ export class SpRepository implements Repository {
       credentials: 'same-origin',
       body: buf,
     });
-    if (!r.ok) throw new Error(`file add: HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`ファイル保存に失敗 (${serverRelFolder}/${fileName}): HTTP ${r.status} ${await spErrorText(r)}`);
     const j = await r.json();
     const rel: string = j.d?.ServerRelativeUrl ?? `${serverRelFolder}/${fileName}`;
     return { url: rel };
@@ -518,7 +549,7 @@ export class SpRepository implements Repository {
 
   async deleteDocFile(serverRelativeUrl: string): Promise<void> {
     await this.spPost(
-      `/_api/web/GetFileByServerRelativeUrl('${encodeURIComponent(serverRelativeUrl)}')`,
+      `/_api/web/GetFileByServerRelativeUrl('${this.srUrlArg(serverRelativeUrl)}')`,
       undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
     );
   }

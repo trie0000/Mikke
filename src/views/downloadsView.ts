@@ -332,6 +332,7 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     // 種別ごとに zip 化 → SP 保存 → 記録。SP への保存も並列化する (最大 4 並列)。
     // relay 側は取得を種別ごとに並列化済み。ここは保存 I/O を重ねて全体時間を短縮する。
     let ok = 0, fail = 0;
+    const errs: string[] = [];
     await mapLimit([...byType.entries()], 4, async ([type, group]) => {
       try {
         const blob = await zipFiles(group.map((it) => ({ name: it.fileName, data: base64ToBytes(it.contentBase64) })));
@@ -347,11 +348,18 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
         ok++;
       } catch (e) {
         fail++;
-        console.warn(`[mikke/downloads] ${type} の保存に失敗:`, (e as Error).message);
+        const msg = (e as Error).message;
+        errs.push(`${LABEL_OF[type] ?? type}: ${msg}`);
+        console.warn(`[mikke/downloads] ${type} の保存に失敗:`, msg);
       }
     });
     busy = false;
-    toast(rootEl, `取得・保存: ${ok} 種別${fail ? ` / 失敗 ${fail} 種別` : ''}`, fail ? 'warn' : 'ok', 6000);
+    if (fail) {
+      // 失敗理由 (SP フォルダ作成 / zip アップロード / 一覧書込の HTTP ステータス等) を明示。
+      toast(rootEl, `保存に失敗しました (成功 ${ok} / 失敗 ${fail} 種別) — ${errs.slice(0, 2).join(' / ')}`, ok ? 'warn' : 'error', 12000);
+    } else {
+      toast(rootEl, `取得・保存: ${ok} 種別`, 'ok', 6000);
+    }
     await load();
   }
 
