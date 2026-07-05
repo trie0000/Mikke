@@ -42,6 +42,8 @@ export class SpRepository implements Repository {
   private webUrl: string;
   private digest = '';
   private digestExpire = 0;
+  /** リスト名 → ListItemEntityTypeFullName のキャッシュ (POST の __metadata.type 用)。 */
+  private entityTypeCache = new Map<string, string>();
 
   constructor() {
     // 選択済みサイト URL があればそれを、なければ現在ページのサイトを使う。
@@ -95,8 +97,23 @@ export class SpRepository implements Repository {
       credentials: 'same-origin',
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`POST ${path}: HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`POST ${path}: HTTP ${r.status} ${await spErrorText(r)}`);
     return r;
+  }
+
+  /** リストの ListItemEntityTypeFullName を取得 (POST の __metadata.type に使う)。
+   *  リスト名から機械的に組んだ 'SP.Data.<名>ListItem' が実体と食い違うと 400 に
+   *  なるため、実際の値を引いてキャッシュする。 */
+  private async listEntityType(title: string): Promise<string> {
+    const cached = this.entityTypeCache.get(title);
+    if (cached) return cached;
+    let t = `SP.Data.${title}ListItem`;
+    try {
+      const j: any = await this.spGet(`/_api/web/lists/getbytitle('${title}')?$select=ListItemEntityTypeFullName`);
+      if (j?.d?.ListItemEntityTypeFullName) t = j.d.ListItemEntityTypeFullName;
+    } catch { /* 取れなければ既定の推定名で続行 */ }
+    this.entityTypeCache.set(title, t);
+    return t;
   }
 
   // ── ensureLists / ensureFields ──────────────────────────────────────────
@@ -482,9 +499,10 @@ export class SpRepository implements Repository {
   }
 
   async createDownload(rec: Omit<DownloadRecord, 'id'>): Promise<number> {
+    const type = await this.listEntityType(LIST_DOWNLOADS);
     const r = await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_DOWNLOADS}')/items`,
-      { __metadata: { type: 'SP.Data.MikkeDownloadsListItem' }, ...this.downloadToRow(rec) },
+      { __metadata: { type }, ...this.downloadToRow(rec) },
     );
     const j = await r.json();
     return j.d.Id as number;

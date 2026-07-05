@@ -26,10 +26,12 @@ const LABEL_OF: Record<string, string> = Object.fromEntries(TYPE_META.map((m) =>
 
 const DEFAULT_FOLDER = 'Shared Documents/MikkeDownloads';
 
-/** JST の 'YYYYMMDD-HHMMSS' (保存フォルダ名用)。 */
-function jstFolderStamp(): string {
+/** 日時 (省略時は現在) を JST の 'YYYYMMDD-HHMMSS' にする (フォルダ名/ファイル名用)。 */
+function jstStamp(iso?: string): string {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
   // sv-SE は 'YYYY-MM-DD HH:MM:SS' 形式で返る。JST 固定。
-  const s = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const s = d.toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
   return s.replace(/[-:]/g, '').replace(' ', '-');
 }
 
@@ -236,7 +238,11 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     try {
       const href = await getRepo().docFileHref(d.fileUrl);
       if (!href) { toast(rootEl, 'ファイルが見つかりません（削除済みの可能性）。', 'warn'); return; }
-      const a = el('a', { href, download: d.fileName, style: 'display:none' });
+      // 保存名にダウンロード日時(JST)を付与 (例: ip_20260705-193646.zip)。
+      const stamp = jstStamp(d.downloadedAt);
+      const base = d.fileName.replace(/\.zip$/i, '');
+      const dlName = stamp ? `${base}_${stamp}.zip` : d.fileName;
+      const a = el('a', { href, download: dlName, style: 'display:none' });
       rootEl.appendChild(a);
       a.click();
       a.remove();
@@ -323,7 +329,7 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
     if (!items || items.length === 0) { toast(rootEl, '取得データがありませんでした。', 'warn'); return; }
 
     // 2) 種別ごとに zip 化 → SP 保存 → 記録。
-    const runFolder = `${baseFolder}/${jstFolderStamp()}`;
+    const runFolder = `${baseFolder}/${jstStamp()}`;
     const nowIso = new Date().toISOString();
     const byType = new Map<string, RelayDownloadItem[]>();
     for (const it of items) { const g = byType.get(it.type) ?? []; g.push(it); byType.set(it.type, g); }
