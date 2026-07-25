@@ -5,11 +5,11 @@
 //   - 各行から zip をダウンロード。単体 / 一括削除に対応
 import { el, clear } from '../utils/dom';
 import { icon } from '../icons';
-import { getRepo, getRepoMode } from '../api/repo';
+import { getRepo } from '../api/repo';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
-import { relayDownloadFromScanner, type RelayDownloadItem } from '../api/relay';
+import { acquireAndStore } from '../lib/downloadFlow';
 import type { DownloadRecord, DownloadType } from '../types';
 
 /** 種別のメタ (表示名・並び順)。 */
@@ -23,59 +23,12 @@ const TYPE_META: { type: DownloadType; label: string }[] = [
 ];
 const LABEL_OF: Record<string, string> = Object.fromEntries(TYPE_META.map((m) => [m.type, m.label]));
 
-const DEFAULT_FOLDER = 'Shared Documents/MikkeDownloads';
-
-/** 日時 (省略時は現在) を JST の 'YYYYMMDD-HHMMSS' にする (フォルダ名/ファイル名用)。 */
-function jstStamp(iso?: string): string {
-  const d = iso ? new Date(iso) : new Date();
-  if (Number.isNaN(d.getTime())) return '';
-  // sv-SE は 'YYYY-MM-DD HH:MM:SS' 形式で返る。JST 固定。
-  const s = d.toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' });
-  return s.replace(/[-:]/g, '').replace(' ', '-');
-}
-
 /** ISO/日時文字列を JST 表示に。パースできなければ原文のまま。 */
 function fmtJst(v?: string): string {
   if (!v) return '';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
   return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr;
-}
-
-/** 最大 limit 並列で items を処理する (順不同)。各 fn は自身で例外を処理する前提。 */
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let idx = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (idx < items.length) {
-      const cur = items[idx++]!;
-      await fn(cur);
-    }
-  });
-  await Promise.all(runners);
-}
-
-/** mock (dev) 用のサンプルデータ。relay が無い環境で UI を検証するため。 */
-function sampleItems(types: DownloadType[]): RelayDownloadItem[] {
-  const enc = new TextEncoder();
-  const nowIso = new Date().toISOString();
-  return types.map((t) => {
-    const csv = `type,sample\n${t},row-1\n${t},row-2\n`;
-    // 実際の検査ツールは日付入りのファイル名 (zip) を返す想定。そのまま保存する。
-    return {
-      type: t,
-      fileName: `${t}_export_2026_Jul_05.zip`,
-      contentBase64: btoa(String.fromCharCode(...enc.encode(csv))),
-      scannerDownloadTime: nowIso,
-      itemCount: 2,
-    };
-  });
 }
 
 export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
@@ -309,57 +262,23 @@ export function renderDownloadsView(rootEl: HTMLElement): HTMLElement {
   }
 
   async function acquire(types: DownloadType[]): Promise<void> {
-    const settings = await getRepo().getSettings();
-    const baseFolder = (settings.downloadFolder ?? '').trim() || DEFAULT_FOLDER;
-
-    // 1) relay 経由で取得 (mock は sample)。
-    let items: RelayDownloadItem[];
+    busy = true;
+    let res;
     try {
-      items = getRepoMode() === 'mock'
-        ? sampleItems(types)
-        : (await relayDownloadFromScanner(types)).items;
+      res = await acquireAndStore(types); // 取得 → SP 原本保存 → 記録 (共通フロー)
     } catch (e) {
+      busy = false;
       toast(rootEl, `取得に失敗しました: ${(e as Error).message}`, 'error', 8000);
       return;
     }
-    if (!items || items.length === 0) { toast(rootEl, '取得データがありませんでした。', 'warn'); return; }
-
-    // 2) 取得したファイルをそのまま SP に保存 → 記録。
-    //    アダプタが返すのは検査ツールの元ファイル (通常 zip)。再 zip 化・リネームは
-    //    しない (元ファイル名に日付が含まれるため)。1 ファイル = 1 レコード。
-    const nowIso = new Date().toISOString();
-    const runFolder = `${baseFolder}/${jstStamp(nowIso)}`; // 保管は日時フォルダ
-
-    busy = true;
-    // SP への保存を並列化 (最大 4 並列)。relay 側は取得を種別ごとに並列化済み。
-    let ok = 0, fail = 0;
-    const errs: string[] = [];
-    await mapLimit(items, 4, async (it) => {
-      try {
-        const blob = new Blob([base64ToBytes(it.contentBase64) as BlobPart], { type: 'application/octet-stream' });
-        const fileName = it.fileName; // 元ファイル名のまま (リネームしない)
-        const { url } = await getRepo().uploadDownloadFile(runFolder, fileName, blob);
-        await getRepo().createDownload({
-          type: it.type as DownloadType,
-          downloadedAt: nowIso,
-          scannerDownloadTime: it.scannerDownloadTime,
-          fileName, folder: runFolder, fileUrl: url,
-          itemCount: it.itemCount,
-        });
-        ok++;
-      } catch (e) {
-        fail++;
-        const msg = (e as Error).message;
-        errs.push(`${LABEL_OF[it.type] ?? it.type}: ${msg}`);
-        console.warn(`[mikke/downloads] ${it.type} (${it.fileName}) の保存に失敗:`, msg);
-      }
-    });
     busy = false;
-    if (fail) {
-      // 失敗理由 (SP フォルダ作成 / アップロード / 一覧書込の HTTP ステータス等) を明示。
-      toast(rootEl, `保存に失敗しました (成功 ${ok} / 失敗 ${fail} 件) — ${errs.slice(0, 2).join(' / ')}`, ok ? 'warn' : 'error', 12000);
+    const { saved, errors } = res;
+    if (errors.length) {
+      toast(rootEl, `保存に失敗しました (成功 ${saved} / 失敗 ${errors.length} 件) — ${errors.slice(0, 2).join(' / ')}`, saved ? 'warn' : 'error', 12000);
+    } else if (saved === 0) {
+      toast(rootEl, '取得データがありませんでした。', 'warn');
     } else {
-      toast(rootEl, `取得・保存: ${ok} 件`, 'ok', 6000);
+      toast(rootEl, `取得・保存: ${saved} 件`, 'ok', 6000);
     }
     await load();
   }

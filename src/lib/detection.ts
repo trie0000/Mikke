@@ -22,3 +22,16 @@ export function nextDetectionWhenAbsent(prev: DetectionStatus): DetectionStatus 
 export function isUndetected(s: DetectionStatus): boolean {
   return s === '未検出(New)' || s === '未検出';
 }
+
+/** 検知系か (新規 / 継続 / 再検知)。 */
+export function isDetected(s: DetectionStatus): boolean {
+  return s === '新規' || s === '継続' || s === '再検知';
+}
+
+/** 固定モードで CSV から消えた既存 Issue の検知ステータスを更新。
+ *  - 検知系 (新規/継続/再検知) → 「未検出(New)」
+ *  - 未検出系 (未検出(New)/未検出) → 据え置き (変化なし)
+ *  固定モードでは present 側はステータス据え置き (呼び出し側で detectionStatus を触らない)。 */
+export function fixedNextDetectionWhenAbsent(prev: DetectionStatus): DetectionStatus {
+  return isDetected(prev) ? '未検出(New)' : prev;
+}

@@ -310,6 +310,16 @@ function unzip(buf: ArrayBuffer): Map<string, Uint8Array> {
   return out;
 }
 
+/** zip のバイト列から最初の .csv エントリのテキストを取り出す (UTF-8)。無ければ null。 */
+export function extractCsvTextFromZip(buf: ArrayBuffer): string | null {
+  let files: Map<string, Uint8Array>;
+  try { files = unzip(buf); } catch { return null; }
+  for (const [name, data] of files) {
+    if (/\.csv$/i.test(name)) return new TextDecoder('utf-8').decode(data);
+  }
+  return null;
+}
+
 // ── xlsx 読込 ────────────────────────────────────────────────────────────────
 function collectText(inner: string): string {
   let s = '';

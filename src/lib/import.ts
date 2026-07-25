@@ -2,7 +2,13 @@
 // 機能設計書 §2 (F1) / §9 (差分マトリクス) に準拠。
 import type { ManagedIssue, MikkeSettings, AddedReason } from '../types';
 import { evalConditions } from './conditions';
-import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from './detection';
+import { nextDetectionWhenPresent, nextDetectionWhenAbsent, fixedNextDetectionWhenAbsent } from './detection';
+
+/** 取込モード。
+ *  - 'add'   : 標準。新規の条件一致を追加し、既存のステータスも標準ルールで遷移。
+ *  - 'fixed' : 固定。新規は追加しない。present 側はステータス据え置き (項目値のみ更新)、
+ *              検知系が今回消滅した時だけ「未検出(New)」に落とす。未検出系は据え置き。 */
+export type ImportMode = 'add' | 'fixed';
 
 /** CSV 内で Issue Instance ID を保持する列名 (正式名が判明したら差し替え)。 */
 export const ISSUE_ID_COLUMN = 'Issue Instance ID';
@@ -74,6 +80,7 @@ export function buildImportPlan(
   existing: ManagedIssue[],
   settings: MikkeSettings,
   nowIso: string,
+  mode: ImportMode = 'add',
 ): ImportPlan {
   const byId = new Map<string, ManagedIssue>();
   for (const e of existing) byId.set(e.issueInstanceId, e);
@@ -92,14 +99,20 @@ export function buildImportPlan(
     const sf = scannerFieldsFromRow(row, headers);
 
     if (cur) {
-      // 既存管理対象に一致 → 更新 (検知ステータスは継続/再検知へ)
-      const patch: Partial<ManagedIssue> = {
-        ...sf,
-        detectionStatus: nextDetectionWhenPresent(cur.detectionStatus),
-        lastSyncedAt: nowIso,
-      };
+      // 既存管理対象に一致 → 更新。
+      // add   : 検知ステータスを継続/再検知へ遷移。
+      // fixed : ステータスは据え置き (detectionStatus をパッチに含めない)。項目値のみ更新。
+      const patch: Partial<ManagedIssue> = { ...sf, lastSyncedAt: nowIso };
+      if (mode !== 'fixed') patch.detectionStatus = nextDetectionWhenPresent(cur.detectionStatus);
       ops.push({ kind: 'update', issueInstanceId: iid, title: sf.title ?? cur.title, id: cur.id, patch });
       updated++;
+      continue;
+    }
+
+    // 未管理: 固定モードは新規を追加しない。
+    if (mode === 'fixed') {
+      skipped++;
+      ops.push({ kind: 'skip', issueInstanceId: iid, title: sf.title ?? '', note: '固定モード: 新規は追加しない' });
       continue;
     }
 
@@ -134,8 +147,11 @@ export function buildImportPlan(
   for (const e of existing) {
     if (seenInCsv.has(e.issueInstanceId)) continue;
     if (e.isOutOfScope || e.mgmtStatus === '対象外' || e.mgmtStatus === '過検出') continue;
-    const nextDet = nextDetectionWhenAbsent(e.detectionStatus);
-    if (nextDet === e.detectionStatus) continue; // 既に「未検出」で変化なし → skip
+    // add: 標準ルール / fixed: 検知系のみ 未検出(New) へ、未検出系は据え置き。
+    const nextDet = mode === 'fixed'
+      ? fixedNextDetectionWhenAbsent(e.detectionStatus)
+      : nextDetectionWhenAbsent(e.detectionStatus);
+    if (nextDet === e.detectionStatus) continue; // 変化なし → skip
     const patch: Partial<ManagedIssue> = {
       detectionStatus: nextDet,
       lastSyncedAt: nowIso,

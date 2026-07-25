@@ -322,6 +322,11 @@ function Invoke-MikkeScannerDownload {
 ```
 
 - `contentBase64` は**ファイルのバイト列を Base64 化**したもの。CSV でも Excel(.xlsx) でも可。バイナリで受けるなら `Invoke-WebRequest` の `.Content`（byte[]）を `[Convert]::ToBase64String(...)` する。文字列（CSV テキスト）なら `[System.Text.Encoding]::UTF8.GetBytes($csv)` を Base64 化する。
+- ★ **`vuln`（脆弱性）だけは取込にも使う**: 管理対象一覧の「一括更新（固定/追加モード）」が、この
+  `vuln` のファイルを読んで管理対象を更新する。そのため `vuln` は **zip 内に CSV を 1 つ含む** か、
+  **CSV そのもの**を返すこと（zip の場合、最初の `*.csv` エントリを読む）。CSV の列は手動 CSV 取込と同じ
+  （`Issue Instance ID` / `Title` / `Severity` / `Status` / `First Seen` / `Last Seen` ほか）。
+  資産系（`ip` / `iprange` / `domain` / `cert` / `webapps`）は**保存と一覧記録のみ**なので形式は任意。
 - **要求された `Types` のうち取得できたものだけ**返せばよい（0 件の種別は要素を省略。全体が空なら `items = @()`）。
 - `scannerDownloadTime` / `itemCount` は任意（省略可）。`scannerDownloadTime` は一覧の「検査ツールDL時間」列に表示される。
 

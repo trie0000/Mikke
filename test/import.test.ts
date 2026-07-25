@@ -159,3 +159,63 @@ describe('import: Issue Instance ID 空行はスキップ', () => {
     expect(plan.summary.added).toBe(0);
   });
 });
+
+describe('import: 固定モード (mode=fixed)', () => {
+  const mkIssue = (id: number, iid: string, status: ManagedIssue['detectionStatus']): ManagedIssue => ({
+    id, title: iid, issueInstanceId: iid, detectionStatus: status,
+    mgmtStatus: '未通知', isOutOfScope: false, scanFields: {},
+  });
+  const mkRow = (iid: string, sev = 'High'): Record<string, string> =>
+    ({ 'Issue Instance ID': iid, Title: iid, Severity: sev, Status: 'open' });
+  const HEADERS = ['Issue Instance ID', 'Title', 'Severity', 'Status'];
+
+  // present: P-*, absent: A-*, 未管理 Critical: NEW-crit
+  const existing: ManagedIssue[] = [
+    mkIssue(1, 'P-new', '新規'), mkIssue(2, 'P-cont', '継続'), mkIssue(3, 'P-redet', '再検知'),
+    mkIssue(4, 'P-undnew', '未検出(New)'), mkIssue(5, 'P-und', '未検出'),
+    mkIssue(6, 'A-new', '新規'), mkIssue(7, 'A-cont', '継続'), mkIssue(8, 'A-redet', '再検知'),
+    mkIssue(9, 'A-undnew', '未検出(New)'), mkIssue(10, 'A-und', '未検出'),
+  ];
+  const rows = ['P-new', 'P-cont', 'P-redet', 'P-undnew', 'P-und'].map((i) => mkRow(i));
+  rows.push(mkRow('NEW-crit', 'Critical'));
+  const plan = buildImportPlan(rows, HEADERS, existing, settings, NOW('06'), 'fixed');
+  const opFor = (iid: string) => plan.ops.find((o) => o.issueInstanceId === iid);
+
+  it('新規(未管理・条件一致)は追加しない', () => {
+    expect(plan.summary.added).toBe(0);
+    expect(opFor('NEW-crit')?.kind).toBe('skip');
+  });
+
+  it('present はステータス据え置き (patch に detectionStatus を含めない)', () => {
+    for (const iid of ['P-new', 'P-cont', 'P-redet', 'P-undnew', 'P-und']) {
+      const op = opFor(iid);
+      expect(op?.kind).toBe('update');
+      expect(op?.patch).not.toHaveProperty('detectionStatus');
+      expect(op?.patch).toHaveProperty('lastSyncedAt'); // 項目値は更新される
+    }
+  });
+
+  it('absent の検知系 (新規/継続/再検知) → 未検出(New)', () => {
+    for (const iid of ['A-new', 'A-cont', 'A-redet']) {
+      const op = opFor(iid);
+      expect(op?.kind).toBe('undetect');
+      expect(op?.patch?.detectionStatus).toBe('未検出(New)');
+    }
+  });
+
+  it('absent の未検出系 (未検出(New)/未検出) は据え置き (op なし)', () => {
+    expect(opFor('A-undnew')).toBeUndefined();
+    expect(opFor('A-und')).toBeUndefined();
+  });
+
+  it('固定モードの undetected 件数は検知系 absent の3件', () => {
+    expect(plan.summary.undetected).toBe(3);
+  });
+
+  it('対比: 追加モードなら NEW-crit は追加され present は継続へ遷移', () => {
+    const add = buildImportPlan(rows, HEADERS, existing, settings, NOW('06'), 'add');
+    expect(add.summary.added).toBe(1); // NEW-crit
+    expect(add.ops.find((o) => o.issueInstanceId === 'P-cont')?.patch?.detectionStatus).toBe('継続');
+    expect(add.ops.find((o) => o.issueInstanceId === 'P-und')?.patch?.detectionStatus).toBe('再検知');
+  });
+});
