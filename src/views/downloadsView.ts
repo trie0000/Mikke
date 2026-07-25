@@ -21,7 +21,11 @@ const TYPE_META: { type: DownloadType; label: string }[] = [
   { type: 'cert', label: 'Cert' },
   { type: 'webapps', label: 'WebAPPS' },
 ];
-const LABEL_OF: Record<string, string> = Object.fromEntries(TYPE_META.map((m) => [m.type, m.label]));
+/** 取得モーダルの選択肢には出さないが、一覧では名前を出す種別 (relay 生成物)。 */
+const EXTRA_LABELS: Record<string, string> = { merged: 'マージCSV' };
+const LABEL_OF: Record<string, string> = {
+  ...Object.fromEntries(TYPE_META.map((m) => [m.type, m.label])), ...EXTRA_LABELS,
+};
 
 /** ISO/日時文字列を JST 表示に。パースできなければ原文のまま。 */
 function fmtJst(v?: string): string {

@@ -7,6 +7,7 @@
 #   - /mikke/csv-parse     大容量 CSV (約2万件/100MB) のサーバ側解析 (主経路)
 #   - /mikke/issue         脆弱性検査ツール API の Issue 単位中継 (雛形 / スタブ)
 #   - /mikke/download      脆弱性/資産データの一括ダウンロード中継 (種別ごと並列・アダプタ委譲)
+#   - /mikke/merge         DL済みファイルから取込用マージCSVを生成 (アダプタ委譲)
 #   - /mikke/relay/version relay スクリプト群のバージョン
 #   - /mikke/relay/self-update  ps1/bat の自己更新
 #
@@ -27,7 +28,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.9'
+$MIKKE_RELAY_VERSION = '1.0.10'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -98,6 +99,7 @@ Write-Host "  GET  http://localhost:$Port/mikke/health"
 Write-Host "  POST http://localhost:$Port/mikke/csv-parse"
 Write-Host "  POST http://localhost:$Port/mikke/issue"
 Write-Host "  POST http://localhost:$Port/mikke/download"
+Write-Host "  POST http://localhost:$Port/mikke/merge"
 Write-Host "  GET  http://localhost:$Port/mikke/relay/version"
 Write-Host "  POST http://localhost:$Port/mikke/relay/self-update"
 Write-Host "  GET  http://localhost:$Port/mikke/mikke.bundle.js (テスト配信)"
@@ -513,6 +515,71 @@ function Invoke-Download {
     Send-Json -Response $response -Status 200 -Body @{ ok = $true; items = $items }
 }
 
+# ─── /mikke/merge — ダウンロード済みファイルから取込用マージ CSV を生成 ────────
+# 入力: { files: [ { type, fileName, contentBase64 } ] }  (/mikke/download の結果)
+# 出力: { ok:true, fileName, contentBase64, rowCount }    (CSV 1 ファイル)
+#
+# ★ アダプタ (mikke-scanner-adapter.ps1) に委譲する。
+#   契約: Invoke-MikkeScannerMerge -Files <object[]> を定義し、
+#         @{ fileName=<string>; contentBase64=<string>; rowCount=<int> } を返す。
+#   生成する CSV は「通常の CSV 取込メニューで取り込む CSV と同じ列構成」にすること
+#   (Issue Instance ID / Title / Severity / Status / First Seen / Last Seen ＋資産列)。
+function Invoke-Merge {
+    param([System.Net.HttpListenerContext]$Context)
+    $request = $Context.Request
+    $response = $Context.Response
+
+    $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+    $bodyText = $reader.ReadToEnd(); $reader.Close()
+    $files = @()
+    try {
+        if ($bodyText) {
+            $parsed = ($bodyText | ConvertFrom-Json).files
+            if ($parsed) { $files = @($parsed) }
+        }
+    } catch { }
+    if (-not $files -or $files.Count -eq 0) { Send-Error $response 400 'no_files' 'files を 1 つ以上指定してください'; return }
+
+    $adapterPath = Join-Path $PSScriptRoot 'mikke-scanner-adapter.ps1'
+    if (-not (Test-Path -LiteralPath $adapterPath)) {
+        Send-Json -Response $response -Status 501 -Body @{
+            ok = $false
+            error = @{ code = 'adapter_not_installed'
+                       detail = 'mikke-scanner-adapter.ps1 が未配置です。mikke-scanner-adapter.example.ps1 をコピーして委託先環境で実装し、relay と同じフォルダに置いてください。' }
+        }
+        return
+    }
+    try {
+        . $adapterPath
+        if (-not (Get-Command Invoke-MikkeScannerMerge -ErrorAction SilentlyContinue)) {
+            Send-Error $response 500 'adapter_invalid' 'アダプタに Invoke-MikkeScannerMerge 関数が定義されていません'
+            return
+        }
+        $result = Invoke-MikkeScannerMerge -Files $files
+        if (-not $result -or -not $result.contentBase64) {
+            Send-Error $response 502 'merge_empty' 'マージ結果が空です (contentBase64 が返っていません)'
+            return
+        }
+        $name = [string]$result.fileName
+        if (-not $name) { $name = 'merged.csv' }
+        $rowCount = 0
+        if ($null -ne $result.rowCount) { $rowCount = [int]$result.rowCount }
+        Write-Host ("[merge] {0} file(s) -> {1} ({2} rows)" -f $files.Count, $name, $rowCount) -ForegroundColor Green
+        Send-Json -Response $response -Status 200 -Body @{
+            ok = $true; fileName = $name; contentBase64 = [string]$result.contentBase64; rowCount = $rowCount
+        }
+    } catch {
+        Write-Host "[merge] ERROR: $($_.Exception.Message)" -ForegroundColor Red
+        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptName) {
+            Write-Host ("  at   : {0}:{1}" -f (Split-Path -Leaf $_.InvocationInfo.ScriptName), $_.InvocationInfo.ScriptLineNumber) -ForegroundColor DarkGray
+        }
+        if ($_.ScriptStackTrace) {
+            Write-Host "  stack: $($_.ScriptStackTrace -replace "`r?`n", ' <- ')" -ForegroundColor DarkGray
+        }
+        Send-Error $response 502 'adapter_error' $_.Exception.Message
+    }
+}
+
 # ─── /mikke/relay/self-update ───────────────────────────────────────────────
 function Invoke-RelaySelfUpdate {
     param([System.Net.HttpListenerContext]$Context)
@@ -631,6 +698,7 @@ while ($listener.IsListening) {
             '^/mikke/bundle-dir$'          { Invoke-BundleDir -Context $context; break }
             '^/mikke/issue$'               { Invoke-IssueFetch -Context $context; break }
             '^/mikke/download$'            { Invoke-Download -Context $context; break }
+            '^/mikke/merge$'               { Invoke-Merge -Context $context; break }
             '^/mikke/mikke\.bundle\.js$'   { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'mikke.bundle.js') -ContentType 'application/javascript; charset=utf-8'; break }
             '^/mikke/version\.txt$'        { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'version.txt') -ContentType 'text/plain; charset=utf-8'; break }
             default                        { Send-Error -Response $res -Status 404 -Code 'not_found' -Detail $path }

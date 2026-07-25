@@ -120,8 +120,9 @@ export interface MikkeSettings {
   accentColor?: string;
 }
 
-/** 検査ツールから一括ダウンロードする対象の種別。 */
-export type DownloadType = 'vuln' | 'ip' | 'iprange' | 'domain' | 'cert' | 'webapps';
+/** 検査ツールから一括ダウンロードする対象の種別。
+ *  'merged' は取得後に relay 側で生成する「脆弱性＋資産のマージ CSV」(取込に使う)。 */
+export type DownloadType = 'vuln' | 'ip' | 'iprange' | 'domain' | 'cert' | 'webapps' | 'merged';
 
 /** ダウンロードデータ 1 件 (種別ごと)。SP リスト MikkeDownloads の 1 行。 */
 export interface DownloadRecord {

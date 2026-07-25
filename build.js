@@ -179,6 +179,10 @@ if (watch || serve) {
   if (fs.existsSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md')) {
     fs.copyFileSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md', 'dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md');
   }
+  // 取込 CSV の列構成見本 (マージ CSV 実装の参照用。SPEC §10 から参照される)
+  if (fs.existsSync('samples/template.csv')) {
+    fs.copyFileSync('samples/template.csv', 'dist/sample-import-template.csv');
+  }
   // 同梱 OSS のライセンス表記 (配布物に含める)
   if (fs.existsSync('THIRD_PARTY_NOTICES.md')) {
     fs.copyFileSync('THIRD_PARTY_NOTICES.md', 'dist/THIRD_PARTY_NOTICES.md');

@@ -249,7 +249,10 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 
 ## 9. 一括ダウンロード（脆弱性 / 資産データ）
 
-「ダウンロードデータ」画面の**取得**で、検査ツールから脆弱性および登録資産情報（IP / IP Range / Domain / Cert / WebAPPS）を**一括取得**する。§1〜§8 の Issue 取得（`Invoke-MikkeScannerFetch`）と**同じ relay + アダプタ方式**で、アダプタに**もう 1 つ関数を足す**だけでよい。
+「ダウンロードデータ」画面の**取得**、および管理対象一覧の**一括更新（固定／追加モード）**で、検査ツールから脆弱性および登録資産情報（IP / IP Range / Domain / Cert / WebAPPS）を**一括取得**する。§1〜§8 の Issue 取得（`Invoke-MikkeScannerFetch`）と**同じ relay + アダプタ方式**。
+
+> **実装する関数は 2 つ**: 本章の `Invoke-MikkeScannerDownload`（取得）と、**§10 の `Invoke-MikkeScannerMerge`（マージ CSV 生成）**。
+> 一括更新は「①この章のエンドポイントで全レポートを取得 → ②§10 のエンドポイントでマージ CSV を生成 → ③その CSV を取り込む」という流れで動く。
 
 ### 9-1. 全体像（どこで呼ばれるか）
 
@@ -322,11 +325,10 @@ function Invoke-MikkeScannerDownload {
 ```
 
 - `contentBase64` は**ファイルのバイト列を Base64 化**したもの。CSV でも Excel(.xlsx) でも可。バイナリで受けるなら `Invoke-WebRequest` の `.Content`（byte[]）を `[Convert]::ToBase64String(...)` する。文字列（CSV テキスト）なら `[System.Text.Encoding]::UTF8.GetBytes($csv)` を Base64 化する。
-- ★ **`vuln`（脆弱性）だけは取込にも使う**: 管理対象一覧の「一括更新（固定/追加モード）」が、この
-  `vuln` のファイルを読んで管理対象を更新する。そのため `vuln` は **zip 内に CSV を 1 つ含む** か、
-  **CSV そのもの**を返すこと（zip の場合、最初の `*.csv` エントリを読む）。CSV の列は手動 CSV 取込と同じ
-  （`Issue Instance ID` / `Title` / `Severity` / `Status` / `First Seen` / `Last Seen` ほか）。
-  資産系（`ip` / `iprange` / `domain` / `cert` / `webapps`）は**保存と一覧記録のみ**なので形式は任意。
+- ここで返すファイルは**検査ツールのエクスポート原本のまま**でよい（zip / CSV / xlsx いずれも可）。
+  取込に使う CSV は §10 の `Invoke-MikkeScannerMerge` が**このファイル群を入力として**生成するので、
+  この段階で形式を揃える必要はない。ただし**§10 のマージ関数が読める形式**であること（自作の関数同士なので、
+  例えば「vuln は zip 内 CSV」と決めておけばよい）。
 - **要求された `Types` のうち取得できたものだけ**返せばよい（0 件の種別は要素を省略。全体が空なら `items = @()`）。
 - `scannerDownloadTime` / `itemCount` は任意（省略可）。`scannerDownloadTime` は一覧の「検査ツールDL時間」列に表示される。
 
@@ -357,3 +359,121 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/download' -Method Post `
 - [ ] 戻り値は §9-2 のスキーマ（`items` 配列。`contentBase64` は Base64）
 - [ ] 6 種別（vuln/ip/iprange/domain/cert/webapps）のうち、環境で取得できるものをマッピング
 - [ ] エラーは日本語メッセージで throw / タイムアウト設定あり / 秘密をログに出さない
+
+---
+
+## 10. マージ CSV の生成（脆弱性＋資産 → 取込用 CSV 1 枚）
+
+管理対象一覧の**一括更新（固定／追加モード）**は、§9 で取得したファイル群を入力に、**脆弱性情報と資産情報を突合（マージ）した CSV を 1 枚**作り、それを Mikke に取り込む。この CSV を作るのが `Invoke-MikkeScannerMerge`。
+
+### 10-1. 全体像（一括更新の流れ）
+
+```
+[ブラウザ UI]  管理対象一覧 →「一括更新(固定)」/「一括更新(追加)」
+   │
+   │ ① POST /mikke/download  {"types":["vuln","ip","iprange","domain","cert","webapps"]}
+   │    → 全レポートを取得。原本はそのまま SP に保存＋一覧に記録
+   │
+   │ ② POST /mikke/merge     {"files":[{type,fileName,contentBase64}, ...]}   ← ①の取得結果
+   ▼
+[mikke-relay.ps1]  mikke-scanner-adapter.ps1 を dot-source し、
+   │               Invoke-MikkeScannerMerge -Files <object[]> を呼ぶ
+   ▼
+[mikke-scanner-adapter.ps1]  ★この関数を実装する
+   │  脆弱性を主表に資産情報を突合し、取込用 CSV を 1 枚生成して Base64 で返す
+   ▼
+[ブラウザ]  ③ マージ CSV を SP に保存＋一覧に記録し、そのまま取り込む
+            （固定／追加モードのステータス遷移を適用）
+```
+
+- **入力は「①でダウンロード済みのファイル」**。アダプタが検査ツールへ再アクセスする必要はない（二重ダウンロードしない）。
+- マージ CSV も原本と同じ日時フォルダに保存され、ダウンロードデータ一覧に**タイプ「マージCSV」**として記録される。
+
+### 10-2. 契約（インターフェース — 変更不可）
+
+```powershell
+function Invoke-MikkeScannerMerge {
+    param([Parameter(Mandatory = $true)][object[]]$Files)
+    # ...実装...
+    return @{ fileName = '...'; contentBase64 = '...'; rowCount = 0 }
+}
+```
+
+#### 入力
+
+| パラメータ | 型 | 説明 |
+| --- | --- | --- |
+| `Files` | object[] | §9 で取得済みのファイル群。各要素は `type` / `fileName` / `contentBase64`（§9-2 の items と同じ形） |
+
+各要素の `type` は `vuln` / `ip` / `iprange` / `domain` / `cert` / `webapps`。`contentBase64` は原本（zip / CSV / xlsx 等）の Base64。
+
+#### 戻り値（hashtable）
+
+```powershell
+@{
+    fileName      = 'merged_20260705_201500.csv'  # 生成した CSV のファイル名
+    contentBase64 = '<base64>'                    # CSV 本体の Base64 (UTF-8。BOM 付き推奨)
+    rowCount      = 1234                          # 任意。データ行数
+}
+```
+
+### 10-3. ★ 生成する CSV の形式（最重要）
+
+**「Mikke の通常の CSV 取込メニューで取り込む CSV」と同じ形式**にすること。一括更新はこの CSV を、手動取込とまったく同じロジックで処理する。
+
+必須列（この名前ちょうどで、1 行目をヘッダにする）:
+
+| 列名 | 説明 |
+| --- | --- |
+| `Issue Instance ID` | **突合キー（一意・必須）**。これが空の行はスキップされる |
+| `Title` | 脆弱性名 |
+| `Severity` | Critical / High / Medium / Low / Info |
+| `Status` | 検査ツール側ステータス（open / resolved 等） |
+| `First Seen` | 初回検出日 |
+| `Last Seen` | 最終検出日 |
+
+- **資産情報の列は自由に追加してよい**（例: `Asset` / `FQDN` / `IP` / `Asset Type` / `Owner` / `管理部門` …）。
+  追加列は Mikke 側で `Scan_<列名>` として保持され、一覧の表示列（設定→管理項目の選択）や詳細画面で参照できる。
+  **資産情報をマージする目的はまさにこの追加列**なので、必要な資産属性は遠慮なく列として足すこと。
+- **1 脆弱性 = 1 行**。1 つの脆弱性に複数資産が紐づく場合は、`|` 区切りで 1 セルにまとめてよい
+  （Mikke の資産管理は `|` 区切りを分解して個別資産として扱う）。
+- 文字コードは **UTF-8**（BOM 付き推奨。Excel で開いても文字化けしない）。改行は CRLF / LF どちらでも可。
+- 値にカンマ・改行・引用符を含む場合は **RFC4180 のダブルクォート**で囲む（`ConvertTo-Csv` を使えば自動）。
+
+参考: 配布物に同梱の **`sample-import-template.csv`**（リポジトリでは `samples/template.csv`）が取込 CSV の見本（列構成の実例）。
+
+### 10-4. エラー
+
+§3-4 と同じく **`throw`**（relay が 502 + メッセージで UI のトーストに表示）。マージ対象の脆弱性ファイルが見つからない場合なども、利用者が読める日本語で throw すること（例: `'脆弱性レポートが入力に含まれていません'`）。
+
+### 10-5. テスト方法
+
+単体（relay なし）— ダミー入力で CSV が返ることを確認:
+
+```powershell
+. .\mikke-scanner-adapter.ps1
+$files = (Invoke-MikkeScannerDownload -Types @('vuln','ip')).items
+$r = Invoke-MikkeScannerMerge -Files $files
+$r.fileName; $r.rowCount
+[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.contentBase64)) | Select-Object -First 3
+```
+
+→ 1 行目がヘッダ（`Issue Instance ID,Title,Severity,...`）の CSV になっていれば OK。
+
+relay 経由:
+
+```powershell
+$body = @{ files = @(@{ type='vuln'; fileName='v.zip'; contentBase64='<base64>' }) } | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -ContentType 'application/json' -Body $body
+```
+
+→ `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[merge] N file(s) -> merged_....csv (M rows)` が出る。
+
+### 10-6. チェックリスト（追加分）
+
+- [ ] `Invoke-MikkeScannerMerge -Files <object[]>` を定義（Fetch / Download と同じファイルに追記）
+- [ ] 入力の `contentBase64` をデコードし、必要なら zip を展開して中の CSV を読む
+- [ ] 脆弱性を主表に、資産レポートを資産キー（FQDN / IP 等）で突合して列を付加
+- [ ] 出力 CSV に必須列（`Issue Instance ID` / `Title` / `Severity` / `Status` / `First Seen` / `Last Seen`）を含む
+- [ ] 1 脆弱性 = 1 行 / UTF-8 / RFC4180 クォート
+- [ ] エラーは日本語メッセージで throw / 秘密をログに出さない

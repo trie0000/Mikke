@@ -1,7 +1,7 @@
 // 検査ツールからのダウンロード取得 + SP 原本保存の共通フロー。
 // ダウンロードデータ画面の「取得」と、管理対象一覧の「一括更新」ボタンが共用する。
 import { getRepo, getRepoMode } from '../api/repo';
-import { relayDownloadFromScanner, type RelayDownloadItem } from '../api/relay';
+import { relayDownloadFromScanner, relayMergeReports, type RelayDownloadItem } from '../api/relay';
 import { zipFiles } from './zip';
 import { extractCsvTextFromZip } from './xlsx';
 import { parseCsvAsync, type ParsedCsv } from './csv';
@@ -115,4 +115,67 @@ export async function parseVulnReport(items: RelayDownloadItem[]): Promise<Parse
     if (text) return await parseCsvAsync(text);
   }
   return null;
+}
+
+/** mock (dev) 用のマージ CSV。取込 CSV と同じ列構成 (資産列を付加)。 */
+async function sampleMergedCsv(items: RelayDownloadItem[]): Promise<{ fileName: string; text: string; rowCount: number }> {
+  const vuln = await parseVulnReport(items);
+  const headers = ['Issue Instance ID', 'Title', 'Severity', 'Status', 'First Seen', 'Last Seen', 'Asset', 'Asset Type'];
+  const rows = (vuln?.rows ?? []).map((r, i) => ({
+    'Issue Instance ID': r['Issue Instance ID'] ?? '',
+    'Title': r['Title'] ?? '',
+    'Severity': r['Severity'] ?? '',
+    'Status': r['Status'] ?? '',
+    'First Seen': r['First Seen'] ?? '',
+    'Last Seen': r['Last Seen'] ?? '',
+    'Asset': `host${i + 1}.example.com`,   // 資産レポートから突合した想定
+    'Asset Type': 'FQDN',
+  }));
+  const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const text = [headers.join(','), ...rows.map((r) => headers.map((h) => esc(r[h as keyof typeof r] ?? '')).join(','))].join('\n') + '\n';
+  return { fileName: `merged_${jstStamp()}.csv`, text, rowCount: rows.length };
+}
+
+export interface MergeResult {
+  /** 取込に使うパース済み CSV。 */
+  parsed: ParsedCsv;
+  fileName: string;
+  rowCount: number;
+}
+
+/**
+ * ダウンロード済みファイル群から「脆弱性＋資産」マージ CSV を生成し (relay /mikke/merge)、
+ * SP の同じ日時フォルダに保存 + ダウンロード一覧に記録した上で、パース結果を返す。
+ * 生成される CSV は通常の CSV 取込と同じ列構成。
+ */
+export async function mergeAndStore(items: RelayDownloadItem[], runFolder: string): Promise<MergeResult> {
+  let fileName: string;
+  let text: string;
+  let rowCount: number;
+  if (getRepoMode() === 'mock') {
+    const s = await sampleMergedCsv(items);
+    fileName = s.fileName; text = s.text; rowCount = s.rowCount;
+  } else {
+    const res = await relayMergeReports(items.map((i) => ({ type: i.type, fileName: i.fileName, contentBase64: i.contentBase64 })));
+    fileName = res.fileName || `merged_${jstStamp()}.csv`;
+    const bytes = base64ToBytes(res.contentBase64);
+    text = new TextDecoder('utf-8').decode(bytes);
+    rowCount = res.rowCount ?? 0;
+  }
+
+  // マージ CSV も原本と同じ日時フォルダに保存し、一覧に記録する (監査・再取込用)。
+  try {
+    const blob = new Blob([new TextEncoder().encode(text) as BlobPart], { type: 'text/csv' });
+    const { url } = await getRepo().uploadDownloadFile(runFolder, fileName, blob);
+    await getRepo().createDownload({
+      type: 'merged', downloadedAt: new Date().toISOString(),
+      fileName, folder: runFolder, fileUrl: url, itemCount: rowCount || undefined,
+    });
+  } catch (e) {
+    // 保存に失敗しても取込は続行できる (マージ結果はメモリ上にある)。
+    console.warn('[mikke/downloadFlow] マージ CSV の保存に失敗:', (e as Error).message);
+  }
+
+  const parsed = await parseCsvAsync(text);
+  return { parsed, fileName, rowCount: rowCount || parsed.rows.length };
 }

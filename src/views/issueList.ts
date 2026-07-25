@@ -11,7 +11,7 @@ import { relayHealth, relayGetIssue } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
-import { acquireAndStore, parseVulnReport, ALL_DOWNLOAD_TYPES } from '../lib/downloadFlow';
+import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
 import type { ManagedIssue } from '../types';
 
@@ -84,7 +84,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     openModal(rootEl, {
       title: `一括更新（${label}）`,
       body: el('div', { style: 'line-height:1.8' }, [
-        el('p', { style: 'margin:0 0 var(--s-3)' }, ['検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得し、「ダウンロードデータ」に保存します。']),
+        el('p', { style: 'margin:0 0 var(--s-3)' }, [
+          '検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得して「ダウンロードデータ」に保存し、',
+          'それらを突合した ', el('b', {}, ['マージ CSV']), ' を生成して取り込みます。',
+        ]),
         el('p', { style: 'margin:0;color:var(--ink-2)' }, [desc]),
       ]),
       primaryLabel: '取得して更新',
@@ -100,10 +103,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       if (res.errors.length) {
         toast(rootEl, `一部レポートの保存に失敗 (成功 ${res.saved} / 失敗 ${res.errors.length}) — ${res.errors[0]}`, 'warn', 10000);
       }
-      // 2) 脆弱性レポート (zip 内 CSV) をパース
-      const parsed = await parseVulnReport(res.items);
-      if (!parsed || !parsed.headers.length || !parsed.rows.length) {
-        toast(rootEl, '脆弱性レポート(CSV)が取得できませんでした。レポートの保存のみ完了しました。', 'warn', 10000);
+      // 2) DL 済みファイルから「脆弱性＋資産」マージ CSV を生成 (relay /mikke/merge)。
+      //    生成 CSV は通常の CSV 取込と同じ列構成。SP にも保存し一覧に記録される。
+      const merged = await mergeAndStore(res.items, res.runFolder);
+      const parsed = merged.parsed;
+      if (!parsed.headers.length || !parsed.rows.length) {
+        toast(rootEl, 'マージ CSV が空でした。レポートの保存のみ完了しました。', 'warn', 10000);
         return;
       }
       // 3) 取込計画 (モード反映) → 適用

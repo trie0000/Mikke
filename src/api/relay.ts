@@ -165,6 +165,35 @@ export interface RelayDownloadResult {
   items: RelayDownloadItem[];
 }
 
+/** /mikke/merge が返すマージ結果 (取込用 CSV 1 ファイル)。 */
+export interface RelayMergeResult {
+  ok: boolean;
+  /** 生成された CSV のファイル名 (例: merged_2026_Jul_05.csv)。 */
+  fileName: string;
+  /** CSV 本体 (base64)。通常の CSV 取込と同じ列構成。 */
+  contentBase64: string;
+  /** データ行数 (任意・参考)。 */
+  rowCount?: number;
+}
+
+/** /mikke/merge — ダウンロード済みファイル群から「脆弱性＋資産」マージ CSV を生成 (アダプタ委譲)。
+ *  実装は relay 側の mikke-scanner-adapter.ps1 の Invoke-MikkeScannerMerge に委譲。 */
+export async function relayMergeReports(
+  files: { type: string; fileName: string; contentBase64: string }[],
+): Promise<RelayMergeResult> {
+  const r = await fetch(`${getRelayBase()}/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    throw new Error(detail);
+  }
+  return await r.json();
+}
+
 /** /mikke/download — 検査ツールから脆弱性/資産データを一括取得 (アダプタ委譲)。
  *  実装は relay 側の mikke-scanner-adapter.ps1 の Invoke-MikkeScannerDownload に委譲。
  *  未配置 (501) / アダプタエラー (502) は detail をそのままエラーメッセージにする。 */

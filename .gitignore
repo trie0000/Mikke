@@ -18,6 +18,7 @@ dist/*
 !dist/mikke-scanner-adapter.example.ps1
 !dist/SCANNER-ADAPTER-SPEC.md
 !dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md
+!dist/sample-import-template.csv
 !dist/SETUP-README.md
 !dist/README.md
 *.log

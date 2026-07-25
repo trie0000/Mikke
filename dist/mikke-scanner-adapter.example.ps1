@@ -150,3 +150,72 @@ function Invoke-MikkeScannerDownload {
 
     throw 'mikke-scanner-adapter: Invoke-MikkeScannerDownload は未実装です。example をコピーして実装してください。'
 }
+
+# =============================================================================
+# 契約 (マージ CSV 生成 — /mikke/merge が呼び出す I/F。変更しないこと):
+#   関数名:  Invoke-MikkeScannerMerge
+#   入力:    -Files <object[]>
+#            Invoke-MikkeScannerDownload で取得済みのファイル群。各要素は
+#            @{ type; fileName; contentBase64 }  (type = vuln/ip/iprange/domain/cert/webapps)
+#   戻り値:  hashtable
+#     @{
+#       fileName      = 'merged_2026_Jul_05.csv'  # 生成した CSV のファイル名
+#       contentBase64 = <string>                  # CSV 本体の Base64 (UTF-8。BOM 付き推奨)
+#       rowCount      = <int>                     # 任意。データ行数
+#     }
+#   ・脆弱性レポート(vuln)を主表とし、資産レポート(ip/domain/cert/webapps 等)の情報を
+#     資産キー(FQDN/IP 等)で突合して列を付加した「1 枚の CSV」を作る。
+#   ・★ 生成する CSV は「Mikke の通常の CSV 取込メニューで取り込む CSV と同じ列構成」
+#     にすること。最低限 'Issue Instance ID'(一意キー) / 'Title' / 'Severity' /
+#     'Status' / 'First Seen' / 'Last Seen' を含め、資産列やその他の列は任意に追加してよい
+#     (追加列は Mikke 側で Scan_<列名> として保持・表示できる)。
+#   ・1 脆弱性 = 1 行。資産が複数紐づく場合は区切り文字(| 等)で 1 セルにまとめてよい。
+#   ・エラーは throw する (relay が 502 + メッセージで UI に返す)。
+#   詳細は SCANNER-ADAPTER-SPEC.md §10 を参照。
+# =============================================================================
+
+function Invoke-MikkeScannerMerge {
+    param([Parameter(Mandatory = $true)][object[]]$Files)
+
+    # ── TODO: vuln を主表に、資産レポートを突合して 1 枚の CSV を生成する ────────
+    # 参考の流れ:
+    #   1) $Files から type ごとにファイルを取り出し、Base64 をデコード
+    #        $bytes = [Convert]::FromBase64String($f.contentBase64)
+    #      zip なら展開して中の CSV を取り出す (System.IO.Compression.ZipArchive)。
+    #        Add-Type -AssemblyName System.IO.Compression
+    #        Add-Type -AssemblyName System.IO.Compression.FileSystem
+    #   2) 各 CSV を ConvertFrom-Csv でオブジェクト化
+    #        $vuln   = $vulnCsvText   | ConvertFrom-Csv
+    #        $assets = $assetCsvText  | ConvertFrom-Csv
+    #   3) 資産キー(FQDN/IP 等)で索引を作り、脆弱性行に資産列を付加
+    #        $byAsset = @{}
+    #        foreach ($a in $assets) { $byAsset[$a.'Asset'] = $a }
+    #   4) 1 脆弱性 = 1 行で出力オブジェクトを組み立て、CSV 化して Base64 で返す
+    #        $out = foreach ($v in $vuln) {
+    #            $hit = $byAsset[$v.'Asset']
+    #            [pscustomobject][ordered]@{
+    #                'Issue Instance ID' = $v.'Issue Instance ID'
+    #                'Title'             = $v.'Title'
+    #                'Severity'          = $v.'Severity'
+    #                'Status'            = $v.'Status'
+    #                'First Seen'        = $v.'First Seen'
+    #                'Last Seen'         = $v.'Last Seen'
+    #                'Asset'             = $v.'Asset'
+    #                # 資産レポート由来の列を必要なだけ追加 (例):
+    #                'Asset Type'        = if ($hit) { $hit.'Type' } else { '' }
+    #                'Asset Owner'       = if ($hit) { $hit.'Owner' } else { '' }
+    #            }
+    #        }
+    #        $csvText = ($out | ConvertTo-Csv -NoTypeInformation) -join "`r`n"
+    #        # UTF-8 BOM 付きにすると Excel で開いても文字化けしない
+    #        $bom   = [char]0xFEFF
+    #        $bytesOut = [System.Text.Encoding]::UTF8.GetBytes($bom + $csvText)
+    #        return @{
+    #            fileName      = 'merged_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss')
+    #            contentBase64 = [Convert]::ToBase64String($bytesOut)
+    #            rowCount      = @($out).Count
+    #        }
+    # ──────────────────────────────────────────────────────────────────────────
+
+    throw 'mikke-scanner-adapter: Invoke-MikkeScannerMerge は未実装です。example をコピーして実装してください。'
+}
