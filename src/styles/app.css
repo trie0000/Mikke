@@ -154,6 +154,11 @@
   background: var(--accent-soft); color: var(--ink); border-left-color: var(--accent);
 }
 #mikke-root .mikke-nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+/* SP のリストを別タブで開く外部リンク (Mikke の画面遷移ではないので控えめに) */
+#mikke-root .mikke-nav-item--external { text-decoration: none; color: var(--ink-3); }
+#mikke-root .mikke-nav-item--external:hover { color: var(--ink-2); }
+#mikke-root .mikke-nav-ext { margin-left: auto; display: inline-flex; opacity: 0.6; }
+#mikke-root .mikke-nav-ext svg { width: 12px; height: 12px; }
 #mikke-root .mikke-side-foot {
   margin-top: auto; padding: var(--s-4) var(--s-5); font-size: var(--fs-xs); color: var(--ink-4);
 }

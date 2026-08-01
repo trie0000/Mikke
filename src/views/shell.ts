@@ -10,6 +10,8 @@ import { renderAssetsView } from './assetsView';
 import { renderDownloadsView } from './downloadsView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
+import { resolveSiteUrl } from '../utils/spSites';
+import { LIST_VULNRESPONSE } from '../api/sp/schema';
 import { toast } from '../components/toast';
 import { checkBundleUpdate, stableBuildId } from '../utils/bundleVersion';
 import { checkRelayUpdate } from '../utils/relayUpdate';
@@ -225,6 +227,26 @@ function renderSidebar(): HTMLElement {
       onclick: () => setState({ view: view as 'issues' | 'import' | 'assets' | 'downloads', selectedIssueId: null }),
     }, [el('span', { html: icon(ic) }), el('span', {}, [label])]);
 
+  // 資産管理者への連携用リスト (SharePoint リスト) を別タブで開く外部リンク。
+  // Mikke の画面ではなく SP のリストを開くので、他の項目とは別扱い (is-active にしない)。
+  const listLink = (): HTMLElement | null => {
+    // 選択済みサイト、無ければ現在のページのサイト (リポジトリと同じ解決順)。
+    // mock / SP 以外では空になるのでリンクを出さない。
+    const site = resolveSiteUrl();
+    if (!site) return null;
+    const href = `${site.replace(/\/$/, '')}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`;
+    return el('a', {
+      class: 'mikke-nav-item mikke-nav-item--external',
+      href, target: '_blank', rel: 'noopener noreferrer',
+      title: '資産管理者に対応状況を記入してもらうリストを別タブで開きます',
+    }, [
+      el('span', { html: icon('building') }),
+      el('span', {}, ['連携用リスト']),
+      el('span', { class: 'mikke-nav-ext', html: icon('external') }),
+    ]);
+  };
+  const extLink = listLink();
+
   let buildId = '';
   try { buildId = __MIKKE_BUILD_ID__; } catch { /* noop */ }
 
@@ -233,6 +255,7 @@ function renderSidebar(): HTMLElement {
     item('import', 'upload', 'CSV 取込'),
     item('assets', 'building', '資産管理'),
     item('downloads', 'download', 'ダウンロードデータ'),
+    ...(extLink ? [extLink] : []),
     el('div', { class: 'mikke-side-foot' }, [
       el('div', {}, [`mode: ${getRepoMode()}`]),
       el('div', { style: 'margin-top:2px;word-break:break-all' }, [buildId]),

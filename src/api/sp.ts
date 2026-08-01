@@ -13,7 +13,7 @@ import {
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
-import { getSelectedSiteUrl } from '../utils/spSites';
+import { getSelectedSiteUrl, currentWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
 
@@ -72,13 +72,9 @@ export class SpRepository implements Repository {
   }
 
   private currentWebUrl(): string {
-    const ctx = (window as unknown as { _spPageContextInfo?: { webAbsoluteUrl?: string } })._spPageContextInfo;
-    if (ctx?.webAbsoluteUrl) return ctx.webAbsoluteUrl;
-    // モダン SP ページでは _spPageContextInfo が無いことがある。
-    // location.pathname の /sites/<x> or /teams/<x> から web 絶対 URL を組む。
-    const m = location.pathname.match(/^(\/(?:sites|teams)\/[^/]+)/i);
-    if (m) return location.origin + m[1];
-    return location.origin;
+    // 解決ロジックは spSites に集約 (画面のリンク等と食い違わないように)。
+    // どちらも取れない時だけ origin にフォールバックする。
+    return currentWebUrl() || location.origin;
   }
 
   private async getDigest(): Promise<string> {
