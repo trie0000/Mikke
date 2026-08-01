@@ -152,6 +152,24 @@ export interface ImportSummary {
   rowCount: number;
 }
 
+/** リスト構築の 1 工程の結果。 */
+export interface SetupStep {
+  /** 工程の種別 (例: 'リスト' / '列' / '表示名' / 'フォーム書式設定')。 */
+  category: string;
+  /** 対象 (リスト名 / 内部名 など)。 */
+  target: string;
+  outcome: 'created' | 'updated' | 'skipped' | 'failed';
+  detail?: string;
+}
+
+/** リスト構築の実行結果 (工程ごとの 作成/更新/スキップ/失敗 の集計)。 */
+export interface SetupResult {
+  steps: SetupStep[];
+  counts: { created: number; updated: number; skipped: number; failed: number };
+  /** 作成したリストを開く URL (mock では空)。 */
+  listUrl: string;
+}
+
 /** ログインユーザー (SP /_api/web/currentuser)。 */
 export interface SiteUser {
   displayName: string;

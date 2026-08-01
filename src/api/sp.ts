@@ -2,14 +2,17 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason, DownloadRecord, DownloadType } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason, DownloadRecord, DownloadType, SetupStep, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
   LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG, LIST_DOWNLOADS,
+  LIST_VULNRESPONSE, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_VIEW_FIELDS,
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs, downloadFieldSpecs,
+  vulnResponseFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
+import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { getSelectedSiteUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -27,6 +30,24 @@ async function spErrorText(r: Response): Promise<string> {
     } catch { /* JSON でなければ生テキスト */ }
     return `- ${t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
   } catch { return ''; }
+}
+
+/** 構築工程の記録係。工程ごとの 作成/更新/スキップ/失敗 を集計する。 */
+class StepReporter {
+  private readonly steps: SetupStep[] = [];
+
+  record(category: string, target: string, outcome: SetupStep['outcome'], detail?: string): void {
+    this.steps.push({ category, target, outcome, detail });
+    const mark = { created: '+', updated: '~', skipped: '=', failed: 'x' }[outcome];
+    const line = `[mikke/setup] [${mark}] ${category}: ${target}${detail ? ` — ${detail}` : ''}`;
+    if (outcome === 'failed') console.error(line); else console.log(line);
+  }
+
+  result(listUrl: string): SetupResult {
+    const counts = { created: 0, updated: 0, skipped: 0, failed: 0 };
+    for (const s of this.steps) counts[s.outcome]++;
+    return { steps: this.steps, counts, listUrl };
+  }
 }
 
 /** 旧「特定理由」列 (IdentifyReason) を「特定根拠」(IdentifyEvidence) に畳み込む。
@@ -127,43 +148,52 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_DOWNLOADS, downloadFieldSpecs());
   }
 
-  private async ensureList(title: string, fields: FieldSpec[]): Promise<void> {
+  private async ensureList(title: string, fields: FieldSpec[], rep?: StepReporter): Promise<void> {
     // リスト存在確認 (なければ作成)。
     let exists = true;
     try {
       await this.spGet(`/_api/web/lists/getbytitle('${encodeURIComponent(title)}')?$select=Id`);
     } catch { exists = false; }
     if (!exists) {
+      // ContentTypesEnabled: true にするとフォームに「コンテンツ タイプ」選択欄が出る。
+      // false でも /_api/.../ContentTypes は REST から触れる (フォーム書式設定に必要)。
       await this.spPost(`/_api/web/lists`, {
         __metadata: { type: 'SP.List' },
         Title: title,
         BaseTemplate: 100, // Generic List
         ContentTypesEnabled: false,
       });
+      rep?.record('リスト', title, 'created');
+    } else {
+      rep?.record('リスト', title, 'skipped', '既に存在する');
     }
-    await this.ensureFields(title, fields);
+    await this.ensureFields(title, fields, rep);
   }
 
-  private async ensureFields(title: string, fields: FieldSpec[]): Promise<void> {
+  /** 列は必ず InternalName で突合する。
+   *  表示名 (Title) は日本語に変えることがあるため、Title で突合すると
+   *  「列が無い」と誤判定して毎回作り直しを試みることになる。 */
+  private async ensureFields(title: string, fields: FieldSpec[], rep?: StepReporter): Promise<void> {
     const existing = await this.spGet(
-      `/_api/web/lists/getbytitle('${encodeURIComponent(title)}')/fields?$select=Title,TypeAsString`,
+      `/_api/web/lists/getbytitle('${encodeURIComponent(title)}')/fields?$select=InternalName,Title,TypeAsString`,
     );
     const have = new Map<string, string>();
-    for (const f of existing.d.results as { Title: string; TypeAsString: string }[]) {
-      have.set(f.Title, f.TypeAsString);
+    for (const f of existing.d.results as { InternalName: string; TypeAsString: string }[]) {
+      have.set(f.InternalName, f.TypeAsString);
     }
     const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(title)}')`;
     for (const spec of fields) {
       const cur = have.get(spec.name);
       if (cur && cur === spFieldTypeString(spec.type)) {
         if (spec.indexed) await this.tryIndex(listPath, spec.name);
+        rep?.record('列', spec.name, 'skipped', '既に存在する');
         continue;
       }
-      // 型不一致の既存列は DELETE してから再作成。
+      // 型不一致の既存列は DELETE してから再作成 (※データは失われる)。
       if (cur) {
         try {
           await this.spPost(
-            `${listPath}/fields/getbytitle('${encodeURIComponent(spec.name)}')`,
+            `${listPath}/fields/getbyinternalnameortitle('${encodeURIComponent(spec.name)}')`,
             undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' },
           );
         } catch { /* 削除不可列はスキップ */ }
@@ -171,10 +201,146 @@ export class SpRepository implements Repository {
       try {
         await this.spPost(`${listPath}/fields`, toFieldSchema(spec));
         if (spec.indexed) await this.tryIndex(listPath, spec.name);
-      } catch (e) { console.warn(`[mikke] ensureField ${spec.name} failed:`, e); }
+        rep?.record('列', spec.name, 'created', cur ? `型変更 ${cur} → ${spFieldTypeString(spec.type)}` : undefined);
+      } catch (e) {
+        console.warn(`[mikke] ensureField ${spec.name} failed:`, e);
+        rep?.record('列', spec.name, 'failed', (e as Error).message);
+      }
     }
     // 列を作った可能性があるので実在列キャッシュを無効化 (次の書込で再取得)。
     this.fieldNamesCache = null;
+  }
+
+  // ── 連携用リスト (資産管理者向け) の構築 ───────────────────────────────────
+  // Mikke の管理表 (MikkeManagedIssues) とは別物。フォームを整形して、
+  // 脆弱性情報はヘッダーのカードで読み取り専用表示、本体は対応状況の入力欄だけにする。
+  // 設定画面から明示的に実行する (フォーム書式は上書きなので自動では流さない)。
+
+  /** 列を InternalName で引けるようにして返す (SchemaXml / 条件付き数式つき)。 */
+  private async loadFieldMap(listTitle: string): Promise<Map<string, any>> {
+    const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`;
+    const j = await this.spGet(
+      `${listPath}/fields?$select=InternalName,Title,SchemaXml,${CONDITIONAL_FORMULA_PROPERTY}&$top=500`,
+    );
+    const map = new Map<string, any>();
+    for (const f of j.d.results) map.set(f.InternalName, f);
+    return map;
+  }
+
+  private fieldPath(listTitle: string, internalName: string): string {
+    return `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`
+      + `/fields/getbyinternalnameortitle('${encodeURIComponent(internalName)}')`;
+  }
+
+  /** SchemaXml でしか設定できない属性 (Decimals / RichTextMode) を差し込む。 */
+  private async applySchemaXmlAttributes(listTitle: string, fields: FieldSpec[], map: Map<string, any>, rep: StepReporter): Promise<void> {
+    for (const spec of fields) {
+      if (!spec.schemaXmlAttributes) continue;
+      const field = map.get(spec.name);
+      if (!field) { rep.record('列(SchemaXml)', spec.name, 'failed', '列が見つかりません'); continue; }
+      let xml: string = field.SchemaXml ?? '';
+      let changed = false;
+      for (const [attr, value] of Object.entries(spec.schemaXmlAttributes)) {
+        const re = new RegExp(`\\s${attr}="[^"]*"`);
+        if (re.test(xml)) {
+          if (new RegExp(`\\s${attr}="${value}"`).test(xml)) continue;
+          xml = xml.replace(re, ` ${attr}="${value}"`);
+        } else {
+          xml = xml.replace(/^<Field\b/, `<Field ${attr}="${value}"`);
+        }
+        changed = true;
+      }
+      if (!changed) { rep.record('列(SchemaXml)', spec.name, 'skipped', '設定済み'); continue; }
+      try {
+        await this.spPost(this.fieldPath(listTitle, spec.name),
+          { __metadata: { type: field.__metadata.type }, SchemaXml: xml },
+          { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+        rep.record('列(SchemaXml)', spec.name, 'updated', JSON.stringify(spec.schemaXmlAttributes));
+      } catch (e) { rep.record('列(SchemaXml)', spec.name, 'failed', (e as Error).message); }
+    }
+  }
+
+  /** 表示名だけを日本語にする (内部名は変わらない)。 */
+  private async applyDisplayNames(listTitle: string, fields: FieldSpec[], map: Map<string, any>, rep: StepReporter): Promise<void> {
+    for (const spec of fields) {
+      if (!spec.displayName) continue;
+      const field = map.get(spec.name);
+      if (!field) { rep.record('表示名', spec.name, 'failed', '列が見つかりません'); continue; }
+      if (field.Title === spec.displayName) { rep.record('表示名', spec.name, 'skipped', '設定済み'); continue; }
+      try {
+        await this.spPost(this.fieldPath(listTitle, spec.name),
+          { __metadata: { type: field.__metadata.type }, Title: spec.displayName },
+          { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+        rep.record('表示名', `${spec.name} → ${spec.displayName}`, 'updated');
+      } catch (e) { rep.record('表示名', spec.name, 'failed', (e as Error).message); }
+    }
+  }
+
+  /** フォーム本体の表示/非表示 (条件付き数式)。 */
+  private async applyConditionalFormulas(listTitle: string, fields: FieldSpec[], map: Map<string, any>, rep: StepReporter): Promise<void> {
+    for (const spec of fields) {
+      if (!spec.conditionalFormula) continue;
+      const field = map.get(spec.name);
+      if (!field) { rep.record('条件付き数式', spec.name, 'failed', '列が見つかりません'); continue; }
+      if (field[CONDITIONAL_FORMULA_PROPERTY] === spec.conditionalFormula) {
+        rep.record('条件付き数式', spec.name, 'skipped', '設定済み'); continue;
+      }
+      try {
+        await this.spPost(this.fieldPath(listTitle, spec.name),
+          { __metadata: { type: field.__metadata.type }, [CONDITIONAL_FORMULA_PROPERTY]: spec.conditionalFormula },
+          { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+        rep.record('条件付き数式', spec.name, 'updated', spec.conditionalFormula);
+      } catch (e) { rep.record('条件付き数式', spec.name, 'failed', (e as Error).message); }
+    }
+  }
+
+  /** 既定ビューに列を出す (Title は LinkTitle が既にあるので入れない)。 */
+  private async ensureViewFields(listTitle: string, viewFields: string[], rep: StepReporter): Promise<void> {
+    const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`;
+    try {
+      const cur = await this.spGet(`${listPath}/DefaultView/ViewFields`);
+      const present: string[] = cur.d?.Items?.results ?? [];
+      const missing = viewFields.filter((f) => !present.includes(f));
+      if (!missing.length) { rep.record('既定ビュー', viewFields.join(', '), 'skipped', '設定済み'); return; }
+      for (const f of missing) {
+        await this.spPost(`${listPath}/DefaultView/ViewFields/addviewfield('${encodeURIComponent(f)}')`, {});
+      }
+      rep.record('既定ビュー', missing.join(', '), 'updated', `${missing.length} 列を追加`);
+    } catch (e) { rep.record('既定ビュー', viewFields.join(', '), 'failed', (e as Error).message); }
+  }
+
+  /** 既定コンテンツタイプにフォームヘッダーの書式設定を書き込む。 */
+  private async applyFormFormatter(listTitle: string, formatter: string, rep: StepReporter): Promise<void> {
+    const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`;
+    try {
+      const cts = await this.spGet(`${listPath}/ContentTypes?$select=StringId,Name,ClientFormCustomFormatter`);
+      const list: any[] = cts.d?.results ?? [];
+      // 既定コンテンツタイプ = 先頭。フォルダー (0x0120…) は対象外。
+      const ct = list.find((c) => !String(c.StringId).startsWith('0x0120'));
+      if (!ct) { rep.record('フォーム書式設定', '既定コンテンツタイプ', 'failed', '見つかりません'); return; }
+      if (ct.ClientFormCustomFormatter === formatter) {
+        rep.record('フォーム書式設定', ct.Name, 'skipped', '設定済み'); return;
+      }
+      await this.spPost(`${listPath}/ContentTypes('${encodeURIComponent(ct.StringId)}')`,
+        { __metadata: { type: 'SP.ContentType' }, ClientFormCustomFormatter: formatter },
+        { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+      rep.record('フォーム書式設定', ct.Name, 'updated', ct.StringId);
+    } catch (e) { rep.record('フォーム書式設定', '既定コンテンツタイプ', 'failed', (e as Error).message); }
+  }
+
+  /** 連携用リストを構築する (冪等。何度実行してもよい)。 */
+  async ensureVulnResponseList(): Promise<SetupResult> {
+    const rep = new StepReporter();
+    const fields = vulnResponseFieldSpecs();
+    await this.ensureList(LIST_VULNRESPONSE, fields, rep);
+    // 作成直後の状態で引き直し、以降の工程はこれを見る
+    const map = await this.loadFieldMap(LIST_VULNRESPONSE);
+    await this.applySchemaXmlAttributes(LIST_VULNRESPONSE, fields, map, rep);
+    await this.applyDisplayNames(LIST_VULNRESPONSE, fields, map, rep);
+    await this.ensureViewFields(LIST_VULNRESPONSE, VULNRESPONSE_VIEW_FIELDS, rep);
+    await this.applyFormFormatter(LIST_VULNRESPONSE, buildVulnResponseFormFormatter(), rep);
+    await this.applyConditionalFormulas(LIST_VULNRESPONSE, fields, map, rep);
+    return rep.result(`${this.webUrl}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`);
   }
 
   // ── 実在列チェック ─────────────────────────────────────────────────────────
@@ -210,7 +376,8 @@ export class SpRepository implements Repository {
   private async tryIndex(listPath: string, fieldName: string): Promise<void> {
     try {
       await this.spPost(
-        `${listPath}/fields/getbytitle('${encodeURIComponent(fieldName)}')`,
+        // 表示名を日本語化しても引けるよう内部名で引く。
+        `${listPath}/fields/getbyinternalnameortitle('${encodeURIComponent(fieldName)}')`,
         { __metadata: { type: 'SP.Field' }, Indexed: true },
         { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' },
       );

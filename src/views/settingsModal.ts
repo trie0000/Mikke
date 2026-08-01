@@ -15,7 +15,7 @@ import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
 import { performRelayUpdate } from '../utils/relayUpdate';
 import { RELEASE_NOTES, type ReleaseNote } from '../lib/releaseNotes';
 import { getState, setState } from '../state';
-import type { ConditionRule, ConditionGroup, ColumnType, MikkeSettings } from '../types';
+import type { ConditionRule, ConditionGroup, ColumnType, MikkeSettings, SetupResult } from '../types';
 
 interface SettingPanel { body: HTMLElement; save?: () => Promise<void> | void; }
 interface SettingItem { key: string; label: string; danger?: boolean; render: (root: HTMLElement) => Promise<SettingPanel> | SettingPanel; }
@@ -150,6 +150,9 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
         ] },
         { title: 'ダウンロード', items: [
           { key: 'downloadFolder', label: '保存先フォルダ', render: () => renderDownloadPanel(root) },
+        ] },
+        { title: '連携', items: [
+          { key: 'vulnResponseList', label: '資産管理者向けリスト', render: () => renderVulnResponsePanel(root) },
         ] },
       ],
     },
@@ -571,6 +574,75 @@ async function renderDownloadPanel(root: HTMLElement): Promise<SettingPanel> {
       toast(root, '保存先フォルダを保存しました', 'ok');
     },
   };
+}
+
+// ── 共通設定: 資産管理者への連携用リスト ──
+function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
+  const result = el('div', { style: 'margin-top:var(--s-5)' });
+  const runBtn = el('button', { class: 'mikke-btn mikke-btn--primary', type: 'button' }, ['リストを作成 / 整形する']);
+
+  const countLine = (c: SetupResult['counts']): HTMLElement =>
+    el('div', { style: 'font-size:var(--fs-md);color:var(--ink);margin-bottom:var(--s-3)' }, [
+      `作成 ${c.created} / 更新 ${c.updated} / スキップ ${c.skipped} / 失敗 ${c.failed}`,
+    ]);
+
+  const stepRow = (s: SetupResult['steps'][number]): HTMLElement => {
+    const mark = { created: '+', updated: '~', skipped: '=', failed: '×' }[s.outcome];
+    const color = s.outcome === 'failed' ? 'var(--danger)'
+      : s.outcome === 'skipped' ? 'var(--ink-3)' : 'var(--ink-2)';
+    return el('div', {
+      style: `display:flex;gap:var(--s-3);padding:var(--s-1) 0;font-size:var(--fs-sm);color:${color}`,
+    }, [
+      el('span', { style: 'width:1.2em;flex-shrink:0;font-family:var(--font-mono)' }, [mark]),
+      el('span', { style: 'flex-shrink:0;min-width:8em' }, [s.category]),
+      el('span', { style: 'flex:1;min-width:0;word-break:break-all' }, [s.target + (s.detail ? ` — ${s.detail}` : '')]),
+    ]);
+  };
+
+  runBtn.onclick = async () => {
+    runBtn.setAttribute('disabled', '');
+    clear(result);
+    result.appendChild(el('div', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, ['実行中…']));
+    try {
+      const res = await getRepo().ensureVulnResponseList();
+      clear(result);
+      result.append(
+        countLine(res.counts),
+        ...(res.listUrl ? [el('div', { style: 'margin-bottom:var(--s-3)' }, [
+          el('a', { href: res.listUrl, target: '_blank', rel: 'noopener noreferrer',
+            style: 'color:var(--accent-strong);font-size:var(--fs-sm)' }, ['リストを開く']),
+        ])] : []),
+        el('div', {
+          style: 'max-height:16em;overflow:auto;border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-3) var(--s-4);background:var(--paper)',
+        }, res.steps.map(stepRow)),
+      );
+      toast(root, res.counts.failed
+        ? `リスト整形: 失敗 ${res.counts.failed} 件（詳細は設定画面）`
+        : `リストを整形しました（作成 ${res.counts.created} / 更新 ${res.counts.updated}）`,
+        res.counts.failed ? 'warn' : 'ok', 8000);
+    } catch (e) {
+      clear(result);
+      result.appendChild(el('div', { class: 'mikke-error' }, [`実行に失敗しました: ${(e as Error).message}`]));
+    } finally {
+      runBtn.removeAttribute('disabled');
+    }
+  };
+
+  const body = el('div', {}, [
+    panelHead('資産管理者への連携用リスト',
+      'Mikke の管理表とは別に、資産管理者に対応状況を記入してもらう SharePoint リスト (MikkeVulnResponse) を作成・整形します。'
+      + '脆弱性情報はフォーム上部にカードで読み取り専用表示し、本体は対応状況の入力欄だけになります。'),
+    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
+      el('li', {}, ['何度実行しても同じ状態になります（既にある列や設定はスキップ）。']),
+      el('li', {}, ['列の内部名は英語のまま、表示名だけ日本語にします。']),
+      el('li', {}, ['脆弱性情報の列は新規フォームでのみ入力でき、登録後は読み取り専用になります。']),
+      el('li', {}, ['フォームの書式設定は上書きされます。SharePoint 側で手を入れている場合は注意してください。']),
+      el('li', {}, ['Mikke の管理表 (MikkeManagedIssues) には影響しません。']),
+    ]),
+    runBtn,
+    result,
+  ]);
+  return { body };
 }
 
 // ── その他: 接続 ──

@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
 
 export interface Repository {
@@ -58,6 +58,8 @@ export interface Repository {
   deleteDocFile(serverRelativeUrl: string): Promise<void>;
   /** 保存済みファイルをブラウザで開く/保存するための href を返す (SP=絶対URL / mock=data URL)。 */
   docFileHref(serverRelativeUrl: string): Promise<string>;
+  /** 資産管理者への連携用リストを構築する (冪等)。設定画面から明示的に実行する。 */
+  ensureVulnResponseList(): Promise<SetupResult>;
 }
 
 /** 取込履歴の 1 レコード。 */

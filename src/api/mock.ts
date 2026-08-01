@@ -1,8 +1,9 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
+import { vulnResponseFieldSpecs } from './sp/schema';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
@@ -169,6 +170,27 @@ export class MockRepository implements Repository {
   async docFileHref(serverRelativeUrl: string): Promise<string> {
     const store = load<Record<string, string>>(LS_DOCFILES, {});
     return store[serverRelativeUrl] ?? '';
+  }
+
+  /** モックでは SP に書けないので、工程の見え方だけ再現する (UI 検証用)。 */
+  async ensureVulnResponseList(): Promise<SetupResult> {
+    const steps: SetupStep[] = [
+      { category: 'リスト', target: 'MikkeVulnResponse', outcome: 'created' },
+      ...vulnResponseFieldSpecs().map((f) => ({
+        category: '列', target: f.name, outcome: 'created' as const,
+      })),
+      ...vulnResponseFieldSpecs().filter((f) => f.displayName).map((f) => ({
+        category: '表示名', target: `${f.name} → ${f.displayName}`, outcome: 'updated' as const,
+      })),
+      { category: '既定ビュー', target: 'ビュー列', outcome: 'updated' },
+      { category: 'フォーム書式設定', target: 'アイテム', outcome: 'updated' },
+      ...vulnResponseFieldSpecs().filter((f) => f.conditionalFormula).map((f) => ({
+        category: '条件付き数式', target: f.name, outcome: 'updated' as const,
+      })),
+    ];
+    const counts = { created: 0, updated: 0, skipped: 0, failed: 0 };
+    for (const s of steps) counts[s.outcome]++;
+    return { steps, counts, listUrl: '' };
   }
 
   // ── 対応履歴 ──────────────────────────────────────────────────────────────
