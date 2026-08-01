@@ -6,6 +6,7 @@ dist/*
 !dist/install.html
 !dist/install-loader.html
 !dist/bookmarklet.txt
+!dist/mikke.loader.js
 !dist/mikke.bundle.js
 !dist/version.txt
 # relay self-update 用の配置物 (= build.js が scripts/ からコピー + 自動生成)。

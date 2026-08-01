@@ -1,10 +1,11 @@
 {
-  "version": "1.0.10",
-  "buildTime": "2026-08-01T18:26:44+09:00",
+  "version": "1.0.11",
+  "buildTime": "2026-08-01T19:13:00+09:00",
   "files": [
     "mikke-relay.ps1",
     "mikke-launch.ps1",
     "mikke-relay.bat",
-    "mikke-launch.bat"
+    "mikke-launch.bat",
+    "mikke.loader.js"
   ]
 }

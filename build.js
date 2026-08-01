@@ -163,7 +163,11 @@ if (watch || serve) {
     // relay-version.txt = self-update manifest (UI が SP の値と比較)
     // .example.* は配布はするが self-update の管理対象 (manifest) には含めない
     // (relay 側の許可リスト外ファイルを送ると self-update 全体が 400 になる)。
-    const manifest = relayFiles.filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'));
+    // mikke.loader.js はビルド生成物 (上で dist/ に直接出力済み) なので scripts/ には無いが、
+    // ランチャーが CDP 注入で読むため、self-update の配布対象に含める。
+    const manifest = relayFiles
+      .filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'))
+      .concat(fs.existsSync('dist/mikke.loader.js') ? ['mikke.loader.js'] : []);
     fs.writeFileSync('dist/relay-version.txt',
       JSON.stringify({ version: relayVersion, buildTime, files: manifest }, null, 2) + '\n');
     console.log(`[relay] dist/relay-version.txt: v${relayVersion} (${manifest.length} files)`);
