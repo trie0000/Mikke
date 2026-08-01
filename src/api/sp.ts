@@ -7,7 +7,7 @@ import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
   LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG, LIST_DOWNLOADS,
-  LIST_VULNRESPONSE, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_VIEW_FIELDS,
+  LIST_VULNRESPONSE, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS,
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs, downloadFieldSpecs,
   vulnResponseFieldSpecs,
   toFieldSchema, spFieldTypeString, type FieldSpec,
@@ -272,20 +272,28 @@ export class SpRepository implements Repository {
     }
   }
 
-  /** フォーム本体の表示/非表示 (条件付き数式)。 */
+  /** フォーム本体の表示/非表示 (条件付き数式)。
+   *  ★ 数式を「付ける」だけでなく「外す」ことも行う。定義から conditionalFormula を
+   *    消しても列に古い数式が残っていると、その列はフォームに出ないままになる
+   *    (レイアウト変更で表示に切り替えた列が消えたままになる)。 */
   private async applyConditionalFormulas(listTitle: string, fields: FieldSpec[], map: Map<string, any>, rep: StepReporter): Promise<void> {
     for (const spec of fields) {
-      if (!spec.conditionalFormula) continue;
       const field = map.get(spec.name);
-      if (!field) { rep.record('条件付き数式', spec.name, 'failed', '列が見つかりません'); continue; }
-      if (field[CONDITIONAL_FORMULA_PROPERTY] === spec.conditionalFormula) {
-        rep.record('条件付き数式', spec.name, 'skipped', '設定済み'); continue;
+      if (!field) {
+        if (spec.conditionalFormula) rep.record('条件付き数式', spec.name, 'failed', '列が見つかりません');
+        continue;
+      }
+      const cur = field[CONDITIONAL_FORMULA_PROPERTY] || '';
+      const want = spec.conditionalFormula || '';
+      if (cur === want) {
+        if (want) rep.record('条件付き数式', spec.name, 'skipped', '設定済み');
+        continue;
       }
       try {
         await this.spPost(this.fieldPath(listTitle, spec.name),
-          { __metadata: { type: field.__metadata.type }, [CONDITIONAL_FORMULA_PROPERTY]: spec.conditionalFormula },
+          { __metadata: { type: field.__metadata.type }, [CONDITIONAL_FORMULA_PROPERTY]: want },
           { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
-        rep.record('条件付き数式', spec.name, 'updated', spec.conditionalFormula);
+        rep.record('条件付き数式', spec.name, 'updated', want ? want : '解除 (常に表示)');
       } catch (e) { rep.record('条件付き数式', spec.name, 'failed', (e as Error).message); }
     }
   }
@@ -324,13 +332,28 @@ export class SpRepository implements Repository {
     } catch (e) { rep.record('フォーム書式設定', '既定コンテンツタイプ', 'failed', (e as Error).message); }
   }
 
+  /** 旧レイアウトの列を削除する (存在しなければ何もしない)。 */
+  private async removeObsoleteFields(listTitle: string, names: string[], map: Map<string, any>, rep: StepReporter): Promise<void> {
+    for (const name of names) {
+      if (!map.has(name)) { rep.record('旧列の削除', name, 'skipped', '存在しない'); continue; }
+      try {
+        await this.spPost(this.fieldPath(listTitle, name), undefined,
+          { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
+        rep.record('旧列の削除', name, 'updated', '削除しました');
+      } catch (e) { rep.record('旧列の削除', name, 'failed', (e as Error).message); }
+    }
+  }
+
   /** 連携用リストを構築する (冪等。何度実行してもよい)。 */
   async ensureVulnResponseList(): Promise<SetupResult> {
     const rep = new StepReporter();
     const fields = vulnResponseFieldSpecs();
     await this.ensureList(LIST_VULNRESPONSE, fields, rep);
     // 作成直後の状態で引き直し、以降の工程はこれを見る
-    const map = await this.loadFieldMap(LIST_VULNRESPONSE);
+    let map = await this.loadFieldMap(LIST_VULNRESPONSE);
+    // 旧レイアウトの列を消してからビュー/フォームを整える (残っているとフォームに出る)
+    await this.removeObsoleteFields(LIST_VULNRESPONSE, VULNRESPONSE_OBSOLETE_FIELDS, map, rep);
+    map = await this.loadFieldMap(LIST_VULNRESPONSE);
     await this.applySchemaXmlAttributes(LIST_VULNRESPONSE, fields, map, rep);
     await this.applyDisplayNames(LIST_VULNRESPONSE, fields, map, rep);
     await this.ensureViewFields(LIST_VULNRESPONSE, VULNRESPONSE_VIEW_FIELDS, rep);

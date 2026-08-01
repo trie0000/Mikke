@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildVulnResponseHeader, buildVulnResponseFormFormatter } from '../src/api/sp/formFormatter';
-import { vulnResponseFieldSpecs, HIDDEN_UNLESS_NEW, EXCEPTION_REASON_FORMULA, CONDITIONAL_FORMULA_PROPERTY } from '../src/api/sp/schema';
+import { vulnResponseFieldSpecs, HIDDEN_UNLESS_NEW, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_SECTIONS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
 
 /** ツリーを走査して txtContent / style の値 (文字列) を全部集める。 */
 function collectExpressions(node: unknown, out: string[] = []): string[] {
@@ -18,9 +18,9 @@ function collectExpressions(node: unknown, out: string[] = []): string[] {
 }
 
 describe('formFormatter: フォームヘッダーの書式設定', () => {
-  it('キーは headerJSONFormatter (header ではフォームが読まない)', () => {
+  it('キーは headerJSONFormatter / bodyJSONFormatter (header ではフォームが読まない)', () => {
     const parsed = JSON.parse(buildVulnResponseFormFormatter());
-    expect(Object.keys(parsed)).toEqual(['headerJSONFormatter']);
+    expect(Object.keys(parsed).sort()).toEqual(['bodyJSONFormatter', 'headerJSONFormatter']);
   });
 
   it('ルートは縦積み・左寄せ (指定しないとタイトルと段組が横に並ぶ)', () => {
@@ -67,21 +67,43 @@ describe('schema: 連携用リストの列定義', () => {
   });
 
   it('Mikke が書き込む脆弱性情報の列は「新規時だけ入力可」', () => {
-    for (const name of ['IssueInstanceId', 'Severity', 'TargetAsset', 'DueDate']) {
+    for (const name of ['Title', 'IssueInstanceId', 'MgmtNumber', 'DetectionStatus', 'FirstSeen', 'LastSeen']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBe(HIDDEN_UNLESS_NEW);
     }
   });
 
   it('資産管理者の入力欄には表示条件を付けない (常に出す)', () => {
-    for (const name of ['ResponseStatus', 'ResponseDate', 'Responder', 'ResponseNote']) {
+    for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks',
+                        'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
+                        'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBeUndefined();
     }
   });
 
-  it('例外理由は対応状況が例外系のときだけ出す', () => {
-    expect(specs.find((f) => f.name === 'ExceptionReason')?.conditionalFormula).toBe(EXCEPTION_REASON_FORMULA);
-    expect(EXCEPTION_REASON_FORMULA).toContain('リスク受容');
-    expect(EXCEPTION_REASON_FORMULA).toContain('対象外');
+  it('セクションは 資産情報 / 対応 / その他 の 3 つ', () => {
+    expect(VULNRESPONSE_SECTIONS.map((x) => x.displayname)).toEqual(['資産情報', '対応', 'その他']);
+  });
+
+  it('セクションの列はすべて定義済みで、隠し列を含まない', () => {
+    const byName = new Map(specs.map((f) => [f.name, f]));
+    for (const sec of VULNRESPONSE_SECTIONS) {
+      for (const n of sec.fields) {
+        const f = byName.get(n);
+        expect(f, `${sec.displayname} の ${n}`).toBeDefined();
+        // 隠した列はセクションに入れても表示されない (実機で確認済み)
+        expect(f!.conditionalFormula, `${sec.displayname} の ${n}`).toBeUndefined();
+      }
+    }
+  });
+
+  it('旧レイアウトの列は定義に残っていない (削除対象)', () => {
+    for (const n of VULNRESPONSE_OBSOLETE_FIELDS) {
+      expect(specs.find((f) => f.name === n), n).toBeUndefined();
+    }
+  });
+
+  it('書式設定に header と body の両方が入る', () => {
+    expect(Object.keys(JSON.parse(buildVulnResponseFormFormatter())).sort()).toEqual(['bodyJSONFormatter', 'headerJSONFormatter']);
   });
 
   it('リッチテキストは RichTextMode=FullHtml を SchemaXml で入れる', () => {

@@ -203,43 +203,72 @@ export const EXCEPTION_REASON_FORMULA =
   '=if(' + EXCEPTION_STATUSES.map((s) => `[$ResponseStatus] == '${s}'`).join(' || ') + ", 'true', 'false')";
 
 export function vulnResponseFieldSpecs(): FieldSpec[] {
-  // 脆弱性情報 (Mikke が書き込む / ヘッダーのカードで見せる)。本体では新規時のみ入力可。
+  // 脆弱性情報: Mikke が書き込む。ヘッダーのカードで読み取り専用表示するため、
+  // フォーム本体では隠す (新規フォームでだけ入力可 = 手動で 1 件足せる)。
   const pushed = (name: string, displayName: string, extra: Partial<FieldSpec> = {}): FieldSpec => ({
     name, type: 'Text', displayName, conditionalFormula: HIDDEN_UNLESS_NEW, ...extra,
   });
   return [
-    // Title はリスト作成時から存在する (型一致でスキップされ、表示名だけ変わる)。
-    { name: 'Title', type: 'Text', displayName: '件名' },
+    // ── 脆弱性情報 (ヘッダーカード) ──
+    { name: 'Title', type: 'Text', displayName: '脆弱性タイトル', conditionalFormula: HIDDEN_UNLESS_NEW },
     // 突合キー。Mikke 側の Issue Instance ID と 1:1。
     pushed('IssueInstanceId', '脆弱性ID', { indexed: true }),
-    pushed('Severity', '深刻度'),
-    pushed('DetectionStatus', '検知状況'),
-    pushed('TargetAsset', '対象資産'),
-    pushed('BusinessCompany', '事業会社'),
-    pushed('AffiliateCompany', '関連会社'),
     pushed('MgmtNumber', '管理番号'),
-    pushed('FirstSeen', '初回検出日', { type: 'DateTime', dateOnly: true }),
-    pushed('LastSeen', '最終検出日', { type: 'DateTime', dateOnly: true }),
-    pushed('DueDate', '対応期限', { type: 'DateTime', dateOnly: true }),
+    pushed('DetectionStatus', '検知状況'),
+    pushed('FirstSeen', '初回検知日', { type: 'DateTime', dateOnly: true }),
+    pushed('LastSeen', '最終検知日', { type: 'DateTime', dateOnly: true }),
 
-    // ここから下が資産管理者に記入してもらう入力欄 (フォーム本体に残す)。
+    // ── 資産情報 (本体セクション / 資産管理者が修正できる = 数式を付けない) ──
+    { name: 'AssetIp', type: 'Text', displayName: 'IP' },
+    { name: 'AssetFqdn', type: 'Text', displayName: 'FQDN' },
+    { name: 'AssetType', type: 'Text', displayName: '資産タイプ' },
+    { name: 'BusinessCompany', type: 'Text', displayName: '事業会社' },
+    { name: 'AffiliateCompany', type: 'Text', displayName: '管理会社' },
+    { name: 'AssetMgmtId', type: 'Text', displayName: '資産管理ID', indexed: true },
+    { name: 'ExtConnAppId', type: 'Text', displayName: '外部接続申請ID' },
+    { name: 'RelatedAssets', type: 'Note', displayName: '関連資産' },
+    { name: 'IdentifyEvidence', type: 'Note', displayName: '管理事業会社特定の根拠' },
+
+    // ── 対応 (資産管理者が記入) ──
     { name: 'ResponseStatus', type: 'Choice', displayName: '対応状況',
       choices: [...RESPONSE_STATUS_CHOICES], indexed: true },
-    { name: 'ResponseDate', type: 'DateTime', dateOnly: true, displayName: '対応日' },
-    { name: 'Responder', type: 'User', displayName: '対応担当者' },
-    { name: 'ResponseNote', type: 'NoteRich', displayName: '対応内容',
+    { name: 'Responder', type: 'User', displayName: '対応者（AD情報）' },
+    { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: '対応期日' },
+    { name: 'ResponseNote', type: 'NoteRich', displayName: '対応経緯',
       schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
-    { name: 'ExceptionReason', type: 'Note', displayName: '例外・対象外の理由',
-      conditionalFormula: EXCEPTION_REASON_FORMULA },
+
+    // ── その他 ──
+    { name: 'Remarks', type: 'Note', displayName: '備考' },
   ];
 }
+
+/** 旧レイアウトの列。フォームから消すため、存在すれば削除する (無ければ何もしない)。
+ *  ※ 列ごと消えるのでデータも失われる。運用開始後に足す場合は要注意。 */
+export const VULNRESPONSE_OBSOLETE_FIELDS = [
+  'Severity',        // 深刻度 (新レイアウトに無い)
+  'ResponseDate',    // 対応日 (対応期日に集約)
+  'ExceptionReason', // 例外・対象外の理由
+  'TargetAsset',     // 対象資産 (IP / FQDN に分割)
+];
+
+/** フォーム本体のセクション構成 (bodyJSONFormatter)。
+ *  ★ 条件付き数式で隠した列はセクションに入れても表示されない (実機で確認済み)。
+ *    そのため脆弱性情報はここに入れず、ヘッダーカードで見せる。 */
+export const VULNRESPONSE_SECTIONS: { displayname: string; fields: string[] }[] = [
+  { displayname: '資産情報', fields: [
+    'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
+    'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence',
+  ] },
+  { displayname: '対応', fields: ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote'] },
+  { displayname: 'その他', fields: ['Remarks'] },
+];
 
 /** MikkeVulnResponse の既定ビューに出す列 (内部名)。
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
-  'IssueInstanceId', 'Severity', 'TargetAsset', 'BusinessCompany',
-  'DueDate', 'ResponseStatus', 'ResponseDate', 'Responder',
+  'IssueInstanceId', 'MgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
+  'BusinessCompany', 'AssetMgmtId', 'ResponseStatus', 'DueDate', 'Responder',
 ];
 
 /** MikkeImportLog: 取込履歴。 */

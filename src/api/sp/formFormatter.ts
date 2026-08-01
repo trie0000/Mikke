@@ -19,6 +19,8 @@
  *   - 値の参照は [$内部名]。表示名を日本語に変えても内部名は英語のままなので変更不要。
  */
 
+import { VULNRESPONSE_SECTIONS } from './schema';
+
 const COLUMN_FORMAT_SCHEMA =
   'https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json';
 
@@ -65,27 +67,6 @@ function dateValue(field: string): Record<string, unknown> {
     elmType: 'div',
     txtContent: `=if([$${field}] == '', '—', toLocaleDateString([$${field}]))`,
     style: VALUE_STYLE,
-  };
-}
-
-/** 深刻度。値に応じて背景色を出し分ける (Critical/High は警告色)。 */
-function severityValue(): Record<string, unknown> {
-  return {
-    elmType: 'div',
-    txtContent: "=if([$Severity] == '', '—', [$Severity])",
-    style: {
-      display: 'inline-block',
-      padding: '2px 12px',
-      'border-radius': '12px',
-      'font-size': '13px',
-      'font-weight': '600',
-      'background-color':
-        "=if([$Severity] == 'Critical', '#a4262c'," +
-        " if([$Severity] == 'High', '#d83b01'," +
-        " if([$Severity] == 'Medium', '#fce100'," +
-        " if([$Severity] == 'Low', '#e1dfdd', 'transparent'))))",
-      color: "=if([$Severity] == 'Critical' || [$Severity] == 'High', '#ffffff', '#323130')",
-    },
   };
 }
 
@@ -146,25 +127,24 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         style: { display: 'flex', 'flex-direction': 'row', 'column-gap': '24px', width: '100%' },
         children: [
           column([
-            item('対象資産', textValue('[$TargetAsset]')),
-            // ※ textValue に渡すのは「=」を付けない式 (二重の =if になるため)
-            item('事業会社 / 関連会社', textValue(
-              "if([$AffiliateCompany] == '', [$BusinessCompany]," +
-              " if([$BusinessCompany] == '', [$AffiliateCompany]," +
-              " [$BusinessCompany] + ' / ' + [$AffiliateCompany]))",
-            )),
             item('管理番号', textValue('[$MgmtNumber]')),
+            item('検知状況', textValue('[$DetectionStatus]')),
           ]),
           column([
-            item('深刻度', severityValue()),
-            item('検知状況', textValue('[$DetectionStatus]')),
-            item('対応期限', dateValue('DueDate')),
-            item('最終検出日', dateValue('LastSeen')),
+            item('初回検知日', dateValue('FirstSeen')),
+            item('最終検知日', dateValue('LastSeen')),
           ]),
         ],
       },
     ],
   };
+}
+
+/** フォーム本体のセクション構成。列は内部名で指定する。
+ *  ※ 条件付き数式で隠した列はここに入れても表示されない (実機で確認済み) ため、
+ *    脆弱性情報はヘッダーカード側で見せている。 */
+export function buildVulnResponseBody(): Record<string, unknown> {
+  return { sections: VULNRESPONSE_SECTIONS };
 }
 
 /**
@@ -173,5 +153,8 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
  * (リストフォームの「レイアウトの構成」が書き込む形と揃えてある)。
  */
 export function buildVulnResponseFormFormatter(): string {
-  return JSON.stringify({ headerJSONFormatter: buildVulnResponseHeader() });
+  return JSON.stringify({
+    headerJSONFormatter: buildVulnResponseHeader(),
+    bodyJSONFormatter: buildVulnResponseBody(),
+  });
 }
