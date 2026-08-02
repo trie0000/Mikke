@@ -224,6 +224,9 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     // ── 資産情報 (ヘッダーカードで読み取り専用表示 / 本体では新規時のみ入力可) ──
     //   ※ SharePoint のフォーム本体はセクション見出ししか付けられず、カード化・段組が
     //     できない (公式仕様)。見やすさを優先し、情報系はカードに集約している。
+    //   ※ さらに body (セクション) を設定するとフォームが単段組から複数段組に切り替わり、
+    //     入力欄が 1 セル幅 (実測 242px / フォーム幅 1208px) に固定される。対応経緯・備考を
+    //     全幅にするため body は設定しない (実測: 未設定なら 1200px)。→ formFormatter.ts
     pushed('AssetIp', 'IP'),
     pushed('AssetFqdn', 'FQDN'),
     pushed('AssetType', '資産タイプ'),
@@ -256,17 +259,23 @@ export const VULNRESPONSE_OBSOLETE_FIELDS = [
   'TargetAsset',     // 対象資産 (IP / FQDN に分割)
 ];
 
-/** フォーム本体のセクション構成 (bodyJSONFormatter)。
- *  ★ 条件付き数式で隠した列はセクションに入れても表示されない (実機で確認済み)。
- *    そのため脆弱性情報はここに入れず、ヘッダーカードで見せる。 */
-export const VULNRESPONSE_SECTIONS: { displayname: string; fields: string[] }[] = [
-  { displayname: '対応', fields: ['ResponseStatus', 'Responder', 'DueDate'] },
-  // ★ 同じセクション内の項目は画面幅に応じて横に並ぶ。対応経緯を 1 段 (全幅) にするため
-  //   単独のセクションに分ける。displayname を空にすると見出しが出ず区切り線だけになる
-  //   (実機で確認済み)。
-  { displayname: '', fields: ['ResponseNote'] },
-  { displayname: 'その他', fields: ['Remarks'] },
-];
+/**
+ * フォーム本体の列の並び順を、定義順 (このファイルの vulnResponseFieldSpecs の順) に揃える。
+ *
+ * ★ フォームの項目順はコンテンツタイプの FieldLink 順で決まる。列を後から足すと
+ *   末尾に積まれ、意図と違う順で表示される (実機で「対応期日」が先頭に出た)。
+ *
+ * current  … 現在の FieldLink 名 (内部名)
+ * specNames… 定義順の内部名
+ * 戻り値   … 定義に無いもの (ContentType 等) を先頭に残し、続けて定義順に並べたもの。
+ */
+export function orderFieldLinks(current: string[], specNames: string[]): string[] {
+  const want = new Set(specNames);
+  return [
+    ...current.filter((n) => !want.has(n)),
+    ...specNames.filter((n) => current.includes(n)),
+  ];
+}
 
 /** MikkeVulnResponse の既定ビューに出す列 (内部名)。
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない

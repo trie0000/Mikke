@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildVulnResponseHeader, buildVulnResponseFormFormatter } from '../src/api/sp/formFormatter';
-import { vulnResponseFieldSpecs, HIDDEN_UNLESS_NEW, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_SECTIONS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
+import { vulnResponseFieldSpecs, HIDDEN_UNLESS_NEW, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_OBSOLETE_FIELDS, orderFieldLinks } from '../src/api/sp/schema';
 
 /** ツリーを走査して txtContent / style の値 (文字列) を全部集める。 */
 function collectExpressions(node: unknown, out: string[] = []): string[] {
@@ -18,9 +18,13 @@ function collectExpressions(node: unknown, out: string[] = []): string[] {
 }
 
 describe('formFormatter: フォームヘッダーの書式設定', () => {
-  it('キーは headerJSONFormatter / bodyJSONFormatter (header ではフォームが読まない)', () => {
+  it('キーは headerJSONFormatter だけ (header ではフォームが読まない)', () => {
     const parsed = JSON.parse(buildVulnResponseFormFormatter());
-    expect(Object.keys(parsed).sort()).toEqual(['bodyJSONFormatter', 'headerJSONFormatter']);
+    expect(Object.keys(parsed)).toEqual(['headerJSONFormatter']);
+  });
+
+  it('body (セクション) は書かない — 書くと複数段組になり入力欄が 1 セル幅に固定される', () => {
+    expect(buildVulnResponseFormFormatter()).not.toContain('bodyJSONFormatter');
   });
 
   it('ルートは縦積み・左寄せ (指定しないとタイトルと段組が横に並ぶ)', () => {
@@ -85,35 +89,15 @@ describe('schema: 連携用リストの列定義', () => {
     }
   });
 
-  it('本体のセクションは 対応 / (無題=対応経緯) / その他 (情報系はカードに集約)', () => {
-    expect(VULNRESPONSE_SECTIONS.map((x) => x.displayname)).toEqual(['対応', '', 'その他']);
-  });
-
-  it('対応経緯は単独セクション (同一セクション内は横に並ぶため 1 段にできない)', () => {
-    const solo = VULNRESPONSE_SECTIONS.find((x) => x.fields.includes('ResponseNote'));
-    expect(solo?.fields).toEqual(['ResponseNote']);
-  });
-
-  it('セクションの列はすべて定義済みで、隠し列を含まない', () => {
-    const byName = new Map(specs.map((f) => [f.name, f]));
-    for (const sec of VULNRESPONSE_SECTIONS) {
-      for (const n of sec.fields) {
-        const f = byName.get(n);
-        expect(f, `${sec.displayname} の ${n}`).toBeDefined();
-        // 隠した列はセクションに入れても表示されない (実機で確認済み)
-        expect(f!.conditionalFormula, `${sec.displayname} の ${n}`).toBeUndefined();
-      }
-    }
+  it('本体に出る入力欄は 対応状況 → 対応者 → 対応期日 → 対応経緯 → 備考 の順', () => {
+    const visible = specs.filter((f) => !f.conditionalFormula).map((f) => f.name);
+    expect(visible).toEqual(['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks']);
   });
 
   it('旧レイアウトの列は定義に残っていない (削除対象)', () => {
     for (const n of VULNRESPONSE_OBSOLETE_FIELDS) {
       expect(specs.find((f) => f.name === n), n).toBeUndefined();
     }
-  });
-
-  it('書式設定に header と body の両方が入る', () => {
-    expect(Object.keys(JSON.parse(buildVulnResponseFormFormatter())).sort()).toEqual(['bodyJSONFormatter', 'headerJSONFormatter']);
   });
 
   it('リッチテキストは RichTextMode=FullHtml を SchemaXml で入れる', () => {
@@ -127,5 +111,29 @@ describe('schema: 連携用リストの列定義', () => {
 
   it('表示名は全列に付いている', () => {
     expect(specs.filter((f) => !f.displayName)).toEqual([]);
+  });
+});
+
+describe('orderFieldLinks: フォームの項目順', () => {
+  const specNames = vulnResponseFieldSpecs().map((f) => f.name);
+
+  it('定義に無い列 (ContentType 等) は先頭に残す', () => {
+    const out = orderFieldLinks(['ContentType', 'DueDate', 'ResponseStatus'], specNames);
+    expect(out[0]).toBe('ContentType');
+  });
+
+  it('後から足して末尾に積まれた列も定義順に戻る', () => {
+    const out = orderFieldLinks(['ContentType', 'DueDate', 'ResponseStatus', 'Responder', 'Remarks'], specNames);
+    expect(out).toEqual(['ContentType', 'ResponseStatus', 'Responder', 'DueDate', 'Remarks']);
+  });
+
+  it('リストに無い列は増やさない (存在する列だけ並べ替える)', () => {
+    const out = orderFieldLinks(['Title', 'Remarks'], specNames);
+    expect(out).toEqual(['Title', 'Remarks']);
+  });
+
+  it('既に定義順なら結果は変わらない (整形が毎回 skipped になる)', () => {
+    const current = ['ContentType', ...specNames];
+    expect(orderFieldLinks(current, specNames)).toEqual(current);
   });
 });

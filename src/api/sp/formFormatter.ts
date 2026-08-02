@@ -19,8 +19,6 @@
  *   - 値の参照は [$内部名]。表示名を日本語に変えても内部名は英語のままなので変更不要。
  */
 
-import { VULNRESPONSE_SECTIONS } from './schema';
-
 const COLUMN_FORMAT_SCHEMA =
   'https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json';
 
@@ -171,21 +169,19 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
   };
 }
 
-/** フォーム本体のセクション構成。列は内部名で指定する。
- *  ※ 条件付き数式で隠した列はここに入れても表示されない (実機で確認済み) ため、
- *    脆弱性情報はヘッダーカード側で見せている。 */
-export function buildVulnResponseBody(): Record<string, unknown> {
-  return { sections: VULNRESPONSE_SECTIONS };
-}
-
 /**
  * ClientFormCustomFormatter に入れる値 (文字列)。
  * キーは `headerJSONFormatter`。`header` ではフォームが読まない
  * (リストフォームの「レイアウトの構成」が書き込む形と揃えてある)。
+ *
+ * ★ bodyJSONFormatter (セクション) は **あえて設定しない**。
+ *   設定するとフォームが単段組から複数段組に切り替わり、入力欄の幅が 1 セル
+ *   (実測 242px / フォーム幅 1208px) に固定される。セクションは見出ししか付けられず
+ *   幅も指定できない (公式仕様) ため、見出しを捨てて全幅を取っている。
+ *   実測: body 無しなら対応経緯・備考の入力欄は 1200px = ほぼフォーム全幅。
+ *   本体に出る列は 対応状況/対応者/対応期日/対応経緯/備考 の 5 つだけで、
+ *   順序は列の並び順 (schema.ts の orderFieldLinks) で制御する。
  */
 export function buildVulnResponseFormFormatter(): string {
-  return JSON.stringify({
-    headerJSONFormatter: buildVulnResponseHeader(),
-    bodyJSONFormatter: buildVulnResponseBody(),
-  });
+  return JSON.stringify({ headerJSONFormatter: buildVulnResponseHeader() });
 }

@@ -9,10 +9,11 @@ import {
   LIST_MANAGED, LIST_SETTINGS, LIST_IMPORTLOG, LIST_ASSETS, LIST_HISTORY, LIST_CHANGELOG, LIST_DOWNLOADS,
   LIST_VULNRESPONSE, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS,
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs, downloadFieldSpecs,
-  vulnResponseFieldSpecs,
+  vulnResponseFieldSpecs, orderFieldLinks,
   toFieldSchema, spFieldTypeString, type FieldSpec,
 } from './sp/schema';
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
+import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import { getSelectedSiteUrl, currentWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -349,6 +350,48 @@ export class SpRepository implements Repository {
     } catch (e) { rep.record('フォーム書式設定', '既定コンテンツタイプ', 'failed', (e as Error).message); }
   }
 
+  /**
+   * CSOM (ProcessQuery) を叩く。REST に無い操作だけに使う。
+   * 応答は JSON 配列で、先頭要素の ErrorInfo が null なら成功。
+   */
+  private async processQuery(xml: string): Promise<void> {
+    const digest = await this.getDigest();
+    const r = await fetch(`${this.webUrl}/_vti_bin/client.svc/ProcessQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/xml', 'X-RequestDigest': digest },
+      credentials: 'same-origin',
+      body: xml,
+    });
+    if (!r.ok) throw new Error(`ProcessQuery: HTTP ${r.status}`);
+    const err = processQueryError(await r.text());
+    if (err) throw new Error(err);
+  }
+
+  /**
+   * フォームの項目順を定義順に揃える。
+   *
+   * ★ 並べ替えは REST に存在しない ($metadata に Reorder は無い)。CSOM の
+   *   FieldLinkCollection.Reorder を ProcessQuery 経由で呼ぶ (実機で成功を確認)。
+   *   列を後から足すと末尾に積まれるため、整形のたびに定義順へ戻す。
+   */
+  private async applyFieldOrder(listTitle: string, fields: FieldSpec[], rep: StepReporter): Promise<void> {
+    const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`;
+    try {
+      const cts = await this.spGet(`${listPath}/ContentTypes?$select=StringId,Name`);
+      const ct = (cts.d?.results ?? []).find((c: any) => !String(c.StringId).startsWith('0x0120'));
+      if (!ct) { rep.record('列の並び順', '既定コンテンツタイプ', 'failed', '見つかりません'); return; }
+      const ctPath = `${listPath}/ContentTypes('${encodeURIComponent(ct.StringId)}')`;
+      const fl = await this.spGet(`${ctPath}/FieldLinks?$select=Name&$top=500`);
+      const current: string[] = (fl.d?.results ?? []).map((f: any) => String(f.Name));
+      const ordered = orderFieldLinks(current, fields.map((f) => f.name));
+      if (ordered.join(' ') === current.join(' ')) {
+        rep.record('列の並び順', ct.Name, 'skipped', '設定済み'); return;
+      }
+      await this.processQuery(buildReorderFieldsXml(listTitle, ct.StringId, ordered));
+      rep.record('列の並び順', ct.Name, 'updated', `${ordered.length} 列を定義順に並べ替え`);
+    } catch (e) { rep.record('列の並び順', listTitle, 'failed', (e as Error).message); }
+  }
+
   /** 旧レイアウトの列を削除する (存在しなければ何もしない)。 */
   private async removeObsoleteFields(listTitle: string, names: string[], map: Map<string, any>, rep: StepReporter): Promise<void> {
     for (const name of names) {
@@ -375,6 +418,7 @@ export class SpRepository implements Repository {
     await this.applyRequired(LIST_VULNRESPONSE, fields, map, rep);
     await this.applyDisplayNames(LIST_VULNRESPONSE, fields, map, rep);
     await this.ensureViewFields(LIST_VULNRESPONSE, VULNRESPONSE_VIEW_FIELDS, rep);
+    await this.applyFieldOrder(LIST_VULNRESPONSE, fields, rep);
     await this.applyFormFormatter(LIST_VULNRESPONSE, buildVulnResponseFormFormatter(), rep);
     await this.applyConditionalFormulas(LIST_VULNRESPONSE, fields, map, rep);
     return rep.result(`${this.webUrl}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`);
