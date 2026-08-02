@@ -12,6 +12,8 @@
 #   - /mikke/merge         DL済みファイルから取込用マージCSVを生成 (アダプタ委譲)
 #   - /mikke/relay/version relay スクリプト群のバージョン
 #   - /mikke/relay/self-update  ps1/bat の自己更新
+#   - /mikke/relay-version.txt  自己更新の manifest 配信 (SP に上げていなくても更新できる)
+#   - /mikke/<管理対象ファイル>  自己更新用のファイル配信 (許可リストのみ)
 #
 # 動作環境:
 #   - Windows PowerShell 5.1 以上 / PowerShell 7+ どちらでも動く。
@@ -30,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.16'
+$MIKKE_RELAY_VERSION = '1.0.17'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -94,7 +96,13 @@ catch {
     exit 1
 }
 
-$script:BundleDir = if ($env:MIKKE_BUNDLE_DIR) { $env:MIKKE_BUNDLE_DIR } else { Join-Path $PSScriptRoot '..\dist' }
+# 配布物 (mikke.bundle.js / version.txt / relay-version.txt / 管理対象 ps1・bat) の置き場。
+# ★ 既定は「この relay と同じフォルダ」。配布物は 1 フォルダにまとめて配る運用のため。
+#   古い配置 (relay が scripts/ にあり dist/ が隣) のときだけ ..\dist を見る。
+$script:BundleDir =
+    if ($env:MIKKE_BUNDLE_DIR) { $env:MIKKE_BUNDLE_DIR }
+    elseif (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'mikke.bundle.js')) { $PSScriptRoot }
+    else { Join-Path $PSScriptRoot '..\dist' }
 
 Write-Host ('-' * 72)
 Write-Host "  Mikke relay (PowerShell)  [v$MIKKE_RELAY_VERSION]"
@@ -115,6 +123,7 @@ Write-Host "  GET  http://localhost:$Port/mikke/relay/version"
 Write-Host "  POST http://localhost:$Port/mikke/relay/self-update"
 Write-Host "  GET  http://localhost:$Port/mikke/mikke.bundle.js (テスト配信)"
 Write-Host "  GET  http://localhost:$Port/mikke/version.txt     (テスト配信)"
+Write-Host "  GET  http://localhost:$Port/mikke/relay-version.txt (自己更新 manifest)"
 Write-Host ('-' * 72)
 Write-Host 'Ctrl+C で終了' -ForegroundColor DarkGray
 Write-Host ''
@@ -906,7 +915,22 @@ while ($listener.IsListening) {
             '^/mikke/merge$'               { Invoke-Merge -Context $context; break }
             '^/mikke/mikke\.bundle\.js$'   { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'mikke.bundle.js') -ContentType 'application/javascript; charset=utf-8'; break }
             '^/mikke/version\.txt$'        { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'version.txt') -ContentType 'text/plain; charset=utf-8'; break }
-            default                        { Send-Error -Response $res -Status 404 -Code 'not_found' -Detail $path }
+            # ★ 自己更新の配布元を relay 自身にする。
+            #   ブラウザは「relay → SP」の順に manifest / ファイルを取りに行くので、
+            #   SharePoint に dist を上げていなくても自己更新が完結する
+            #   (バンドル直挿し運用では SP に何も置かないため、これが無いと更新できない)。
+            '^/mikke/relay-version\.txt$'  { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'relay-version.txt') -ContentType 'application/json; charset=utf-8'; break }
+            default {
+                # 管理対象ファイルだけを BundleDir から配信する (任意ファイル配信にしない)。
+                $reqFile = ''
+                if ($path -like '/mikke/*') { $reqFile = $path.Substring('/mikke/'.Length) }
+                if ($req.HttpMethod -eq 'GET' -and $reqFile -and ($script:MIKKE_RELAY_MANAGED_FILES -contains $reqFile)) {
+                    $ct = if ($reqFile -like '*.js') { 'application/javascript; charset=utf-8' } else { 'text/plain; charset=utf-8' }
+                    Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir $reqFile) -ContentType $ct
+                } else {
+                    Send-Error -Response $res -Status 404 -Code 'not_found' -Detail $path
+                }
+            }
         }
     } catch {
         try { Send-Error -Response $res -Status 500 -Code 'internal' -Detail $_.Exception.Message } catch { }

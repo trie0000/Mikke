@@ -666,15 +666,20 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
       ['中継サーバを今すぐ更新']) as HTMLButtonElement;
     btn.addEventListener('click', () => void (async () => {
       btn.setAttribute('disabled', '');
-      toast(root, '中継サーバを更新しています…', 'default');
+      toast(root, '中継サーバを更新しています… 再起動を待ちます（最大 1 分）', 'default', 8000);
       try {
-        await performRelayUpdate(ru.files);
+        const res = await performRelayUpdate(ru.files, ru.source);
         setState({ relayUpdateAvailable: null });
-        toast(root, '更新を送信しました。中継サーバが再起動します（数秒）。再起動後に有効になります。', 'ok', 6000);
         box.remove();
+        if (res.relayBackUp) {
+          toast(root, `中継サーバを更新しました${res.newVersion ? ` (v${res.newVersion})` : ''}。`, 'ok', 6000);
+        } else {
+          // ファイル置換は別プロセス (updater) が実施済み。応答が戻らないだけ。
+          toast(root, '更新を送信しました。中継サーバの再起動に時間がかかっています。少し待ってから中継サーバの状態を確認してください。', 'warn', 10000);
+        }
       } catch (e) {
         btn.removeAttribute('disabled');
-        toast(root, `中継サーバの更新に失敗: ${(e as Error).message}`, 'error', 6000);
+        toast(root, `中継サーバの更新に失敗: ${(e as Error).message}`, 'error', 8000);
       }
     })());
     const box = el('div', { style: 'margin-top:var(--s-5);padding:var(--s-4);background:var(--accent-soft);border-radius:var(--r-2)' }, [
@@ -682,7 +687,9 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
         `中継サーバの更新があります: v${ru.localVersion} → v${ru.remoteVersion}`,
       ]),
       el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-3);line-height:1.6' }, [
-        'SharePoint 上の最新 relay スクリプトを取得して中継サーバに送信し、自動で入れ替え＆再起動します。',
+        ru.source === 'relay'
+          ? '中継サーバのフォルダにある最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。'
+          : 'SharePoint 上の最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。',
       ]),
       btn,
     ]);

@@ -28,11 +28,13 @@ interface State {
   // bootstrap status
   ready: boolean;
   errorBanner: string | null;
-  /** relay スクリプト更新通知 (SP の relay-version.txt と relay 自己 version の差)。 */
+  /** relay スクリプト更新通知 (配布元の relay-version.txt と relay 自己 version の差)。 */
   relayUpdateAvailable: {
     localVersion: string;
     remoteVersion: string;
     files: string[];
+    /** 配布元 ('relay' = 中継サーバのフォルダ / 'sp' = SharePoint)。 */
+    source: 'relay' | 'sp';
   } | null;
   /** バンドル本体の更新通知 (version.txt と起動中 build id の差)。最新 build id か null。 */
   bundleUpdateAvailable: string | null;
