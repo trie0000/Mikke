@@ -289,9 +289,21 @@ public class MikkeCdp {
             $cdp = New-Object MikkeCdp
             $cdp.Connect($wsUrl)
 
-            # 認証待ち: ログイン中はクロスオリジンで fetch が失敗するので握って retry する
-            $probe = '(async()=>{try{const r=await fetch(' + "'" + $siteUrl + "/_api/web?" + '$select=Title' + "'" +
-                     ",{headers:{Accept:'application/json;odata=nometadata'},credentials:'include'});return r.ok;}catch(e){return false;}})()"
+            # 認証待ち。ログイン中はクロスオリジンで fetch が失敗するので握って retry する。
+            # ★ r.ok だけを見てはいけない。サインイン画面は **200 のまま HTML** を返すため、
+            #   それを「認証済み」と誤判定して注入すると、Mikke は起動するものの以後の
+            #   REST が全部 HTML を掴み「Unexpected token '<'」で一覧取得に失敗する。
+            #   本文が JSON で Title が取れること、かつページ自身が対象サイト上にいること
+            #   (login.microsoftonline.com に居ないこと) の両方を確認する。
+            $origin = ([Uri]$siteUrl).GetLeftPart([UriPartial]::Authority)
+            $probe = '(async()=>{try{' +
+                     "if(location.href.indexOf('$origin')!==0)return false;" +
+                     "const r=await fetch('$siteUrl/_api/web?" + '$select=Title' + "'," +
+                     "{headers:{Accept:'application/json;odata=nometadata'},credentials:'include'});" +
+                     'if(!r.ok)return false;' +
+                     'const t=await r.text();' +
+                     'try{const j=JSON.parse(t);return !!(j&&typeof j.Title===' + "'string');}catch(e){return false;}" +
+                     '}catch(e){return false;}})()'
             Write-Host 'SharePoint へのサインインを待っています (初回のみ手動サインインが必要です)...' -ForegroundColor Cyan
             $authed = $false
             for ($i = 0; $i -lt 180; $i++) {

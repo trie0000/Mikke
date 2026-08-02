@@ -33,6 +33,26 @@ async function spErrorText(r: Response): Promise<string> {
   } catch { return ''; }
 }
 
+/**
+ * JSON を期待した応答が JSON でなかったときの説明文を作る。
+ *
+ * SharePoint は 200 のまま HTML を返すことがある (サインイン画面 / アクセス権エラー /
+ * サイト URL 違いなど)。素通しすると「Unexpected token '<'」しか出ず原因が分からない。
+ */
+export function describeNonJson(text: string, url: string): string {
+  const head = text.replace(/\s+/g, ' ').trim().slice(0, 120);
+  const lower = text.slice(0, 4000).toLowerCase();
+  let cause = '応答が JSON ではありません';
+  if (/login\.microsoftonline|\/_forms\/default\.aspx|sign in to your account/.test(lower)) {
+    cause = 'サインイン画面が返りました。ブラウザで SharePoint にサインインし直してください';
+  } else if (/access denied|アクセスが拒否|hasn'?t been shared|共有されていません/.test(lower)) {
+    cause = 'アクセス権がありません。このサイトを開ける権限か、サイト URL の指定を確認してください';
+  } else if (lower.startsWith('<!doctype') || lower.startsWith('<html')) {
+    cause = 'HTML が返りました。サイト URL の指定が誤っている可能性があります (設定 → 接続 で確認)';
+  }
+  return `${cause}\n要求先: ${url}\n応答の先頭: ${head}`;
+}
+
 /** 構築工程の記録係。工程ごとの 作成/更新/スキップ/失敗 を集計する。 */
 class StepReporter {
   private readonly steps: SetupStep[] = [];
@@ -95,12 +115,22 @@ export class SpRepository implements Repository {
   }
 
   private async spGet(path: string): Promise<any> {
-    const r = await fetch(`${this.webUrl}${path}`, {
+    const url = `${this.webUrl}${path}`;
+    const r = await fetch(url, {
       headers: { Accept: V },
       credentials: 'same-origin',
     });
     if (!r.ok) throw new Error(`GET ${path}: HTTP ${r.status}`);
-    return r.json();
+    // ★ JSON を期待しているのに HTML が返ることがある (200 のまま)。
+    //   サインイン画面・アクセス権エラー・サイト URL 違いなど。そのまま r.json() すると
+    //   「Unexpected token '<'」だけが表示され、どこを直せばよいか分からない。
+    //   応答の中身から原因を推測して URL 付きで返す。
+    const text = await r.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`${describeNonJson(text, url)}`);
+    }
   }
 
   private async spPost(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<Response> {
