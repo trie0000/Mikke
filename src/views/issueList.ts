@@ -3,7 +3,7 @@
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
-import { getRepo } from '../api/repo';
+import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
@@ -13,6 +13,7 @@ import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
 import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
+import { fetchAndStoreIssueReport, isAdapterMissing } from '../lib/issueReport';
 import type { ManagedIssue } from '../types';
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -140,6 +141,18 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         sortValue: (i) => SEVERITY_ORDER[(i.severity ?? '').toLowerCase()] ?? -1, render: (i) => severityBadge(i.severity) },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
+      // 「情報更新」で取得した個別レポート (zip)。行クリック (詳細を開く) と競合しないよう
+      // リンク側で stopPropagation する。
+      { id: 'report', label: 'レポート', width: 104,
+        text: (i) => i.reportName ?? '',
+        sortValue: (i) => i.reportAt ?? '',
+        render: (i) => (i.reportUrl
+          ? el('a', {
+              href: '#', class: 'mikke-link',
+              title: `${i.reportName ?? ''}${i.reportAt ? ` (${fmtDate(i.reportAt)})` : ''}`,
+              onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); void openReport(i); },
+            }, ['zip'])
+          : '') },
     ];
     for (const c of scanCols) {
       cols.push({ id: `scan:${c}`, label: c.replace(/^Scan_/, ''), width: 160,
@@ -255,11 +268,18 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   async function bulkRefresh(btn: HTMLElement): Promise<void> {
     const ids = [...selected];
     if (!ids.length || bulkBusy) return;
-    const h = await relayHealth();
-    if (!h.ok) { toast(rootEl, '中継サーバが起動していません。mikke-launch.bat を実行してください。', 'warn'); return; }
+    // dev (mock) は relay を持たないので、ダウンロード取得と同じくサンプル応答で動かす。
+    const devMock = getRepoMode() === 'mock';
+    if (!devMock) {
+      const h = await relayHealth();
+      if (!h.ok) { toast(rootEl, '中継サーバが起動していません。mikke-launch.bat を実行してください。', 'warn'); return; }
+    }
     bulkBusy = true;
     updateSubbar();
     let ok = 0, fail = 0, firstErr = '';
+    // レポート取得の内訳。アダプタ未配置なら 1 件目で諦めて情報更新だけ続ける。
+    let report = 0, noItem = 0, reportFail = 0, reportSkipped = false;
+    let firstReportErr = '';
     try {
       for (let n = 0; n < ids.length; n++) {
         const issue = cache.find((i) => i.id === ids[n]);
@@ -267,7 +287,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         const liveBtn = subbar.querySelector('.mikke-btn--primary');
         if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${n + 1}/${ids.length}…</span>`;
         try {
-          const res = await relayGetIssue(issue.issueInstanceId);
+          const res = devMock
+            ? { scannerStatus: 'open', severity: issue.severity, lastSeen: new Date().toISOString(), detected: true }
+            : await relayGetIssue(issue.issueInstanceId);
           const patch: Partial<ManagedIssue> = {
             scannerStatus: res.scannerStatus, severity: res.severity, lastSeen: res.lastSeen,
             lastSyncedAt: new Date().toISOString(), scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
@@ -279,6 +301,26 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
             patch.detectionStatus = nd;
             if (nd === '未検出(New)' && !issue.firstUndetectedAt) patch.firstUndetectedAt = new Date().toISOString();
           }
+          // 個別レポート (zip) の取得 → SP 保存 → 連携用リストへ添付。
+          // ここで失敗しても情報更新そのものは成功扱いにする (レポートは付随物)。
+          if (!reportSkipped) {
+            try {
+              const r = await fetchAndStoreIssueReport(issue);
+              patch.reportUrl = r.url;
+              patch.reportName = r.fileName;
+              patch.reportAt = r.fetchedAt;
+              if (r.attach === 'attached') report++;
+              else if (r.attach === 'no-item') { report++; noItem++; }
+              else { report++; reportFail++; if (!firstReportErr) firstReportErr = r.attachError ?? ''; }
+            } catch (e) {
+              if (isAdapterMissing(e)) {
+                reportSkipped = true;   // 未配置なら以降の件でも試さない
+              } else {
+                reportFail++;
+                if (!firstReportErr) firstReportErr = (e as Error).message;
+              }
+            }
+          }
           await getRepo().updateIssue(issue.id, patch);
           ok++;
         } catch (e) {
@@ -289,8 +331,15 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         }
       }
     } finally { bulkBusy = false; }
-    if (fail) toast(rootEl, `情報更新: ${ok} 件成功 / ${fail} 件失敗 — ${firstErr}`, 'error');
-    else toast(rootEl, `情報更新: ${ok} 件を更新しました`, 'ok');
+    const parts = [`情報更新: ${ok} 件成功`];
+    if (fail) parts.push(`${fail} 件失敗`);
+    if (report) parts.push(`レポート ${report} 件取得`);
+    if (noItem) parts.push(`うち ${noItem} 件は連携用リストに該当アイテムなし`);
+    if (reportFail) parts.push(`レポート ${reportFail} 件失敗`);
+    if (reportSkipped) parts.push('レポート取得はアダプタ未配置のためスキップ');
+    const detail = firstErr || firstReportErr;
+    toast(rootEl, parts.join(' / ') + (detail ? ` — ${detail}` : ''),
+      fail ? 'error' : (reportFail || reportSkipped ? 'warn' : 'ok'), fail || reportFail ? 12000 : 6000);
     await load();
     void btn;
   }
@@ -365,6 +414,21 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           html: icon('upload') + '<span>CSV を取込</span>' }),
       ]),
     ]);
+  }
+
+  /** 個別レポート (zip) を保存する。SP=絶対URL / mock=data URL。 */
+  async function openReport(issue: ManagedIssue): Promise<void> {
+    if (!issue.reportUrl) return;
+    try {
+      const href = await getRepo().docFileHref(issue.reportUrl);
+      if (!href) { toast(rootEl, 'レポートが見つかりません（削除済みの可能性）。', 'warn'); return; }
+      const a = el('a', { href, download: issue.reportName ?? 'report.zip', style: 'display:none' });
+      rootEl.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      toast(rootEl, `レポートの取得に失敗しました: ${(e as Error).message}`, 'error');
+    }
   }
 
   function openDetail(id: number): void {

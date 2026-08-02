@@ -813,6 +813,46 @@ export class SpRepository implements Repository {
     return { url: rel };
   }
 
+  /**
+   * 連携用リストの該当アイテムに個別レポートを添付する。
+   *
+   * ★ 添付ファイル名はアイテム内で一意。同名を add すると HTTP 400 になるため、
+   *   既に同名があれば先に削除してから追加する (再取得で置き換わるようにする)。
+   * ★ 資産管理者が SharePoint 上でそのまま開けるよう、ドキュメントライブラリ保存とは
+   *   別に「アイテムの添付」としても持たせている (リンク切れ・権限差を避ける)。
+   */
+  async attachVulnResponseFile(
+    issueInstanceId: string, fileName: string, data: Blob,
+  ): Promise<'attached' | 'no-item'> {
+    const listPath = `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')`;
+    const q = `${listPath}/items?$select=Id&$filter=IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'&$top=1`;
+    const found = await this.spGet(q);
+    const itemId: number | undefined = found.d?.results?.[0]?.Id;
+    if (!itemId) return 'no-item';
+
+    const name = fileName.replace(/[^\w.\-]/g, '_');
+    const itemPath = `${listPath}/items(${itemId})`;
+    // 同名が残っていると add が 400 になるので先に消す (無ければ 404 → 無視)。
+    try {
+      await this.spPost(`${itemPath}/AttachmentFiles/getByFileName('${encodeURIComponent(name)}')`,
+        undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
+    } catch { /* 未添付なら何もしなくてよい */ }
+
+    const digest = await this.getDigest();
+    const buf = await data.arrayBuffer();
+    const r = await fetch(
+      `${this.webUrl}${itemPath}/AttachmentFiles/add(FileName='${encodeURIComponent(name)}')`,
+      {
+        method: 'POST',
+        headers: { Accept: V, 'X-RequestDigest': digest },
+        credentials: 'same-origin',
+        body: buf,
+      },
+    );
+    if (!r.ok) throw new Error(`添付に失敗 (${name}): HTTP ${r.status} ${await spErrorText(r)}`);
+    return 'attached';
+  }
+
   async deleteDocFile(serverRelativeUrl: string): Promise<void> {
     await this.spPost(
       `/_api/web/GetFileByServerRelativeUrl('${this.srUrlArg(serverRelativeUrl)}')`,
@@ -1025,6 +1065,9 @@ export class SpRepository implements Repository {
       firstUndetectedAt: row.FirstUndetectedAt ?? undefined,
       addedReason: (row.AddedReason ?? undefined) as AddedReason | undefined,
       lastSyncedAt: row.LastSyncedAt ?? undefined,
+      reportUrl: row.ReportUrl ?? undefined,
+      reportName: row.ReportName ?? undefined,
+      reportAt: row.ReportAt ?? undefined,
       scanFields,
     };
   }
@@ -1048,6 +1091,9 @@ export class SpRepository implements Repository {
     if (p.firstUndetectedAt !== undefined) row.FirstUndetectedAt = p.firstUndetectedAt || null;
     if (p.addedReason !== undefined) row.AddedReason = p.addedReason;
     if (p.lastSyncedAt !== undefined) row.LastSyncedAt = p.lastSyncedAt || null;
+    if (p.reportUrl !== undefined) row.ReportUrl = p.reportUrl;
+    if (p.reportName !== undefined) row.ReportName = p.reportName;
+    if (p.reportAt !== undefined) row.ReportAt = p.reportAt || null;
     // ★ 検査ツール由来の全項目は個別列ではなく ScanData に JSON で集約する
     //   (SP の列数上限/行サイズ上限を回避)。キーは元の "Scan_<元名>" のまま保持し、
     //   表示側 resolveScanValue が raw/安全名/エンコードのいずれでも引ける。

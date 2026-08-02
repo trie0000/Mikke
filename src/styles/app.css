@@ -157,6 +157,8 @@
 /* SP のリストを別タブで開く外部リンク (Mikke の画面遷移ではないので控えめに) */
 #mikke-root .mikke-nav-item--external { text-decoration: none; color: var(--ink-3); }
 #mikke-root .mikke-nav-item--external:hover { color: var(--ink-2); }
+/* 表セル内のリンク (個別レポートを開く等)。行クリックと区別できるよう下線を付ける */
+#mikke-root .mikke-link { color: var(--accent-strong); text-decoration: underline; cursor: pointer; }
 #mikke-root .mikke-nav-ext { margin-left: auto; display: inline-flex; opacity: 0.6; }
 #mikke-root .mikke-nav-ext svg { width: 12px; height: 12px; }
 #mikke-root .mikke-side-foot {

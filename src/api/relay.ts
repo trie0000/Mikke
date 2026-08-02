@@ -146,6 +146,36 @@ export async function relayGetIssue(issueInstanceId: string): Promise<RelayIssue
   return await r.json();
 }
 
+/** /mikke/issue-report が返す 1 件分のレポート。 */
+export interface RelayIssueReport {
+  ok: boolean;
+  /** 検査ツールが付けたファイル名 (通常 zip)。 */
+  fileName: string;
+  /** ファイル内容 (base64)。 */
+  contentBase64: string;
+  /** 検査ツール側のエクスポート日時 (ISO 文字列。任意)。 */
+  scannerDownloadTime?: string;
+}
+
+/** /mikke/issue-report — 脆弱性 1 件分のレポートを取得 (アダプタ委譲)。
+ *  実装は relay 側の mikke-scanner-adapter.ps1 の Invoke-MikkeScannerIssueReport。
+ *  未配置 (501) はアダプタ未実装。呼び出し側は情報更新を止めずにスキップする。 */
+export async function relayGetIssueReport(issueInstanceId: string): Promise<RelayIssueReport> {
+  const r = await fetch(`${getRelayBase()}/issue-report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issueInstanceId }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    const err = new Error(detail) as Error & { status?: number };
+    err.status = r.status;
+    throw err;
+  }
+  return await r.json();
+}
+
 /** /mikke/download が返す 1 ファイル。content は base64 (バイナリ安全)。 */
 export interface RelayDownloadItem {
   /** 種別 (vuln / ip / iprange / domain / cert / webapps)。 */

@@ -477,3 +477,112 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -Conten
 - [ ] 出力 CSV に必須列（`Issue Instance ID` / `Title` / `Severity` / `Status` / `First Seen` / `Last Seen`）を含む
 - [ ] 1 脆弱性 = 1 行 / UTF-8 / RFC4180 クォート
 - [ ] エラーは日本語メッセージで throw / 秘密をログに出さない
+
+---
+
+## 11. 個別レポートの取得（脆弱性 1 件ごと）
+
+管理対象一覧でチェックを入れて **「情報更新」** を押したとき、選択された脆弱性 **1 件につき 1 回**、検査ツールからその脆弱性のレポート（zip）を取得する。取得したファイルは Mikke が SharePoint に保存し、一覧からリンクで開けるようにするほか、**資産管理者への連携用リストの該当アイテムに添付**する。
+
+> **この章の関数は任意実装**です。定義しなければ relay が 501 を返し、Mikke は個別レポートの取得だけをスキップして情報更新を続けます（エラーにはなりません）。
+
+### 11-1. 全体像（どこで呼ばれるか）
+
+```
+[ブラウザ UI]  管理対象一覧 → 行にチェック → 「情報更新」
+   │  ① POST /mikke/issue         body: {"issueInstanceId":"IID-1001"}   … 既存 (§1〜§8)
+   │  ② POST /mikke/issue-report  body: {"issueInstanceId":"IID-1001"}   … 本章
+   ▼
+[relay]  mikke-scanner-adapter.ps1 を dot-source し
+         Invoke-MikkeScannerIssueReport -IssueInstanceId 'IID-1001' を呼ぶ
+   ▼
+[ブラウザ]  返ってきたファイルを
+            (a) SharePoint ドキュメントライブラリに保存 → 一覧の「レポート」列からダウンロード
+            (b) 連携用リストの同じ Issue Instance ID のアイテムに添付
+```
+
+選択件数分だけ順に呼ばれる（1 件ずつ直列）。1 件が失敗しても他の件と情報更新自体は続行する。
+
+### 11-2. 契約（インターフェース — 変更不可）
+
+| 項目 | 内容 |
+|---|---|
+| 関数名 | `Invoke-MikkeScannerIssueReport` |
+| 入力 | `-IssueInstanceId <string>` |
+| 戻り値 | hashtable（下記） |
+
+```powershell
+@{
+  fileName            = 'IID-1001_2026_Jul_05.zip'  # 検査ツールが付けた名前のまま
+  contentBase64       = '<Base64>'                  # ファイル本体
+  scannerDownloadTime = '2026-07-05T09:00:00'       # 任意。ISO8601
+}
+```
+
+- **`contentBase64` は必須**。空だと relay が 502 を返す。
+- `fileName` を省略した場合は relay が `<IssueInstanceId>.zip` を補う。
+- 検査ツールからは zip でダウンロードされる想定。**再圧縮もリネームもしない**でそのまま返す（Mikke 側も再圧縮しない）。
+- ファイル名は SharePoint の添付ファイル名になる。Mikke 側で英数字・`.` `_` `-` 以外は `_` に置換するので日本語名でも動くが、英数字を推奨。
+- エラーは throw する（relay が 502 + メッセージで UI に返す）。診断ログ規約は §5-1 と同じ。
+
+### 11-3. 実装の雛形
+
+`mikke-scanner-adapter.example.ps1` の `Invoke-MikkeScannerIssueReport` を参照（Fetch / Download と同じファイルに実装する）。
+
+```powershell
+function Invoke-MikkeScannerIssueReport {
+    param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+    $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
+    $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
+    if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です' }
+
+    $url = "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))/report"
+    $resp = Invoke-WebRequest -Uri $url -Headers @{ Authorization = "Bearer $apiKey" } `
+                              -Method Get -TimeoutSec 120
+    $bytes = $resp.Content
+    if ($bytes -is [string]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($bytes) }
+
+    # Content-Disposition があれば検査ツールが付けた名前をそのまま使う
+    $name = "$IssueInstanceId.zip"
+    $cd = $resp.Headers['Content-Disposition']
+    if ($cd -and $cd -match 'filename="?([^";]+)"?') { $name = $Matches[1] }
+
+    return @{
+        fileName            = $name
+        contentBase64       = [Convert]::ToBase64String($bytes)
+        scannerDownloadTime = (Get-Date).ToString('s')
+    }
+}
+```
+
+### 11-4. テスト方法
+
+アダプタ単体:
+
+```powershell
+. .\mikke-scanner-adapter.ps1
+$r = Invoke-MikkeScannerIssueReport -IssueInstanceId 'IID-1001'
+$r.fileName
+[Convert]::FromBase64String($r.contentBase64).Length   # バイト数が出れば OK
+```
+
+relay 経由:
+
+```powershell
+$body = @{ issueInstanceId = 'IID-1001' } | ConvertTo-Json
+Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issue-report' -Method Post -ContentType 'application/json' -Body $body
+```
+
+→ `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[issue-report] IID-1001 -> ....zip (N KB base64)` が出る。
+
+### 11-5. チェックリスト（追加分）
+
+- [ ] `Invoke-MikkeScannerIssueReport -IssueInstanceId <string>` を定義（Fetch / Download / Merge と同じファイルに追記）
+- [ ] `contentBase64` を必ず返す（空なら 502 になる）
+- [ ] 検査ツールが返したファイルを**再圧縮・リネームせず**そのまま返す
+- [ ] `fileName` は英数字・`.` `_` `-` を推奨
+- [ ] エラーは日本語メッセージで throw / 秘密をログに出さない

@@ -152,6 +152,59 @@ function Invoke-MikkeScannerDownload {
 }
 
 # =============================================================================
+# 契約 (個別レポート — /mikke/issue-report が呼び出す I/F。変更しないこと):
+#   関数名:  Invoke-MikkeScannerIssueReport
+#   入力:    -IssueInstanceId <string>   (Mikke の管理対象 1 件の Issue Instance ID)
+#   戻り値:  hashtable
+#     @{
+#       fileName            = 'IID-1001_2026_Jul_05.zip'  # 検査ツールが付けた名前のまま
+#       contentBase64       = <string>                    # ファイル本体の Base64
+#       scannerDownloadTime = '2026-07-05T09:00:00'       # 任意。ISO8601
+#     }
+#   ・管理対象一覧の「情報更新」で、選択された脆弱性 1 件につき 1 回呼ばれる。
+#   ・検査ツールからは zip でダウンロードされる想定。zip 以外でもそのまま返してよい
+#     (ブラウザ側は再圧縮せず、返ってきたファイルをそのまま保存・添付する)。
+#   ・ファイル名は SharePoint の添付ファイル名になる。Mikke 側で英数字・._- 以外は
+#     _ に置換するので、日本語名でも動くが英数字を推奨。
+#   ・この関数を **定義しなければ** relay は 501 を返し、Mikke は個別レポートの取得
+#     だけをスキップして情報更新を続ける (実装しない選択も可)。
+#   ・エラーは throw する (relay が 502 + メッセージで UI に返す)。
+#   詳細は SCANNER-ADAPTER-SPEC.md §11 を参照。
+# =============================================================================
+
+function Invoke-MikkeScannerIssueReport {
+    param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+    $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
+    $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
+    if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)' }
+
+    # ── TODO: 脆弱性 1 件分のレポートを取得して Base64 で返す ────────────────────
+    # $url = "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))/report"
+    # Write-Host "[adapter] GET $url" -ForegroundColor DarkGray   # 秘密は出さない
+    # $headers = @{ Authorization = "Bearer $apiKey" }
+    # # バイナリ (zip) なので Invoke-WebRequest で受け、.Content (byte[]) を Base64 化する。
+    # $resp  = Invoke-WebRequest -Uri $url -Headers $headers -Method Get -TimeoutSec 120
+    # $bytes = $resp.Content
+    # if ($bytes -is [string]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($bytes) }
+    # # Content-Disposition があれば検査ツールが付けた名前をそのまま使う。
+    # $name = "$IssueInstanceId.zip"
+    # $cd = $resp.Headers['Content-Disposition']
+    # if ($cd -and $cd -match 'filename="?([^";]+)"?') { $name = $Matches[1] }
+    # return @{
+    #     fileName            = $name
+    #     contentBase64       = [Convert]::ToBase64String($bytes)
+    #     scannerDownloadTime = (Get-Date).ToString('s')
+    # }
+    # ──────────────────────────────────────────────────────────────────────────
+
+    throw 'mikke-scanner-adapter: Invoke-MikkeScannerIssueReport は未実装です。example をコピーして実装してください。'
+}
+
+# =============================================================================
 # 契約 (マージ CSV 生成 — /mikke/merge が呼び出す I/F。変更しないこと):
 #   関数名:  Invoke-MikkeScannerMerge
 #   入力:    -Files <object[]>

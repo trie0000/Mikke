@@ -172,6 +172,13 @@ export class MockRepository implements Repository {
     return store[serverRelativeUrl] ?? '';
   }
 
+  /** モックには連携用リストの実体が無いので、添付できたことにして UI を通す。 */
+  async attachVulnResponseFile(
+    _issueInstanceId: string, _fileName: string, _data: Blob,
+  ): Promise<'attached' | 'no-item'> {
+    return 'attached';
+  }
+
   /** モックでは SP に書けないので、工程の見え方だけ再現する (UI 検証用)。 */
   async ensureVulnResponseList(): Promise<SetupResult> {
     const steps: SetupStep[] = [

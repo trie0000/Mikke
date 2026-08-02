@@ -66,6 +66,12 @@ export interface ManagedIssue {
   addedReason?: AddedReason;
   /** 最終同期日時 (ISO)。 */
   lastSyncedAt?: string;
+  /** 個別レポート (zip) の SP 上の URL。「情報更新」で 1 件ずつ取得したもの。 */
+  reportUrl?: string;
+  /** 個別レポートのファイル名 (検査ツールが付けた名前のまま)。 */
+  reportName?: string;
+  /** 個別レポートの取得日時 (ISO)。 */
+  reportAt?: string;
   /** 動的列 (F6 でチェックした検査ツール CSV 列。キー = Scan_<列名>)。 */
   scanFields: Record<string, string>;
 }
