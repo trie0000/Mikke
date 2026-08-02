@@ -441,7 +441,7 @@ function Invoke-MikkeScannerMerge {
 - 文字コードは **UTF-8**（BOM 付き推奨。Excel で開いても文字化けしない）。改行は CRLF / LF どちらでも可。
 - 値にカンマ・改行・引用符を含む場合は **RFC4180 のダブルクォート**で囲む（`ConvertTo-Csv` を使えば自動）。
 
-参考: 配布物に同梱の **`sample-import-template.csv`**（リポジトリでは `samples/template.csv`）が取込 CSV の見本（列構成の実例）。
+参考: 配布物に同梱の **`sample-import-template.csv`**（`dist/` にあります）が取込 CSV の見本（列構成の実例）。
 
 ### 10-4. エラー
 

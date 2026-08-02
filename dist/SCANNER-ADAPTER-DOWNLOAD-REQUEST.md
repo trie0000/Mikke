@@ -15,7 +15,7 @@
 
 1. `SCANNER-ADAPTER-SPEC.md`（**§9 取得** と **§10 マージ CSV** が対象）
 2. `mikke-scanner-adapter.example.ps1`（雛形。2 関数の骨組み入り）
-3. `samples/template.csv`（生成する CSV の列構成の見本）
+3. `sample-import-template.csv`（生成する CSV の列構成の見本）
 
 ---
 
@@ -76,7 +76,7 @@ Invoke-MikkeScannerMerge。
   （資産をマージする目的はこの追加列なので、必要な資産属性は遠慮なく足すこと）
 - 1脆弱性=1行。複数資産が紐づく場合は | 区切りで1セルにまとめてよい
 - 文字コードUTF-8（BOM付き推奨）、RFC4180のクォート（ConvertTo-Csv を使えば自動）
-- 見本: 同梱の samples/template.csv が取込CSVの列構成の実例
+- 見本: 同梱の sample-import-template.csv が取込CSVの列構成の実例
 
 【制約（必ず守る）】
 - Windows PowerShell 5.1 互換（?. / ?? / 三項 ?: / ConvertFrom-Json -AsHashtable /

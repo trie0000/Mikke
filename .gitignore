@@ -1,18 +1,18 @@
 node_modules/
-# dist/ はビルド生成物。追跡するのは「他に原本が無いもの」だけにする。
-# ★ scripts/ や リポジトリ直下に原本があるファイル (relay の ps1/bat/loader、
-#   仕様書、CSV 雛形など) は dist にコピーされるが **追跡しない**。
-#   両方を追跡すると同じ内容が git に二重に入り、1 箇所の修正で毎回 2 ファイル
-#   分の差分が出るため。配布物一式が要るときは `npm run build` で dist に揃う。
-dist/*
-!dist/index.html
-!dist/install.html
-!dist/install-loader.html
-!dist/bookmarklet.txt
-!dist/mikke.bundle.js
-!dist/version.txt
-!dist/relay-version.txt
-!dist/README.md
+# dist/ = 配布物一式の置き場。**relay のスクリプト類はここが原本**
+# (以前は scripts/ にも同じものがあり二重管理だった。ここ 1 箇所に集約している)。
+# 追跡しないのは「中間生成物」と「各環境固有のファイル」だけ。
+dist/mikke.js
+dist/mikke.js.map
+dist/THIRD_PARTY_NOTICES.md
+# relay の個人設定 (雛形は .example として配布)
+dist/mikke-relay.env
+# 検査ツール API アダプタの実装版 (委託先環境で作成。API 仕様・URL を公開リポに置かない)
+dist/mikke-scanner-adapter.ps1
+# relay 自己更新 (updater.bat) が生成する一時ファイル
+dist/*.new
+dist/*.bak
+dist/mikke-updater.bat
 *.log
 .DS_Store
 .vscode/
@@ -23,11 +23,6 @@ dist/*
 *.orig
 *~
 
-# relay の個人設定 (テンプレートは .example として残す)
-scripts/mikke-relay.env
-# 検査ツール API アダプタの実装版 (委託先環境で作成。API 仕様・URL を公開リポに置かない)
-scripts/mikke-scanner-adapter.ps1
-dist/mikke-scanner-adapter.ps1
 .claude/
 
 # 開発専用の指示書。pull 同期対象外 (リポジトリで配布しない / 各自ローカル管理)。

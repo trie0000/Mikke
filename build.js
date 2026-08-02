@@ -135,19 +135,19 @@ if (watch || serve) {
     `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
     `fetch(base+'/mikke.bundle.js',{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
     `load(primary);})();`;
-  // ★ ローダは「relay と同じフォルダに置くファイル」なので scripts/ を正とする
-  //   (CDP 起動でランチャーが読む)。dist へは他の relay 配布物と同じくコピーする。
-  //   git で追跡するのは scripts/ 側だけ (dist は生成物なので重複させない)。
-  fs.writeFileSync('scripts/mikke.loader.js', loader);
+  // ローダは relay と同じフォルダ (= dist) に置く。CDP 起動でランチャーが読む。
+  fs.writeFileSync('dist/mikke.loader.js', loader);
   const loaderHref = 'javascript:' + encodeURIComponent(loader);
   fs.writeFileSync('dist/bookmarklet.txt', loaderHref);
   fs.writeFileSync('dist/install-loader.html', renderInstallHtml(loaderHref, false));
   console.log(`[loader] dist/mikke.bundle.js: ${sizeKb('dist/mikke.bundle.js')} KB / version.txt: "${buildId}"`);
 
-  // ── relay 配布物 + 自動更新 manifest ──
+  // ── relay 自動更新 manifest ──
+  // ★ relay のスクリプト類は dist/ が原本 (配布物置き場に直接置く)。ビルドでの
+  //   コピーは無く、ここでは manifest の生成と整合チェックだけを行う。
   const relayFiles = [
     'mikke-relay.ps1', 'mikke-launch.ps1', 'mikke-relay.bat', 'mikke-launch.bat',
-    // CDP ワンクリック起動でランチャーが読む (ビルド生成物。上で scripts/ に出力済み)
+    // CDP ワンクリック起動でランチャーが読む (上で生成)
     'mikke.loader.js',
     'mikke-relay.env.example',
     // 検査ツール API アダプタの雛形。実装版 (mikke-scanner-adapter.ps1) は
@@ -155,21 +155,16 @@ if (watch || serve) {
     'mikke-scanner-adapter.example.ps1',
   ];
   let relayVersion = '0.0.0';
-  const relayPs1Path = 'scripts/mikke-relay.ps1';
+  const relayPs1Path = 'dist/mikke-relay.ps1';
   if (fs.existsSync(relayPs1Path)) {
     const relayPs1 = fs.readFileSync(relayPs1Path, 'utf8');
     const m = relayPs1.match(/\$MIKKE_RELAY_VERSION\s*=\s*['"]([^'"]+)['"]/);
     if (m) relayVersion = m[1];
-    // 配布物を dist/ にコピー
-    for (const f of relayFiles) {
-      const src = path.join('scripts', f);
-      if (fs.existsSync(src)) fs.copyFileSync(src, path.join('dist', f));
-    }
     // relay-version.txt = self-update manifest (UI が SP の値と比較)
     // .example.* は配布はするが self-update の管理対象 (manifest) には含めない
     // (relay 側の許可リスト外ファイルを送ると self-update 全体が 400 になる)。
     const manifest = relayFiles
-      .filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'));
+      .filter((f) => fs.existsSync(path.join('dist', f)) && !f.includes('.example'));
     // ★ manifest に relay の許可リスト外のファイルが入っていると、self-update は
     //   その 1 件で 400 になり **全ファイルが更新されない** (relay 側で即 return)。
     //   過去に mikke.loader.js を manifest だけに足して self-update が全滅したので、
@@ -182,7 +177,7 @@ if (watch || serve) {
     if (notAllowed.length) {
       throw new Error(
         `[relay] self-update の manifest に許可リスト外のファイルがあります: ${notAllowed.join(', ')}\n`
-        + `        scripts/mikke-relay.ps1 の $MIKKE_RELAY_MANAGED_FILES に追加してください`
+        + `        dist/mikke-relay.ps1 の $MIKKE_RELAY_MANAGED_FILES に追加してください`
         + ` (このまま配布すると self-update が 400 で全滅します)`,
       );
     }
@@ -190,21 +185,10 @@ if (watch || serve) {
       JSON.stringify({ version: relayVersion, buildTime, files: manifest }, null, 2) + '\n');
     console.log(`[relay] dist/relay-version.txt: v${relayVersion} (${manifest.length} files)`);
   } else {
-    console.warn('[relay] WARN: scripts/mikke-relay.ps1 が無いので relay 配布物は出力しません');
+    console.warn('[relay] WARN: dist/mikke-relay.ps1 が無いので relay manifest は出力しません');
   }
 
-  // 委託先向けアダプタ実装仕様 (雛形 example.ps1 とセットで配布)
-  if (fs.existsSync('SCANNER-ADAPTER-SPEC.md')) {
-    fs.copyFileSync('SCANNER-ADAPTER-SPEC.md', 'dist/SCANNER-ADAPTER-SPEC.md');
-  }
-  // 一括ダウンロードアダプタの実装依頼テンプレ (お客様環境へ渡す用)
-  if (fs.existsSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md')) {
-    fs.copyFileSync('SCANNER-ADAPTER-DOWNLOAD-REQUEST.md', 'dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md');
-  }
-  // 取込 CSV の列構成見本 (マージ CSV 実装の参照用。SPEC §10 から参照される)
-  if (fs.existsSync('samples/template.csv')) {
-    fs.copyFileSync('samples/template.csv', 'dist/sample-import-template.csv');
-  }
+  // 委託先向けアダプタ実装仕様・依頼テンプレ・CSV 雛形は dist/ が原本 (コピー不要)
   // 同梱 OSS のライセンス表記 (配布物に含める)
   if (fs.existsSync('THIRD_PARTY_NOTICES.md')) {
     fs.copyFileSync('THIRD_PARTY_NOTICES.md', 'dist/THIRD_PARTY_NOTICES.md');

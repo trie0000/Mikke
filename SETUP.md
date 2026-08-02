@@ -31,15 +31,15 @@ npm run build      # dist/ に配布物を生成
 | `mikke-relay.ps1` ほか | ローカル中継サーバ一式 | 各利用者 PC |
 | `relay-version.txt` | relay 自動更新 manifest | ★ SharePoint |
 
-> **git で追跡しているのは「他に原本が無いファイル」だけ**です（`mikke.bundle.js` /
-> `version.txt` / `relay-version.txt` / 各 html / `bookmarklet.txt`）。
-> relay 一式・仕様書・CSV 雛形は `scripts/` やリポジトリ直下が原本で、`dist/` へは
-> ビルド時にコピーされます（同じ内容を git に二重に持たないため）。
-> **`git pull` だけで配布物を揃えたい場合は、relay 一式は `scripts/` から取ってください。**
+> **`dist/` が配布物の置き場であり、relay のスクリプト類・仕様書・CSV 雛形は
+> ここが原本**です（以前は `scripts/` にも同じものがあり二重管理でした）。
+> git で追跡しているので **`git pull` だけで配布物一式が揃います**。
+> `npm run build` で更新されるのは UI 本体（`mikke.bundle.js` / `version.txt` /
+> 各 html / `bookmarklet.txt` / `mikke.loader.js` / `relay-version.txt`）だけです。
 
 ### 中継サーバ一式（各利用者 PC に置くフォルダ）
 
-`scripts/` の次の 5 ファイルを 1 つのフォルダにまとめて配ります（`dist/` にも同じものがコピーされます）。
+`dist/` の次の 5 ファイルを 1 つのフォルダにまとめて配ります。
 
 | ファイル | 役割 |
 | --- | --- |

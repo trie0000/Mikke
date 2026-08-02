@@ -44,9 +44,9 @@ npm run test:watch      # watch モード
 - `test/detection.test.ts` — 検知ステータス遷移（新規→継続→未検出→再検知→継続）
 - `test/conditions.test.ts` — AND/OR 条件評価・ネスト
 - `test/csv.test.ts` — CSV パース（クォート/改行/BOM/CRLF）
-- `test/import.test.ts` — 差分判定の全ライフサイクル（`samples/` の CSV を使用）
+- `test/import.test.ts` — 差分判定の全ライフサイクル（インラインの CSV を使用）
 
-UI / relay / SP 実機の手動確認は mock 起動・`pwsh scripts/mikke-relay.ps1`・SP サイトでのブックマークレット起動で行う。
+UI / relay / SP 実機の手動確認は mock 起動・`pwsh dist/mikke-relay.ps1`・SP サイトでのブックマークレット起動で行う。
 
 ### ビルド成果物（`dist/`）
 
@@ -69,8 +69,15 @@ src/
   lib/               conditions(条件エンジン) / detection(検知遷移) / csv
   views/             shell / issueList / issueDetail / editModal / importView / settingsView
   styles/app.css     単一 CSS（トークン + コンポーネント）
-scripts/             mikke-relay.ps1 / mikke-launch.* / env.example
-samples/             テスト用 CSV サンプル（ダミーデータ）
+dist/                配布物一式（★ここが原本のファイルもある）
+  mikke-relay.ps1    ローカル中継サーバ
+  mikke-launch.*     ワンクリック起動（CDP）
+  mikke.loader.js    CDP 起動時に注入するローダ（ビルド生成）
+  mikke-relay.env.example / mikke-scanner-adapter.example.ps1
+  SCANNER-ADAPTER-SPEC.md            検査ツールAPIアダプタの実装仕様（委託先へ渡す）
+  SCANNER-ADAPTER-DOWNLOAD-REQUEST.md 実装依頼テンプレ
+  sample-import-template.csv         取込 CSV の見本
+  mikke.bundle.js / version.txt      SharePoint に置く UI 本体
 ```
 
 ## ステータス
