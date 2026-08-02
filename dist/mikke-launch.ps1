@@ -21,7 +21,10 @@
 #
 # CDP 関連の設定 (mikke-relay.env / いずれも任意):
 #   MIKKE_CDP           : '0' で CDP を無効化し従来フロー固定 (既定は有効)
-#   MIKKE_CDP_PORT      : CDP のデバッグポート (既定 9333)
+#   MIKKE_CDP_PORT      : CDP のデバッグポート (既定 9339)
+#                         ★ 他の CDP を使うツールと重なると、そちらのブラウザに
+#                           注入してしまうので既定値をずらしてある。重なった場合も
+#                           ポートの持ち主を判定して空きポートに退避する。
 #   MIKKE_EDGE_PATH     : msedge.exe のパス (未設定なら既定の場所を自動探索)
 #   MIKKE_EDGE_USERDATA : 専用プロファイルの置き場所 (既定 %LOCALAPPDATA%\mikke-edge)
 #   MIKKE_INJECT        : 'loader' で従来どおりローダを注入し、バンドルは SharePoint
@@ -40,7 +43,7 @@ $envFile = Join-Path $scriptDir 'mikke-relay.env'
 $siteUrl = $null
 $envPort = 0
 $cdpEnabled = $true
-$cdpPort = 9333
+$cdpPort = 9339   # 既定。他の CDP ツールと衝突しにくい値にしている
 $edgePath = ''
 $edgeUserData = ''
 if (Test-Path -LiteralPath $envFile) {
@@ -151,6 +154,38 @@ function Find-EdgeExe {
     return ''
 }
 
+# 指定ポートで CDP が応答するか (= 何かのブラウザが listen しているか)。
+function Test-CdpUp {
+    param([int]$CdpPort)
+    try {
+        # ループバックはプロキシを迂回させたいので Invoke-RestMethod を使う
+        Invoke-RestMethod -Uri "http://127.0.0.1:$CdpPort/json/version" -TimeoutSec 1 | Out-Null
+        return $true
+    } catch { return $false }
+}
+
+# そのポートを listen しているのが「自分が起動したブラウザ」か。
+# ★ CDP には「どの --user-data-dir で動いているか」を返す API が無いので、
+#   ポートの所有プロセスのコマンドラインを見る。判定できない場合は false を
+#   返す (= 他人のものとして扱う)。誤って別ツールのブラウザに注入するより、
+#   ブラウザがもう 1 つ開く方が害が小さい。
+function Test-CdpPortOwnedByUs {
+    param([int]$CdpPort, [string]$UserDataDir)
+    if (-not $UserDataDir) { return $false }
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $CdpPort -State Listen -ErrorAction Stop |
+                Select-Object -First 1
+        if (-not $conn) { return $false }
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($conn.OwningProcess)" -ErrorAction Stop
+        if (-not $proc) { return $false }
+        # -like はパス中の [ ] をワイルドカード扱いするので Contains で literal 比較する
+        return ([string]$proc.CommandLine).Contains($UserDataDir)
+    } catch {
+        Write-Host "  (CDP ポートの持ち主を判定できませんでした: $($_.Exception.Message))" -ForegroundColor DarkGray
+        return $false
+    }
+}
+
 function Get-CdpTargetWs {
     param([int]$CdpPort, [int]$TimeoutSec = 30)
     for ($i = 0; $i -lt ($TimeoutSec * 2); $i++) {
@@ -180,12 +215,27 @@ if (-not $cdpEnabled) {
     } else {
         if (-not $edgeUserData) { $edgeUserData = Join-Path $env:LOCALAPPDATA 'mikke-edge' }
         try {
-            # 既に CDP 付きで起動済みなら再起動しない (SingletonLock のレース回避)
-            $alreadyUp = $false
-            try {
-                Invoke-RestMethod -Uri "http://127.0.0.1:$cdpPort/json/version" -TimeoutSec 1 | Out-Null
-                $alreadyUp = $true
-            } catch { }
+            # 既に CDP 付きで起動済みなら再起動しない (SingletonLock のレース回避)。
+            # ★ ただし「起動済み」= 自分のブラウザとは限らない。CDP を使う別ツールが
+            #   同じポートを使っていると、そちらのブラウザに Mikke を注入してしまう。
+            #   ポートを listen しているプロセスのコマンドラインに自分の
+            #   --user-data-dir が含まれるかで持ち主を判定し、他人のものなら
+            #   空きポートを探して自前のブラウザを起動する。
+            $alreadyUp = (Test-CdpUp -CdpPort $cdpPort)
+            if ($alreadyUp -and -not (Test-CdpPortOwnedByUs -CdpPort $cdpPort -UserDataDir $edgeUserData)) {
+                $taken = $cdpPort
+                $found = 0
+                for ($p = $taken + 1; $p -le $taken + 20; $p++) {
+                    if (-not (Test-CdpUp -CdpPort $p)) { $found = $p; break }
+                }
+                if ($found -eq 0) {
+                    throw ("CDP ポート $taken は別のツールが使用中で、代わりの空きポートも見つかりませんでした。" +
+                           "mikke-relay.env の MIKKE_CDP_PORT で別のポートを指定してください。")
+                }
+                Write-Host "port $taken は別のツールの CDP が使用中です。port $found で自前のブラウザを起動します。" -ForegroundColor Yellow
+                $cdpPort = $found
+                $alreadyUp = $false
+            }
 
             if ($alreadyUp) {
                 Write-Host "CDP ブラウザは起動済みです (port $cdpPort)" -ForegroundColor Green
