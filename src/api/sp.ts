@@ -436,6 +436,26 @@ export class SpRepository implements Repository {
     }
   }
 
+  /**
+   * リストを開く URL (既定ビュー) を SharePoint から取得する。無ければ null。
+   *
+   * ★ `/Lists/<Title>/AllItems.aspx` と組み立ててはいけない。リストの URL は
+   *   作成時の名前で決まり、後から表示名を変えても URL は変わらない。日本語名や
+   *   記号入りでも変わる。組み立てた URL は当たることもあるが外れると 404 になる。
+   */
+  private async listViewUrl(title: string): Promise<string | null> {
+    try {
+      const j = await this.spGet(
+        `/_api/web/lists/getbytitle('${encodeURIComponent(title)}')?$select=DefaultViewUrl`);
+      const rel: string = j?.d?.DefaultViewUrl ?? '';
+      return rel ? location.origin + rel : null;
+    } catch { return null; }   // 未作成 (404) もここに来る
+  }
+
+  async vulnResponseListUrl(): Promise<string | null> {
+    return this.listViewUrl(LIST_VULNRESPONSE);
+  }
+
   /** 連携用リストを構築する (冪等。何度実行してもよい)。 */
   async ensureVulnResponseList(): Promise<SetupResult> {
     const rep = new StepReporter();
@@ -453,7 +473,9 @@ export class SpRepository implements Repository {
     await this.applyFieldOrder(LIST_VULNRESPONSE, fields, rep);
     await this.applyFormFormatter(LIST_VULNRESPONSE, buildVulnResponseFormFormatter(), rep);
     await this.applyConditionalFormulas(LIST_VULNRESPONSE, fields, map, rep);
-    return rep.result(`${this.webUrl}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`);
+    // ★ URL は組み立てず、作成したリストから実際の値を引く (組み立てると 404 になり得る)。
+    const listUrl = await this.listViewUrl(LIST_VULNRESPONSE);
+    return rep.result(listUrl ?? `${this.webUrl}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`);
   }
 
   // ── 実在列チェック ─────────────────────────────────────────────────────────

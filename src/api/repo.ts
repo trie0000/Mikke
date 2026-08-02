@@ -58,6 +58,10 @@ export interface Repository {
   deleteDocFile(serverRelativeUrl: string): Promise<void>;
   /** 保存済みファイルをブラウザで開く/保存するための href を返す (SP=絶対URL / mock=data URL)。 */
   docFileHref(serverRelativeUrl: string): Promise<string>;
+  /** 連携用リストを開く URL (既定ビュー)。まだ無ければ null。
+   *  ★ リストの URL は Title から機械的に組めない (作成時の名前が残る / 改名しても
+   *    URL は変わらない) ので、必ず SharePoint から実際の URL を取得する。 */
+  vulnResponseListUrl(): Promise<string | null>;
   /** 資産管理者への連携用リストを構築する (冪等)。設定画面から明示的に実行する。 */
   ensureVulnResponseList(): Promise<SetupResult>;
   /** 連携用リストの該当アイテム (IssueInstanceId 一致) に個別レポートを添付する。

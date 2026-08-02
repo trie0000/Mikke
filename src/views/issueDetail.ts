@@ -5,7 +5,7 @@ import { getState, setState } from '../state';
 import { getRepo } from '../api/repo';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { openEditModal } from './editModal';
-import { relayGetIssue, relayHealth } from '../api/relay';
+import { relayGetIssue, relayHealth, getRelayBase } from '../api/relay';
 import { toast } from '../components/toast';
 import { scanDisplayMap, scanFieldName, decodeSpInternalName } from '../lib/scanName';
 import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
@@ -503,7 +503,9 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     if (!current) return;
     const h = await relayHealth();
     if (!h.ok) {
-      toast(rootEl, '中継サーバが起動していません。mikke-start.bat を実行してください。', 'warn');
+      toast(rootEl,
+        `中継サーバに接続できません (${getRelayBase()})。mikke-launch.bat を実行するか、`
+        + '設定 → 接続 の「中継サーバ ベース URL」を確認してください。', 'warn', 10000);
       return;
     }
     try {

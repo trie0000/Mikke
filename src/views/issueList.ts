@@ -7,7 +7,7 @@ import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
-import { relayHealth, relayGetIssues, type RelayIssueBatchItem } from '../api/relay';
+import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
@@ -276,7 +276,14 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     const devMock = getRepoMode() === 'mock';
     if (!devMock) {
       const h = await relayHealth();
-      if (!h.ok) { toast(rootEl, '中継サーバが起動していません。mikke-launch.bat を実行してください。', 'warn'); return; }
+      if (!h.ok) {
+        // ★ どこへ繋ぎに行ったかを出す。既定は 18080 なので、別ポートで起動していると
+        //   「起動しているのに繋がらない」状態になり、URL が無いと切り分けられない。
+        toast(rootEl,
+          `中継サーバに接続できません (${getRelayBase()})。mikke-launch.bat を実行するか、`
+          + '設定 → 接続 の「中継サーバ ベース URL」を確認してください。', 'warn', 10000);
+        return;
+      }
     }
     bulkBusy = true;
     updateSubbar();

@@ -405,6 +405,14 @@ public class MikkeCdp {
                        'siteServerRelativeUrl:"' + $webRel + '",siteAbsoluteUrl:"' + $webAbs + '"});true'
             $cdp.Eval($prelude, $false) | Out-Null
 
+            # ★ 中継サーバの接続先をブラウザに教える。
+            #   ブラウザ側の既定は 18080 固定なので、-Port や MIKKE_RELAY_PORT で
+            #   別ポートにしていると「中継サーバが起動していません」になる。
+            #   専用プロファイルは localStorage が空のことが多く、設定画面から
+            #   入れ直す運用も現実的でないため、起動時にこちらから確定させる。
+            $relayJs = 'try{localStorage.setItem("mikke.relay.base","http://127.0.0.1:' + $Port + '/mikke");}catch(e){};true'
+            try { $cdp.Eval($relayJs, $false) | Out-Null } catch { }
+
             # ★ バンドル注入 (既定)
             #   CDP が繋がっているので、ローカルの mikke.bundle.js をそのまま
             #   Runtime.evaluate に流し込む。SharePoint ライブラリへの配置も

@@ -2,7 +2,7 @@
 import { el, clear } from '../utils/dom';
 import { icon, brandMark } from '../icons';
 import { getState, setState, subscribe } from '../state';
-import { getRepoMode } from '../api/repo';
+import { getRepo, getRepoMode } from '../api/repo';
 import { renderIssueList } from './issueList';
 import { renderIssueDetail } from './issueDetail';
 import { renderImportView } from './importView';
@@ -37,7 +37,7 @@ export function renderShell(): HTMLElement {
 
   function repaint(): void {
     clear(topSlot); topSlot.appendChild(renderTopbar(root));
-    clear(sideSlot); sideSlot.appendChild(renderSidebar());
+    clear(sideSlot); sideSlot.appendChild(renderSidebar(root));
     paintMain(main, root);
   }
   repaint();
@@ -219,7 +219,7 @@ function renderTopbar(root: HTMLElement): HTMLElement {
   ]);
 }
 
-function renderSidebar(): HTMLElement {
+function renderSidebar(root: HTMLElement): HTMLElement {
   const s = getState();
   const item = (view: string, ic: string, label: string) =>
     el('div', {
@@ -234,11 +234,25 @@ function renderSidebar(): HTMLElement {
     // mock / SP 以外では空になるのでリンクを出さない。
     const site = resolveSiteUrl();
     if (!site) return null;
+    // ★ href は「組み立てた推測 URL」なので中クリック等の保険にとどめ、
+    //   通常のクリックでは SharePoint から実際の URL を引いてから開く。
+    //   リストの URL は作成時の名前で決まるため、組み立てると 404 になり得る。
     const href = `${site.replace(/\/$/, '')}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`;
     return el('a', {
       class: 'mikke-nav-item mikke-nav-item--external',
       href, target: '_blank', rel: 'noopener noreferrer',
       title: '資産管理者に対応状況を記入してもらうリストを別タブで開きます',
+      onclick: (e: Event) => {
+        e.preventDefault();
+        void (async () => {
+          let url: string | null = null;
+          try { url = await getRepo().vulnResponseListUrl(); } catch { /* 下で案内する */ }
+          if (url) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+          toast(root,
+            '連携用リストがまだありません。設定 → 共通設定 → 資産管理者向けリスト から作成してください。',
+            'warn', 8000);
+        })();
+      },
     }, [
       el('span', { html: icon('building') }),
       el('span', {}, ['連携用リスト']),
