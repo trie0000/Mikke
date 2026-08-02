@@ -3,8 +3,9 @@
 # 起動の流れ:
 #   1) relay が起動していなければ別ウィンドウ (-NoExit) で起動し、/health を待つ
 #   2) ★ CDP ワンクリック: 専用プロファイルの Edge を --remote-debugging-port 付きで
-#      起動し、SharePoint の認証を検知したら CDP 経由でローダを注入する
-#      (= ブックマークレットのクリックが不要になる)
+#      起動し、SharePoint の認証を検知したら CDP 経由で **同じフォルダの
+#      mikke.bundle.js をそのまま注入** する (= ブックマークレット不要。
+#      SharePoint ライブラリへのバンドル配置も不要で、手元のビルドが即起動する)
 #   3) CDP が使えない / 失敗した場合は従来フローにフォールバック:
 #      既定ブラウザで SharePoint を開き「ブックマークレットを押してください」と案内する
 #
@@ -23,6 +24,9 @@
 #   MIKKE_CDP_PORT      : CDP のデバッグポート (既定 9333)
 #   MIKKE_EDGE_PATH     : msedge.exe のパス (未設定なら既定の場所を自動探索)
 #   MIKKE_EDGE_USERDATA : 専用プロファイルの置き場所 (既定 %LOCALAPPDATA%\mikke-edge)
+#   MIKKE_INJECT        : 'loader' で従来どおりローダを注入し、バンドルは SharePoint
+#                         から読む (サイレント自動更新を使いたい運用向け)。
+#                         既定は同じフォルダの mikke.bundle.js を直接注入。
 #
 # 設定 (従来どおり):
 #   MIKKE_SITE_URL  : SharePoint サイトの URL (未設定なら起動時に入力)
@@ -257,26 +261,38 @@ public class MikkeCdp {
                        "siteServerRelativeUrl:'$webRel',siteAbsoluteUrl:'$siteUrl'});true"
             $cdp.Eval($prelude, $false) | Out-Null
 
-            # ローダ注入。バンドルではなく「ローダ」を入れることで、
-            # バンドルは従来どおり SP から読まれ、サイレント自動更新が温存される。
-            # ★ ローダはランチャーと同じフォルダに必要。無いと CDP 注入ができず、
-            #   ブックマークレット手動クリックの従来フローに落ちる (= 自動で起動しない)。
-            #   dist/mikke.loader.js をこのフォルダにコピーすれば解決する。
+            # ★ バンドル注入 (既定)
+            #   CDP が繋がっているので、ローカルの mikke.bundle.js をそのまま
+            #   Runtime.evaluate に流し込む。SharePoint ライブラリへの配置も
+            #   relay 経由の取得も不要で、手元のビルドがそのまま起動する
+            #   (開発中はこれが最短。SP に古いバンドルがあっても影響を受けない)。
+            #   MIKKE_INJECT=loader を指定すると、従来どおりローダ (SP からの
+            #   サイレント自動更新つき) を注入する。
+            $injectMode = [Environment]::GetEnvironmentVariable('MIKKE_INJECT')
+            $bundleFile = Join-Path $scriptDir 'mikke.bundle.js'
             $loaderFile = Join-Path $scriptDir 'mikke.loader.js'
-            if (-not (Test-Path -LiteralPath $loaderFile)) {
-                throw ("mikke.loader.js が見つかりません: $scriptDir`n" +
-                       '        配布物 (dist) の mikke.loader.js を、このフォルダ (mikke-launch.bat と同じ場所) に' +
-                       'コピーしてください。これが無いと自動起動できません。')
-            }
-            $loaderJs = Get-Content -LiteralPath $loaderFile -Raw -Encoding UTF8
-            $res = $cdp.Eval($loaderJs, $false)
-            if ($res -match '"exceptionDetails"') { throw "ローダの注入に失敗しました: $res" }
+            $useBundle = ($injectMode -ne 'loader') -and (Test-Path -LiteralPath $bundleFile)
 
-            # ★ 注入できた = 画面が出た、ではない。ローダは SharePoint から
-            #   mikke.bundle.js を **非同期に** 取りに行き、失敗しても console.warn
-            #   するだけなので、ここで確認しないと「ブラウザは上がるが画面が出ない」
+            if ($useBundle) {
+                $js = Get-Content -LiteralPath $bundleFile -Raw -Encoding UTF8
+                $srcLabel = "ローカルのバンドル ($([math]::Round((Get-Item $bundleFile).Length / 1KB)) KB)"
+            } else {
+                if (-not (Test-Path -LiteralPath $loaderFile)) {
+                    throw ("mikke.bundle.js も mikke.loader.js も見つかりません: $scriptDir`n" +
+                           '        配布物 (dist) の mikke.bundle.js を、このフォルダ (mikke-launch.bat と同じ場所) に' +
+                           'コピーしてください。これが無いと自動起動できません。')
+                }
+                $js = Get-Content -LiteralPath $loaderFile -Raw -Encoding UTF8
+                $srcLabel = 'ローダ (SharePoint からバンドルを取得)'
+            }
+            Write-Host "注入します: $srcLabel" -ForegroundColor Cyan
+            $res = $cdp.Eval($js, $false)
+            if ($res -match '"exceptionDetails"') { throw "注入に失敗しました ($srcLabel): $res" }
+
+            # ★ 注入できた = 画面が出た、ではない。バンドル直挿しなら起動は同期的だが、
+            #   ローダ経由だと SharePoint から **非同期に** 取りに行き、失敗しても
+            #   console.warn するだけ。確認しないと「ブラウザは上がるが画面が出ない」
             #   状態のまま「起動しました」と表示してしまう。
-            #   #mikke-root が生えるまで待ち、出なければバンドル取得の状況を取りに行く。
             Write-Host 'Mikke の画面が出るのを待っています...' -ForegroundColor Cyan
             $waitJs = '(async()=>{for(var i=0;i<40;i++){' +
                       'if(document.getElementById("mikke-root"))return "ok";' +
@@ -288,9 +304,24 @@ public class MikkeCdp {
             } catch { $mounted = 'unknown' }
 
             if ($mounted -ne 'ok') {
+                if ($useBundle) {
+                    # 直挿しで出ないのは、バンドル自体が実行時エラーになっているケース。
+                    # ページ内に残っているエラーを拾って出す。
+                    $errJs = '(function(){try{return (window.Mikke?"window.Mikke あり":"window.Mikke なし")' +
+                             '+" / root="+(document.getElementById("mikke-root")?"あり":"なし");}' +
+                             'catch(e){return "probe error: "+(e&&e.message||e);}})()'
+                    $diag = ''
+                    try {
+                        $dr = $cdp.Eval($errJs, $false) | ConvertFrom-Json
+                        $diag = [string]$dr.result.result.value
+                    } catch { $diag = '(取得できませんでした)' }
+                    throw ("バンドルは注入できましたが Mikke の画面が出ませんでした。`n" +
+                           "        $diag`n" +
+                           "        ブラウザの F12 → Console にエラーが出ていないか確認してください。")
+                }
                 # ローダに焼き込まれているバンドル配置パスを取り出して、実際に取得を試す。
                 $libPath = '/Shared%20Documents/Mikke'
-                $mLib = [regex]::Match($loaderJs, 'return r\?r\+"([^"]+)"')
+                $mLib = [regex]::Match($js, 'return r\?r\+"([^"]+)"')
                 if ($mLib.Success) { $libPath = $mLib.Groups[1].Value }
                 $diagJs = '(async()=>{try{' +
                           'var c=window._spPageContextInfo||{};' +

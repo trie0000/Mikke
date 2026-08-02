@@ -28,6 +28,16 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
   // ── 最新は先頭 ──────────────────────────────────────────────────────
   {
+    version: '2026-08-02g', date: '2026-08-02',
+    title: 'ワンクリック起動: 手元のバンドルを直接注入するように（SharePoint 配置が不要に）',
+    relayMin: '1.0.16',
+    changes: [
+      'CDP 起動時に、ランチャーと同じフォルダの mikke.bundle.js をそのままブラウザへ流し込むようにしました。SharePoint のドキュメントライブラリにバンドルを置かなくても起動します。',
+      '開発中は git pull → mikke-launch.bat で、その場のビルドがそのまま動きます。SharePoint 上の古いバンドルに引きずられません。',
+      'SharePoint からバンドルを読む従来方式（サイレント自動更新つき）に戻すには、mikke-relay.env に MIKKE_INJECT=loader を書いてください。',
+    ],
+  },
+  {
     version: '2026-08-02f', date: '2026-08-02',
     title: 'ワンクリック起動: 画面が出ないときに原因を表示するように',
     relayMin: '1.0.15',

@@ -46,7 +46,13 @@ npm run build      # dist/ に配布物を生成
 | `mikke-relay.ps1` | 中継サーバ本体 |
 | `mikke-launch.ps1` / `mikke-launch.bat` | ワンクリック起動（CDP） |
 | `mikke-relay.bat` | 中継サーバ単体起動 |
-| `mikke.loader.js` | CDP 起動時に注入するローダ（**これが無いと自動起動しません**） |
+| `mikke.bundle.js` | UI 本体。**CDP 起動時はこれを直接ブラウザに流し込みます**（**これが無いと自動起動しません**） |
+| `mikke.loader.js` | SharePoint からバンドルを読む方式に切り替えるとき用（`MIKKE_INJECT=loader`） |
+
+> **開発中は SharePoint へのバンドル配置は不要です。** ワンクリック起動はこのフォルダの
+> `mikke.bundle.js` を CDP でそのまま注入するので、`git pull` → 起動でその場のビルドが動きます。
+> 運用でサイレント自動更新（SharePoint 上のバンドルを読む方式）に戻す場合は
+> `mikke-relay.env` に `MIKKE_INJECT=loader` を書いてください。
 
 `mikke-relay.env` は各 PC の設定なので配布対象外です（雛形は `mikke-relay.env.example`）。
 
