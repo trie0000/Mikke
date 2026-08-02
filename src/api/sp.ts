@@ -814,15 +814,18 @@ export class SpRepository implements Repository {
   }
 
   /**
-   * 連携用リストの該当アイテムに個別レポートを添付する。
+   * 連携用リストの該当アイテムに個別レポートを添付する (常に最新 1 つ)。
    *
-   * ★ 添付ファイル名はアイテム内で一意。同名を add すると HTTP 400 になるため、
-   *   既に同名があれば先に削除してから追加する (再取得で置き換わるようにする)。
+   * ★ 添付ファイル名はアイテム内で一意。同名を add すると HTTP 400 になるので
+   *   先に消す (実機で確認: 削除なし=400 / 削除→再add=200)。
+   * ★ 検査ツールのファイル名には日付が入る = 再取得のたびに別名になるため、同名を
+   *   消すだけでは古い添付が積み上がる。前回添付した名前 (previousFileName) も消す。
+   * ★ アイテムの添付を全消しはしない。資産管理者が付けた証跡ファイルまで消えるため。
    * ★ 資産管理者が SharePoint 上でそのまま開けるよう、ドキュメントライブラリ保存とは
    *   別に「アイテムの添付」としても持たせている (リンク切れ・権限差を避ける)。
    */
   async attachVulnResponseFile(
-    issueInstanceId: string, fileName: string, data: Blob,
+    issueInstanceId: string, fileName: string, data: Blob, previousFileName?: string,
   ): Promise<'attached' | 'no-item'> {
     const listPath = `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')`;
     const q = `${listPath}/items?$select=Id&$filter=IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'&$top=1`;
@@ -830,13 +833,16 @@ export class SpRepository implements Repository {
     const itemId: number | undefined = found.d?.results?.[0]?.Id;
     if (!itemId) return 'no-item';
 
-    const name = fileName.replace(/[^\w.\-]/g, '_');
+    const safe = (n: string): string => n.replace(/[^\w.\-]/g, '_');
+    const name = safe(fileName);
     const itemPath = `${listPath}/items(${itemId})`;
-    // 同名が残っていると add が 400 になるので先に消す (無ければ 404 → 無視)。
-    try {
-      await this.spPost(`${itemPath}/AttachmentFiles/getByFileName('${encodeURIComponent(name)}')`,
-        undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
-    } catch { /* 未添付なら何もしなくてよい */ }
+    // 今回と同名 + 前回の名前を消してから追加する (無ければ 400/404 → 無視)。
+    for (const old of new Set([name, previousFileName ? safe(previousFileName) : ''].filter(Boolean))) {
+      try {
+        await this.spPost(`${itemPath}/AttachmentFiles/getByFileName('${encodeURIComponent(old)}')`,
+          undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
+      } catch { /* 未添付なら何もしなくてよい */ }
+    }
 
     const digest = await this.getDigest();
     const buf = await data.arrayBuffer();

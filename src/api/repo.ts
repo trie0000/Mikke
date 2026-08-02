@@ -61,9 +61,10 @@ export interface Repository {
   /** 資産管理者への連携用リストを構築する (冪等)。設定画面から明示的に実行する。 */
   ensureVulnResponseList(): Promise<SetupResult>;
   /** 連携用リストの該当アイテム (IssueInstanceId 一致) に個別レポートを添付する。
-   *  同名の添付が既にあれば置き換える。該当アイテムが無ければ 'no-item'。 */
+   *  常に最新 1 つになるよう、同名と previousFileName の添付を消してから追加する。
+   *  該当アイテムが無ければ 'no-item'。 */
   attachVulnResponseFile(
-    issueInstanceId: string, fileName: string, data: Blob,
+    issueInstanceId: string, fileName: string, data: Blob, previousFileName?: string,
   ): Promise<'attached' | 'no-item'>;
 }
 

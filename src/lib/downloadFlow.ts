@@ -34,8 +34,12 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
+/** SP への保存を何本まで同時に流すか。検査ツールからの取得 (relay 側 runspace プール)
+ *  と同じ 6 本に揃える。 */
+const SAVE_PARALLEL = 6;
+
 /** 最大 limit 並列で処理 (各 fn は自身で例外処理する前提)。 */
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let idx = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (idx < items.length) { const cur = items[idx++]!; await fn(cur); }
@@ -87,7 +91,7 @@ export async function acquireAndStore(types: DownloadType[]): Promise<AcquireRes
   const runFolder = `${baseFolder}/${jstStamp(nowIso)}`;
   let saved = 0;
   const errors: string[] = [];
-  await mapLimit(items ?? [], 4, async (it) => {
+  await mapLimit(items ?? [], SAVE_PARALLEL, async (it) => {
     try {
       const blob = new Blob([base64ToBytes(it.contentBase64) as BlobPart], { type: 'application/octet-stream' });
       const { url } = await getRepo().uploadDownloadFile(runFolder, it.fileName, blob);

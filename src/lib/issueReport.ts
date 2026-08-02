@@ -1,17 +1,16 @@
-// 脆弱性 1 件ごとのレポート取得フロー。
-//   管理対象一覧の「情報更新」から呼ばれ、1 件につき
-//     1. 検査ツールからレポート (zip) を取得        … relay /mikke/issue-report
-//     2. SP のドキュメントライブラリに原本を保存    … 一覧からリンクで開く用
-//     3. 連携用リストの該当アイテムに添付           … 資産管理者が SP 上で開く用
-//   の順で処理する。UI 非依存。
-import { getRepo, getRepoMode } from '../api/repo';
-import { relayGetIssueReport } from '../api/relay';
+// 脆弱性 1 件ごとのレポートを SP に保存し、連携用リストへ添付するフロー。
+//   管理対象一覧の「情報更新」から呼ばれる。取得そのものは relay の /mikke/issues
+//   (runspace プールで並列) がまとめて行うので、ここは保存と添付だけを担う。
+//     1. SP のドキュメントライブラリに原本を保存 … 一覧からリンクで開く用 (世代が残る)
+//     2. 連携用リストの該当アイテムに添付       … 資産管理者が SP 上で開く用 (常に最新1つ)
+//   UI 非依存。
+import { getRepo } from '../api/repo';
 import { zipFiles } from './zip';
-import { jstStamp, base64ToBytes } from './downloadFlow';
+import { jstStamp } from './downloadFlow';
 import type { ManagedIssue } from '../types';
 
 const DEFAULT_FOLDER = 'Shared Documents/MikkeDownloads';
-/** 個別レポートの保存先 (ダウンロードデータの一括分と混ざらないよう分ける)。 */
+/** 個別レポートの保存先 (一括ダウンロードの日時フォルダと混ざらないよう分ける)。 */
 export const ISSUE_REPORT_SUBFOLDER = 'issues';
 
 /** アダプタ未配置 (501) か。未配置ならレポートだけ諦めて情報更新は続ける。 */
@@ -21,8 +20,21 @@ export function isAdapterMissing(e: unknown): boolean {
   return /未配置|未実装|adapter/i.test(err?.message ?? '');
 }
 
+/** 検査ツールから取得済みのレポート 1 件分。 */
+export interface FetchedReport {
+  fileName: string;
+  bytes: Uint8Array;
+}
+
+/** この実行ぶんの保存先 (1 回の情報更新 = 1 フォルダ)。 */
+export async function issueReportFolder(nowIso: string): Promise<string> {
+  const settings = await getRepo().getSettings();
+  const baseFolder = (settings.downloadFolder ?? '').trim() || DEFAULT_FOLDER;
+  return `${baseFolder}/${ISSUE_REPORT_SUBFOLDER}/${jstStamp(nowIso)}`;
+}
+
 /** dev (mock) 用のサンプルレポート。中身は識別できれば十分。 */
-async function sampleReport(issue: ManagedIssue): Promise<{ fileName: string; bytes: Uint8Array }> {
+export async function sampleIssueReport(issue: ManagedIssue): Promise<FetchedReport> {
   const enc = new TextEncoder();
   const text = [
     `Issue Instance ID,${issue.issueInstanceId}`,
@@ -49,39 +61,31 @@ export interface IssueReportResult {
 }
 
 /**
- * 1 件分のレポートを取得して保存し、連携用リストにも添付する。
- * 取得・保存に失敗したら throw する (呼び出し側で 1 件だけ失敗扱いにする)。
+ * 取得済みレポートを SP に保存し、連携用リストにも添付する。
+ * 保存に失敗したら throw する (呼び出し側で 1 件だけ失敗扱いにする)。
  * 添付の失敗は致命的ではないので throw せず結果に載せる。
+ *
+ * ★ 添付は「常に最新 1 つ」にする。SharePoint の添付はファイル名が違えば別物として
+ *   積み上がってしまい、検査ツールのファイル名には日付が入る = 毎回別名になるため、
+ *   前回添付したファイル名 (issue.reportName) も消してから追加する。
+ *   ※ アイテムに付いている他の添付 (資産管理者が付けた証跡など) は消さない。
  */
-export async function fetchAndStoreIssueReport(issue: ManagedIssue): Promise<IssueReportResult> {
-  const settings = await getRepo().getSettings();
-  const baseFolder = (settings.downloadFolder ?? '').trim() || DEFAULT_FOLDER;
-
-  let fileName: string;
-  let bytes: Uint8Array;
-  if (getRepoMode() === 'mock') {
-    const s = await sampleReport(issue);
-    fileName = s.fileName; bytes = s.bytes;
-  } else {
-    const res = await relayGetIssueReport(issue.issueInstanceId);
-    fileName = res.fileName || `${issue.issueInstanceId}_${jstStamp()}.zip`;
-    bytes = base64ToBytes(res.contentBase64);
-  }
-
+export async function storeIssueReport(
+  issue: ManagedIssue, rep: FetchedReport, folder: string,
+): Promise<IssueReportResult> {
   const fetchedAt = new Date().toISOString();
-  const blob = new Blob([bytes as BlobPart], { type: 'application/zip' });
-  // 検査ツールが付けたファイル名にはたいてい日付が入っているが、同名で上書きされると
-  // 履歴が消えるので、取得日時のフォルダに分けて保存する。
-  const folder = `${baseFolder}/${ISSUE_REPORT_SUBFOLDER}/${jstStamp(fetchedAt)}`;
-  const { url } = await getRepo().uploadDownloadFile(folder, fileName, blob);
+  const blob = new Blob([rep.bytes as BlobPart], { type: 'application/zip' });
+  const { url } = await getRepo().uploadDownloadFile(folder, rep.fileName, blob);
 
   let attach: IssueReportResult['attach'] = 'no-item';
   let attachError: string | undefined;
   try {
-    attach = await getRepo().attachVulnResponseFile(issue.issueInstanceId, fileName, blob);
+    attach = await getRepo().attachVulnResponseFile(
+      issue.issueInstanceId, rep.fileName, blob, issue.reportName,
+    );
   } catch (e) {
     attach = 'failed';
     attachError = (e as Error).message;
   }
-  return { url, fileName, fetchedAt, attach, attachError };
+  return { url, fileName: rep.fileName, fetchedAt, attach, attachError };
 }

@@ -174,7 +174,7 @@ export class MockRepository implements Repository {
 
   /** モックには連携用リストの実体が無いので、添付できたことにして UI を通す。 */
   async attachVulnResponseFile(
-    _issueInstanceId: string, _fileName: string, _data: Blob,
+    _issueInstanceId: string, _fileName: string, _data: Blob, _previousFileName?: string,
   ): Promise<'attached' | 'no-item'> {
     return 'attached';
   }

@@ -271,8 +271,9 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 
 - **役割分担**: アダプタは「検査ツールからデータを取得して Base64 で返す」中継のみ。
   **SharePoint ドキュメントライブラリへの保存・一覧記録はブラウザ側**（SP 認証を持つ）が行う。アダプタは SP を触らない。
-- **並列ダウンロード（relay 側で実施）**: relay は要求された種別を **runspace プールで種別ごとに並列取得**する。
+- **並列ダウンロード（relay 側で実施）**: relay は要求された種別を **runspace プールで種別ごとに並列取得**する（同時 **最大 6 件** = `$MIKKE_DOWNLOAD_MAX_PARALLEL`。全 6 種別を要求した場合は 6 件が同時に走る）。
   つまり `Invoke-MikkeScannerDownload` は **1 種別ずつ・同時に複数回**呼ばれる（`-Types @('vuln')`, `-Types @('ip')`, … が並行）。
+  取得後の SharePoint への保存もブラウザ側で 6 並列で行う。同時実行時の注意点は §12-3 と共通。
   - アダプタ側で**自前の並列化は不要**（1 呼び出し＝1 種別に集中して実装すればよい）。
   - 各呼び出しは**隔離された runspace** で独立に dot-source・実行されるため、関数内で
     グローバル変数やファイルを共有・書き換えると競合しうる。**関数内で完結**させる（共有状態を持たない）こと。
@@ -586,3 +587,96 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issue-report' -Method Post 
 - [ ] 検査ツールが返したファイルを**再圧縮・リネームせず**そのまま返す
 - [ ] `fileName` は英数字・`.` `_` `-` を推奨
 - [ ] エラーは日本語メッセージで throw / 秘密をログに出さない
+
+---
+
+## 12. 情報更新の並列化（複数脆弱性の一括取得）
+
+管理対象一覧で複数件にチェックを入れて「情報更新」を押したとき、**relay が 5 件ずつ並列で**アダプタを呼ぶ。
+
+> **この章のためにアダプタへ追加実装するものはありません。**
+> 呼ばれるのは §1〜§8 の `Invoke-MikkeScannerFetch` と §11 の `Invoke-MikkeScannerIssueReport` のままです。
+> ただし **「同時に複数回呼ばれても壊れないこと」** という制約が加わります（12-3）。
+
+### 12-1. なぜ relay 側で並列化するのか
+
+relay の受付ループは `GetContext()` の逐次ループで、**1 リクエストずつしか処理しません**。そのためブラウザから `/mikke/issue` を 5 本同時に投げても listener で順番待ちになり、実質直列になります。
+
+そこで `/mikke/download`（§9）と同じ **runspace プール方式**を使い、**relay の中で並列化**します。
+
+```
+[ブラウザ]  チェック 10 件 → 5 件ずつに分けて送信
+   │  POST /mikke/issues  body: {"issueInstanceIds":["IID-1",...,"IID-5"],"includeReport":true}
+   ▼
+[relay]  runspace プール (最大 5) で 1 件 = 1 runspace
+   │   ├ runspace1: adapter を dot-source → Fetch + IssueReport
+   │   ├ runspace2: 〃
+   │   … (最大 5 本同時)
+   ▼
+[ブラウザ]  返ってきた 5 件を SharePoint へ保存・添付（こちらも 5 並列）→ 次の 5 件へ
+```
+
+実測（1 件あたり Fetch 1 秒 + Report 1 秒のスタブ、10 件）: 直列なら 20 秒のところ **4.07 秒**。
+
+### 12-2. 契約（エンドポイント）
+
+| 項目 | 内容 |
+|---|---|
+| URL | `POST /mikke/issues` |
+| 入力 | `{ "issueInstanceIds": ["IID-1","IID-2"], "includeReport": true }` |
+| 並列数 | relay 側 `$MIKKE_ISSUES_MAX_PARALLEL`（既定 **5**） |
+
+出力:
+
+```json
+{ "ok": true, "items": [
+  { "issueInstanceId": "IID-1", "ok": true,
+    "scannerStatus": "open", "severity": "high", "lastSeen": "2026-08-02T00:00:00",
+    "detected": true, "scanFields": { "Scan_Asset": "host1.example.com" },
+    "report": { "fileName": "IID-1.zip", "contentBase64": "…", "scannerDownloadTime": "…" } },
+  { "issueInstanceId": "IID-2", "ok": false, "error": "404 Not Found" }
+] }
+```
+
+- **1 件の失敗は他を巻き込まない**。失敗した件だけ `ok:false` + `error` で返る。**全件失敗したときだけ** 502。
+- `includeReport: true` でもアダプタに `Invoke-MikkeScannerIssueReport` が無ければ、その件は `reportSkipped: true` を返すだけ（エラーにしない）。ブラウザは以降のリクエストでレポートを要求しなくなる。
+- レポート取得だけが失敗した場合は `reportError` に理由が入り、**情報更新は成功扱い**（`ok: true`）。
+
+### 12-3. アダプタ側の制約（重要）
+
+**同じ関数が最大 5 本、同時に別々の runspace で実行されます。** 各 runspace は独立にアダプタを dot-source するため、変数は共有されませんが、**プロセス外の資源は共有されます**。以下に注意してください。
+
+- **固定パスの一時ファイルを使わない**。`$env:TEMP\export.csv` のような固定名は 5 本が同じファイルを奪い合います。`[System.IO.Path]::GetRandomFileName()` や Issue Instance ID を混ぜた名前にしてください。
+- **グローバル変数・`$script:` スコープに状態を持たない**。関数内で完結させてください。
+- **検査ツール API のレート制限に注意**。同時 5 リクエストが許容されない場合は、
+  - アダプタ内で待つ（`Start-Sleep` 等）か、
+  - relay の `$MIKKE_ISSUES_MAX_PARALLEL` を下げる（Mikke 側の `REFRESH_PARALLEL` も同じ値に合わせる）
+  のどちらかで調整します。**どちらが必要かは検査ツール側の仕様次第なので、判明したら連絡してください。**
+- **ログイン/トークン取得を毎回行う実装でも動きます**が、5 本が同時にログインしても問題ないか確認してください。トークンをファイルにキャッシュする実装は、上記の一時ファイルと同じ競合が起きます。
+- 診断ログ（`Write-Host`）は件ごとに `[issues:<Issue Instance ID>]` を前置して relay コンソールへ再出力されます。
+
+### 12-4. テスト方法
+
+```powershell
+$body = @{ issueInstanceIds = @('IID-1','IID-2','IID-3','IID-4','IID-5','IID-6')
+           includeReport = $true } | ConvertTo-Json
+Measure-Command {
+  $r = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issues' -Method Post `
+                         -ContentType 'application/json' -Body $body
+  $r.items | Select-Object issueInstanceId, ok, error
+}
+```
+
+確認する点:
+
+- `items` が投げた件数ぶん返る（順序は問わない）
+- 所要時間が **直列の総和より明確に短い**（6 件・1 件 2 秒なら 4 秒前後。12 秒なら並列化できていない）
+- 1 件だけ存在しない ID を混ぜたとき、その件だけ `ok:false` で他は成功する
+- relay コンソールに `[issues] 6 件 (並列 5) -> OK 5 / NG 1` が出る
+
+### 12-5. チェックリスト（追加分）
+
+- [ ] `Invoke-MikkeScannerFetch` / `Invoke-MikkeScannerIssueReport` が**同時 5 本の実行に耐える**（固定パスの一時ファイル・グローバル変数を使っていない）
+- [ ] 検査ツール API のレート制限を確認し、超える場合は並列数の調整方針を連絡した
+- [ ] 存在しない Issue Instance ID を渡したとき、その件だけ throw する（他の件を巻き込まない）
+- [ ] 上記テストで所要時間が直列より短くなることを確認した

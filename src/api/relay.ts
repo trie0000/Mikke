@@ -176,6 +176,42 @@ export async function relayGetIssueReport(issueInstanceId: string): Promise<Rela
   return await r.json();
 }
 
+/** /mikke/issues が返す 1 件分 (情報 + 任意でレポート)。 */
+export interface RelayIssueBatchItem extends RelayIssueResult {
+  issueInstanceId: string;
+  /** この 1 件の取得に成功したか。false なら error にメッセージが入る。 */
+  ok: boolean;
+  error?: string;
+  /** レポート本体。アダプタ未実装 / 取得失敗のときは無い。 */
+  report?: { fileName: string; contentBase64: string; scannerDownloadTime?: string };
+  /** アダプタに個別レポートの実装が無い (= 以降も取れない)。 */
+  reportSkipped?: boolean;
+  /** レポートだけの失敗理由 (情報更新は成功している)。 */
+  reportError?: string;
+}
+
+/** /mikke/issues — 複数件の情報 (+レポート) を relay 側の runspace プールで並列取得。
+ *  ★ relay の request loop は 1 リクエストずつしか処理しないため、ブラウザから
+ *    /mikke/issue を並列に投げても直列化される。並列化は relay 内で行う。 */
+export async function relayGetIssues(
+  issueInstanceIds: string[], includeReport: boolean,
+): Promise<RelayIssueBatchItem[]> {
+  const r = await fetch(`${getRelayBase()}/issues`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issueInstanceIds, includeReport }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
+    const err = new Error(detail) as Error & { status?: number };
+    err.status = r.status;
+    throw err;
+  }
+  const j = await r.json();
+  return (j.items ?? []) as RelayIssueBatchItem[];
+}
+
 /** /mikke/download が返す 1 ファイル。content は base64 (バイナリ安全)。 */
 export interface RelayDownloadItem {
   /** 種別 (vuln / ip / iprange / domain / cert / webapps)。 */

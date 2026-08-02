@@ -1,4 +1,4 @@
-﻿﻿#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # ============================================================================
 # mikke-relay.ps1 — Mikke ローカル中継サーバ (PowerShell + HttpListener)
 #
@@ -7,6 +7,7 @@
 #   - /mikke/csv-parse     大容量 CSV (約2万件/100MB) のサーバ側解析 (主経路)
 #   - /mikke/issue         脆弱性検査ツール API の Issue 単位中継 (雛形 / スタブ)
 #   - /mikke/issue-report  脆弱性 1 件分のレポート (zip) 取得 (アダプタ委譲)
+#   - /mikke/issues        複数脆弱性の情報＋レポートを並列取得 (runspace プール)
 #   - /mikke/download      脆弱性/資産データの一括ダウンロード中継 (種別ごと並列・アダプタ委譲)
 #   - /mikke/merge         DL済みファイルから取込用マージCSVを生成 (アダプタ委譲)
 #   - /mikke/relay/version relay スクリプト群のバージョン
@@ -29,7 +30,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.12'
+$MIKKE_RELAY_VERSION = '1.0.13'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 $MIKKE_RELAY_MANAGED_FILES = @(
@@ -100,6 +101,7 @@ Write-Host "  GET  http://localhost:$Port/mikke/health"
 Write-Host "  POST http://localhost:$Port/mikke/csv-parse"
 Write-Host "  POST http://localhost:$Port/mikke/issue"
 Write-Host "  POST http://localhost:$Port/mikke/issue-report"
+Write-Host "  POST http://localhost:$Port/mikke/issues (並列)"
 Write-Host "  POST http://localhost:$Port/mikke/download"
 Write-Host "  POST http://localhost:$Port/mikke/merge"
 Write-Host "  GET  http://localhost:$Port/mikke/relay/version"
@@ -467,6 +469,141 @@ function Invoke-IssueReport {
     }
 }
 
+# ─── /mikke/issues — 複数脆弱性の情報＋レポートを並列取得 (アダプタ委譲) ─────────
+# 入力: { issueInstanceIds: ["IID-1","IID-2"], includeReport: true }
+# 出力: { ok:true, items:[ { issueInstanceId, ok, scannerStatus, severity, lastSeen,
+#                            detected, scanFields, report:{fileName,contentBase64,...},
+#                            reportError, error } ] }
+#
+# ★ なぜこのエンドポイントが要るか:
+#   relay の request loop は GetContext() の逐次ループで、1 リクエストずつしか処理しない。
+#   そのためブラウザ側から /mikke/issue を並列に叩いても listener で待たされ、実質直列になる。
+#   /mikke/download と同じ runspace プール方式で **relay 内で並列化**する。
+# ★ 1 脆弱性 = 1 runspace。各 runspace が adapter を dot-source し
+#   Invoke-MikkeScannerFetch (+ 任意で Invoke-MikkeScannerIssueReport) を呼ぶ。
+#   1 件の失敗は他を巻き込まない (items[].ok=false で個別に返す)。
+$MIKKE_ISSUES_MAX_PARALLEL = 5
+
+function Invoke-IssuesBatch {
+    param([System.Net.HttpListenerContext]$Context)
+    $request = $Context.Request
+    $response = $Context.Response
+
+    $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+    $bodyText = $reader.ReadToEnd(); $reader.Close()
+    $ids = @()
+    $includeReport = $false
+    try {
+        if ($bodyText) {
+            $parsed = $bodyText | ConvertFrom-Json
+            if ($parsed.issueInstanceIds) { $ids = @($parsed.issueInstanceIds | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ }) }
+            if ($null -ne $parsed.includeReport) { $includeReport = [bool]$parsed.includeReport }
+        }
+    } catch { }
+    if (-not $ids -or $ids.Count -eq 0) { Send-Error $response 400 'no_issue_id' 'issueInstanceIds を 1 つ以上指定してください'; return }
+
+    $adapterPath = Join-Path $PSScriptRoot 'mikke-scanner-adapter.ps1'
+    if (-not (Test-Path -LiteralPath $adapterPath)) {
+        Send-Json -Response $response -Status 501 -Body @{
+            ok = $false
+            error = @{ code = 'adapter_not_installed'
+                       detail = 'mikke-scanner-adapter.ps1 が未配置です。mikke-scanner-adapter.example.ps1 をコピーして委託先環境で実装し、relay と同じフォルダに置いてください。' }
+        }
+        return
+    }
+
+    # 1 脆弱性ぶんを取得する worker (隔離 runspace 内で実行される)。
+    # レポートは「任意実装」なので、関数が無ければ reportSkipped を立てるだけで throw しない。
+    $worker = {
+        param($AdapterPath, $Iid, $WithReport)
+        . $AdapterPath
+        if (-not (Get-Command Invoke-MikkeScannerFetch -ErrorAction SilentlyContinue)) {
+            throw 'アダプタに Invoke-MikkeScannerFetch 関数が定義されていません'
+        }
+        $fetched = Invoke-MikkeScannerFetch -IssueInstanceId $Iid
+        $out = @{
+            issueInstanceId = $Iid
+            scannerStatus   = [string]$fetched.scannerStatus
+            severity        = [string]$fetched.severity
+            lastSeen        = [string]$fetched.lastSeen
+            scanFields      = $(if ($fetched.scanFields) { $fetched.scanFields } else { @{} })
+        }
+        if ($null -ne $fetched.detected) { $out.detected = [bool]$fetched.detected }
+
+        if ($WithReport) {
+            if (-not (Get-Command Invoke-MikkeScannerIssueReport -ErrorAction SilentlyContinue)) {
+                $out.reportSkipped = $true
+            } else {
+                # レポートだけの失敗で情報更新まで落とさない。
+                try {
+                    $rep = Invoke-MikkeScannerIssueReport -IssueInstanceId $Iid
+                    if ($rep -and $rep.contentBase64) {
+                        $name = [string]$rep.fileName
+                        if (-not $name) { $name = "$Iid.zip" }
+                        $out.report = @{
+                            fileName            = $name
+                            contentBase64       = [string]$rep.contentBase64
+                            scannerDownloadTime = [string]$rep.scannerDownloadTime
+                        }
+                    } else {
+                        $out.reportError = 'アダプタが contentBase64 を返しませんでした'
+                    }
+                } catch {
+                    $out.reportError = $_.Exception.Message
+                }
+            }
+        }
+        return $out
+    }
+
+    $cap = [Math]::Min($ids.Count, $MIKKE_ISSUES_MAX_PARALLEL)
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $cap)
+    $pool.Open()
+    $jobs = @()
+    foreach ($id in $ids) {
+        $ps = [PowerShell]::Create()
+        $ps.RunspacePool = $pool
+        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($id).AddArgument($includeReport)
+        $jobs += [pscustomobject]@{ Iid = $id; PS = $ps; Handle = $ps.BeginInvoke() }
+    }
+
+    $items = @()
+    $okCount = 0
+    $ngCount = 0
+    foreach ($j in $jobs) {
+        try {
+            $out = $j.PS.EndInvoke($j.Handle)
+            foreach ($info in $j.PS.Streams.Information) {
+                Write-Host ("[issues:{0}] {1}" -f $j.Iid, $info.ToString()) -ForegroundColor DarkGray
+            }
+            # EndInvoke は結果をコレクションで返すので 1 件目を取り出す。
+            $one = $null
+            if ($out) { foreach ($o in $out) { $one = $o; break } }
+            if (-not $one) { throw 'アダプタが結果を返しませんでした' }
+            $one.ok = $true
+            $items += $one
+            $okCount++
+        } catch {
+            $items += @{ issueInstanceId = $j.Iid; ok = $false; error = $_.Exception.Message }
+            $ngCount++
+            Write-Host ("[issues:{0}] ERROR: {1}" -f $j.Iid, $_.Exception.Message) -ForegroundColor Red
+        } finally {
+            $j.PS.Dispose()
+        }
+    }
+    $pool.Close(); $pool.Dispose()
+
+    Write-Host ("[issues] {0} 件 (並列 {1}) -> OK {2} / NG {3}" -f $ids.Count, $cap, $okCount, $ngCount) -ForegroundColor Green
+    # 全滅時のみエラー応答。一部でも取れていれば 200 で返す (部分成功)。
+    if ($okCount -eq 0) {
+        $first = ''
+        foreach ($it in $items) { if ($it.error) { $first = [string]$it.error; break } }
+        Send-Error $response 502 'adapter_error' $first
+        return
+    }
+    Send-Json -Response $response -Status 200 -Body @{ ok = $true; items = $items }
+}
+
 # ─── /mikke/download — 脆弱性/資産データの一括ダウンロード中継 (アダプタ委譲) ──
 # 入力: { types: ["vuln","ip","iprange","domain","cert","webapps"] }
 # 出力: { ok:true, items:[ { type, fileName, contentBase64, scannerDownloadTime, itemCount } ] }
@@ -757,6 +894,7 @@ while ($listener.IsListening) {
             '^/mikke/bundle-dir$'          { Invoke-BundleDir -Context $context; break }
             '^/mikke/issue$'               { Invoke-IssueFetch -Context $context; break }
             '^/mikke/issue-report$'        { Invoke-IssueReport -Context $context; break }
+            '^/mikke/issues$'              { Invoke-IssuesBatch -Context $context; break }
             '^/mikke/download$'            { Invoke-Download -Context $context; break }
             '^/mikke/merge$'               { Invoke-Merge -Context $context; break }
             '^/mikke/mikke\.bundle\.js$'   { Send-LocalFile -Response $res -Path (Join-Path $script:BundleDir 'mikke.bundle.js') -ContentType 'application/javascript; charset=utf-8'; break }

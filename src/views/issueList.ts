@@ -7,14 +7,18 @@ import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, severityBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
-import { relayHealth, relayGetIssue } from '../api/relay';
+import { relayHealth, relayGetIssues, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { DataTable, type DataColumn } from './dataTable';
-import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES } from '../lib/downloadFlow';
+import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES, mapLimit, base64ToBytes } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
-import { fetchAndStoreIssueReport, isAdapterMissing } from '../lib/issueReport';
+import { storeIssueReport, sampleIssueReport, issueReportFolder, isAdapterMissing } from '../lib/issueReport';
 import type { ManagedIssue } from '../types';
+
+/** 情報更新の並列数。relay 側 (/mikke/issues の runspace プール) と同じ値にする。
+ *  ここを増やすなら relay の $MIKKE_ISSUES_MAX_PARALLEL も合わせること。 */
+const REFRESH_PARALLEL = 5;
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
@@ -277,58 +281,91 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     bulkBusy = true;
     updateSubbar();
     let ok = 0, fail = 0, firstErr = '';
-    // レポート取得の内訳。アダプタ未配置なら 1 件目で諦めて情報更新だけ続ける。
+    // レポートの内訳。アダプタ未実装なら以降は試さない (情報更新だけ続ける)。
     let report = 0, noItem = 0, reportFail = 0, reportSkipped = false;
     let firstReportErr = '';
-    try {
-      for (let n = 0; n < ids.length; n++) {
-        const issue = cache.find((i) => i.id === ids[n]);
-        if (!issue) { fail++; continue; }
-        const liveBtn = subbar.querySelector('.mikke-btn--primary');
-        if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${n + 1}/${ids.length}…</span>`;
-        try {
-          const res = devMock
-            ? { scannerStatus: 'open', severity: issue.severity, lastSeen: new Date().toISOString(), detected: true }
-            : await relayGetIssue(issue.issueInstanceId);
-          const patch: Partial<ManagedIssue> = {
-            scannerStatus: res.scannerStatus, severity: res.severity, lastSeen: res.lastSeen,
-            lastSyncedAt: new Date().toISOString(), scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
-          };
-          if (res.detected === true) {
-            patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
-          } else if (res.detected === false) {
-            const nd = nextDetectionWhenAbsent(issue.detectionStatus);
-            patch.detectionStatus = nd;
-            if (nd === '未検出(New)' && !issue.firstUndetectedAt) patch.firstUndetectedAt = new Date().toISOString();
-          }
-          // 個別レポート (zip) の取得 → SP 保存 → 連携用リストへ添付。
-          // ここで失敗しても情報更新そのものは成功扱いにする (レポートは付随物)。
-          if (!reportSkipped) {
-            try {
-              const r = await fetchAndStoreIssueReport(issue);
-              patch.reportUrl = r.url;
-              patch.reportName = r.fileName;
-              patch.reportAt = r.fetchedAt;
-              if (r.attach === 'attached') report++;
-              else if (r.attach === 'no-item') { report++; noItem++; }
-              else { report++; reportFail++; if (!firstReportErr) firstReportErr = r.attachError ?? ''; }
-            } catch (e) {
-              if (isAdapterMissing(e)) {
-                reportSkipped = true;   // 未配置なら以降の件でも試さない
-              } else {
-                reportFail++;
-                if (!firstReportErr) firstReportErr = (e as Error).message;
-              }
-            }
-          }
-          await getRepo().updateIssue(issue.id, patch);
-          ok++;
-        } catch (e) {
-          fail++;
-          const msg = (e as Error).message;
-          if (!firstErr) firstErr = msg;
-          if (/未配置|未実装|adapter/i.test(msg)) break;
+    let done = 0;
+    const runFolder = await issueReportFolder(new Date().toISOString());
+    const progress = (): void => {
+      const liveBtn = subbar.querySelector('.mikke-btn--primary');
+      if (liveBtn) liveBtn.innerHTML = `${icon('sync')}<span>更新中 ${done}/${ids.length}…</span>`;
+    };
+    progress();
+
+    /** 1 件ぶんの後処理 (SP 保存 + 添付 + 行の更新)。SP 側は同時実行して問題ない。 */
+    const applyOne = async (issue: ManagedIssue, res: RelayIssueBatchItem): Promise<void> => {
+      try {
+        if (!res.ok) throw new Error(res.error || '取得に失敗しました');
+        const patch: Partial<ManagedIssue> = {
+          scannerStatus: res.scannerStatus, severity: res.severity, lastSeen: res.lastSeen,
+          lastSyncedAt: new Date().toISOString(), scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
+        };
+        if (res.detected === true) {
+          patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
+        } else if (res.detected === false) {
+          const nd = nextDetectionWhenAbsent(issue.detectionStatus);
+          patch.detectionStatus = nd;
+          if (nd === '未検出(New)' && !issue.firstUndetectedAt) patch.firstUndetectedAt = new Date().toISOString();
         }
+        if (res.reportSkipped) reportSkipped = true;
+        if (res.reportError) { reportFail++; if (!firstReportErr) firstReportErr = res.reportError; }
+        // レポートの保存・添付で失敗しても情報更新そのものは成功扱い (レポートは付随物)。
+        const rep = devMock ? await sampleIssueReport(issue)
+          : (res.report ? { fileName: res.report.fileName, bytes: base64ToBytes(res.report.contentBase64) } : null);
+        if (rep) {
+          try {
+            const r = await storeIssueReport(issue, rep, runFolder);
+            patch.reportUrl = r.url;
+            patch.reportName = r.fileName;
+            patch.reportAt = r.fetchedAt;
+            report++;
+            if (r.attach === 'no-item') noItem++;
+            else if (r.attach === 'failed') { reportFail++; if (!firstReportErr) firstReportErr = r.attachError ?? ''; }
+          } catch (e) {
+            reportFail++;
+            if (!firstReportErr) firstReportErr = (e as Error).message;
+          }
+        }
+        await getRepo().updateIssue(issue.id, patch);
+        ok++;
+      } catch (e) {
+        fail++;
+        if (!firstErr) firstErr = (e as Error).message;
+      } finally {
+        done++;
+        progress();
+      }
+    };
+
+    try {
+      // relay 内で REFRESH_PARALLEL 件ずつ並列取得されるので、同じ粒度で送る。
+      for (let i = 0; i < ids.length; i += REFRESH_PARALLEL) {
+        const chunk = ids.slice(i, i + REFRESH_PARALLEL)
+          .map((id) => cache.find((x) => x.id === id))
+          .filter((x): x is ManagedIssue => !!x);
+        if (!chunk.length) continue;
+        let results: RelayIssueBatchItem[];
+        try {
+          results = devMock
+            ? chunk.map((issue) => ({
+                issueInstanceId: issue.issueInstanceId, ok: true, scannerStatus: 'open',
+                severity: issue.severity, lastSeen: new Date().toISOString(), detected: true,
+              }))
+            : await relayGetIssues(chunk.map((x) => x.issueInstanceId), !reportSkipped);
+        } catch (e) {
+          // チャンクごと失敗 (relay 停止・アダプタ未配置など)。未配置なら以降も同じなので中断。
+          fail += chunk.length;
+          done += chunk.length;
+          if (!firstErr) firstErr = (e as Error).message;
+          progress();
+          if (isAdapterMissing(e)) break;
+          continue;
+        }
+        const byId = new Map(results.map((r) => [r.issueInstanceId, r]));
+        await mapLimit(chunk, REFRESH_PARALLEL, async (issue) => {
+          const res = byId.get(issue.issueInstanceId);
+          await applyOne(issue, res ?? { issueInstanceId: issue.issueInstanceId, ok: false, error: '応答に該当 ID がありません' });
+        });
       }
     } finally { bulkBusy = false; }
     const parts = [`情報更新: ${ok} 件成功`];
