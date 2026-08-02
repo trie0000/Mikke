@@ -216,7 +216,7 @@ export class SpRepository implements Repository {
   private async loadFieldMap(listTitle: string): Promise<Map<string, any>> {
     const listPath = `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')`;
     const j = await this.spGet(
-      `${listPath}/fields?$select=InternalName,Title,SchemaXml,${CONDITIONAL_FORMULA_PROPERTY}&$top=500`,
+      `${listPath}/fields?$select=InternalName,Title,Required,SchemaXml,${CONDITIONAL_FORMULA_PROPERTY}&$top=500`,
     );
     const map = new Map<string, any>();
     for (const f of j.d.results) map.set(f.InternalName, f);
@@ -253,6 +253,23 @@ export class SpRepository implements Repository {
           { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
         rep.record('列(SchemaXml)', spec.name, 'updated', JSON.stringify(spec.schemaXmlAttributes));
       } catch (e) { rep.record('列(SchemaXml)', spec.name, 'failed', (e as Error).message); }
+    }
+  }
+
+  /** 必須/任意を設定する。★ 必須列は条件付き数式で隠せず常にフォームに出るため、
+   *  カードで見せる列は required:false にして隠せるようにする。 */
+  private async applyRequired(listTitle: string, fields: FieldSpec[], map: Map<string, any>, rep: StepReporter): Promise<void> {
+    for (const spec of fields) {
+      if (spec.required === undefined) continue;
+      const field = map.get(spec.name);
+      if (!field) { rep.record('必須設定', spec.name, 'failed', '列が見つかりません'); continue; }
+      if (field.Required === spec.required) { rep.record('必須設定', spec.name, 'skipped', '設定済み'); continue; }
+      try {
+        await this.spPost(this.fieldPath(listTitle, spec.name),
+          { __metadata: { type: field.__metadata.type }, Required: spec.required },
+          { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+        rep.record('必須設定', spec.name, 'updated', spec.required ? '必須' : '任意');
+      } catch (e) { rep.record('必須設定', spec.name, 'failed', (e as Error).message); }
     }
   }
 
@@ -355,6 +372,7 @@ export class SpRepository implements Repository {
     await this.removeObsoleteFields(LIST_VULNRESPONSE, VULNRESPONSE_OBSOLETE_FIELDS, map, rep);
     map = await this.loadFieldMap(LIST_VULNRESPONSE);
     await this.applySchemaXmlAttributes(LIST_VULNRESPONSE, fields, map, rep);
+    await this.applyRequired(LIST_VULNRESPONSE, fields, map, rep);
     await this.applyDisplayNames(LIST_VULNRESPONSE, fields, map, rep);
     await this.ensureViewFields(LIST_VULNRESPONSE, VULNRESPONSE_VIEW_FIELDS, rep);
     await this.applyFormFormatter(LIST_VULNRESPONSE, buildVulnResponseFormFormatter(), rep);

@@ -79,63 +79,94 @@ function column(children: Record<string, unknown>[]): Record<string, unknown> {
   };
 }
 
+/** カード 1 枚。見出し + 中身を枠付きの箱に入れる。 */
+function card(title: string, subtitle: string | null, children: Record<string, unknown>[]): Record<string, unknown> {
+  const head: Record<string, unknown>[] = [
+    {
+      elmType: 'div',
+      txtContent: title,
+      style: {
+        'font-size': '13px', 'font-weight': '600', color: '#201f1e',
+        'padding-bottom': '8px', 'margin-bottom': '12px',
+        'border-bottom': '1px solid #edebe9',
+      },
+    },
+  ];
+  if (subtitle) {
+    head.push({ elmType: 'div', txtContent: subtitle,
+      style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' } });
+  }
+  return {
+    elmType: 'div',
+    style: {
+      display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch', 'text-align': 'left',
+      width: '100%', 'box-sizing': 'border-box',
+      padding: '14px 18px', 'margin-bottom': '10px',
+      'border-radius': '8px', border: '1px solid #edebe9', 'background-color': '#faf9f8',
+    },
+    children: [...head, ...children],
+  };
+}
+
+/** 2 段組 (左右に均等配置)。 */
+function twoColumns(left: Record<string, unknown>[], right: Record<string, unknown>[]): Record<string, unknown> {
+  return {
+    elmType: 'div',
+    style: { display: 'flex', 'flex-direction': 'row', 'column-gap': '24px', width: '100%' },
+    children: [column(left), column(right)],
+  };
+}
+
 export function buildVulnResponseHeader(): Record<string, unknown> {
   return {
     $schema: COLUMN_FORMAT_SCHEMA,
     elmType: 'div',
     style: {
       // ヘッダー領域は外側で flex 行・中央寄せが効いているため、
-      // 縦積みと左寄せをここで明示しないとタイトルと段組が横に並ぶ。
-      display: 'flex',
-      'flex-direction': 'column',
-      'align-items': 'stretch',
-      'text-align': 'left',
-      width: '100%',
-      'box-sizing': 'border-box',
-      padding: '16px 20px',
-      'border-radius': '8px',
-      border: '1px solid #edebe9',
-      'background-color': '#faf9f8',
+      // 縦積みと左寄せをここで明示しないとカードが横に並ぶ。
+      display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+      'text-align': 'left', width: '100%', 'box-sizing': 'border-box',
     },
     children: [
-      // 件名
+      // 件名 (カードの外に大きく)
       {
         elmType: 'div',
-        txtContent: "=if([$Title] == '', '（件名未入力）', [$Title])",
+        txtContent: "=if([$Title] == '', '（脆弱性タイトル未入力）', [$Title])",
         style: {
-          'font-size': '18px',
-          'font-weight': '600',
-          color: '#201f1e',
-          'padding-bottom': '2px',
-          'word-break': 'break-word',
+          'font-size': '18px', 'font-weight': '600', color: '#201f1e',
+          'padding-bottom': '2px', 'word-break': 'break-word',
         },
       },
-      // 脆弱性 ID (突合キー) を小さく添える
       {
         elmType: 'div',
         txtContent: "=if([$IssueInstanceId] == '', '', 'ID: ' + [$IssueInstanceId])",
-        style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '2px' },
+        style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' },
       },
-      {
-        elmType: 'div',
-        txtContent: '脆弱性情報（読み取り専用）',
-        style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '12px' },
-      },
-      // 2 段組
-      {
-        elmType: 'div',
-        style: { display: 'flex', 'flex-direction': 'row', 'column-gap': '24px', width: '100%' },
-        children: [
-          column([
-            item('管理番号', textValue('[$MgmtNumber]')),
-            item('検知状況', textValue('[$DetectionStatus]')),
-          ]),
-          column([
-            item('初回検知日', dateValue('FirstSeen')),
-            item('最終検知日', dateValue('LastSeen')),
-          ]),
-        ],
-      },
+      // カード 1: 脆弱性情報
+      card('脆弱性情報', '読み取り専用', [
+        twoColumns(
+          [item('管理番号', textValue('[$MgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
+          [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
+        ),
+      ]),
+      // カード 2: 資産情報
+      card('資産情報', '読み取り専用', [
+        twoColumns(
+          [
+            item('IP', textValue('[$AssetIp]')),
+            item('FQDN', textValue('[$AssetFqdn]')),
+            item('資産タイプ', textValue('[$AssetType]')),
+            item('事業会社', textValue('[$BusinessCompany]')),
+            item('管理会社', textValue('[$AffiliateCompany]')),
+          ],
+          [
+            item('資産管理ID', textValue('[$AssetMgmtId]')),
+            item('外部接続申請ID', textValue('[$ExtConnAppId]')),
+            item('関連資産', textValue('[$RelatedAssets]')),
+            item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
+          ],
+        ),
+      ]),
     ],
   };
 }

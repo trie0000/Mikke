@@ -73,15 +73,25 @@ describe('schema: 連携用リストの列定義', () => {
   });
 
   it('資産管理者の入力欄には表示条件を付けない (常に出す)', () => {
-    for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks',
-                        'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
-                        'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence']) {
+    for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBeUndefined();
     }
   });
 
-  it('セクションは 資産情報 / 対応 / その他 の 3 つ', () => {
-    expect(VULNRESPONSE_SECTIONS.map((x) => x.displayname)).toEqual(['資産情報', '対応', 'その他']);
+  it('資産情報はヘッダーカードで見せるので本体では隠す', () => {
+    for (const name of ['AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
+                        'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence']) {
+      expect(specs.find((f) => f.name === name)?.conditionalFormula).toBe(HIDDEN_UNLESS_NEW);
+    }
+  });
+
+  it('本体のセクションは 対応 / (無題=対応経緯) / その他 (情報系はカードに集約)', () => {
+    expect(VULNRESPONSE_SECTIONS.map((x) => x.displayname)).toEqual(['対応', '', 'その他']);
+  });
+
+  it('対応経緯は単独セクション (同一セクション内は横に並ぶため 1 段にできない)', () => {
+    const solo = VULNRESPONSE_SECTIONS.find((x) => x.fields.includes('ResponseNote'));
+    expect(solo?.fields).toEqual(['ResponseNote']);
   });
 
   it('セクションの列はすべて定義済みで、隠し列を含まない', () => {

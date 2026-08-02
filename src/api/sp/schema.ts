@@ -22,6 +22,9 @@ export interface FieldSpec {
   /** フォーム本体の表示条件 (条件付き数式)。'false' を返すと本体から消える。
    *  例: HIDDEN_ALWAYS / HIDDEN_UNLESS_NEW / `=if([$Status] == 'x', 'true', 'false')` */
   conditionalFormula?: string;
+  /** 必須にするか。★ 必須列は条件付き数式で隠せない (常にフォームに出る) ため、
+   *  カードで見せる列は false にする必要がある。既定 (未指定) は変更しない。 */
+  required?: boolean;
 }
 
 /**
@@ -210,7 +213,7 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
   });
   return [
     // ── 脆弱性情報 (ヘッダーカード) ──
-    { name: 'Title', type: 'Text', displayName: '脆弱性タイトル', conditionalFormula: HIDDEN_UNLESS_NEW },
+    { name: 'Title', type: 'Text', displayName: '脆弱性タイトル', conditionalFormula: HIDDEN_UNLESS_NEW, required: false },
     // 突合キー。Mikke 側の Issue Instance ID と 1:1。
     pushed('IssueInstanceId', '脆弱性ID', { indexed: true }),
     pushed('MgmtNumber', '管理番号'),
@@ -218,16 +221,18 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('FirstSeen', '初回検知日', { type: 'DateTime', dateOnly: true }),
     pushed('LastSeen', '最終検知日', { type: 'DateTime', dateOnly: true }),
 
-    // ── 資産情報 (本体セクション / 資産管理者が修正できる = 数式を付けない) ──
-    { name: 'AssetIp', type: 'Text', displayName: 'IP' },
-    { name: 'AssetFqdn', type: 'Text', displayName: 'FQDN' },
-    { name: 'AssetType', type: 'Text', displayName: '資産タイプ' },
-    { name: 'BusinessCompany', type: 'Text', displayName: '事業会社' },
-    { name: 'AffiliateCompany', type: 'Text', displayName: '管理会社' },
-    { name: 'AssetMgmtId', type: 'Text', displayName: '資産管理ID', indexed: true },
-    { name: 'ExtConnAppId', type: 'Text', displayName: '外部接続申請ID' },
-    { name: 'RelatedAssets', type: 'Note', displayName: '関連資産' },
-    { name: 'IdentifyEvidence', type: 'Note', displayName: '管理事業会社特定の根拠' },
+    // ── 資産情報 (ヘッダーカードで読み取り専用表示 / 本体では新規時のみ入力可) ──
+    //   ※ SharePoint のフォーム本体はセクション見出ししか付けられず、カード化・段組が
+    //     できない (公式仕様)。見やすさを優先し、情報系はカードに集約している。
+    pushed('AssetIp', 'IP'),
+    pushed('AssetFqdn', 'FQDN'),
+    pushed('AssetType', '資産タイプ'),
+    pushed('BusinessCompany', '事業会社'),
+    pushed('AffiliateCompany', '管理会社'),
+    pushed('AssetMgmtId', '資産管理ID', { indexed: true }),
+    pushed('ExtConnAppId', '外部接続申請ID'),
+    pushed('RelatedAssets', '関連資産', { type: 'Note' }),
+    pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),
 
     // ── 対応 (資産管理者が記入) ──
     { name: 'ResponseStatus', type: 'Choice', displayName: '対応状況',
@@ -255,11 +260,11 @@ export const VULNRESPONSE_OBSOLETE_FIELDS = [
  *  ★ 条件付き数式で隠した列はセクションに入れても表示されない (実機で確認済み)。
  *    そのため脆弱性情報はここに入れず、ヘッダーカードで見せる。 */
 export const VULNRESPONSE_SECTIONS: { displayname: string; fields: string[] }[] = [
-  { displayname: '資産情報', fields: [
-    'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
-    'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence',
-  ] },
-  { displayname: '対応', fields: ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote'] },
+  { displayname: '対応', fields: ['ResponseStatus', 'Responder', 'DueDate'] },
+  // ★ 同じセクション内の項目は画面幅に応じて横に並ぶ。対応経緯を 1 段 (全幅) にするため
+  //   単独のセクションに分ける。displayname を空にすると見出しが出ず区切り線だけになる
+  //   (実機で確認済み)。
+  { displayname: '', fields: ['ResponseNote'] },
   { displayname: 'その他', fields: ['Remarks'] },
 ];
 
