@@ -3,12 +3,45 @@
 
 const KEY = 'mikke.selectedSiteUrl';
 
+/**
+ * サイト URL を「サイトのルート」に正規化する。
+ *
+ * ★ ここを通さないと事故る。ライブラリのページ (例 …/Shared%20Documents/Forms/AllItems.aspx)
+ *   をそのまま REST のベースにすると `…/AllItems.aspx/_api/web/lists/…` を叩くことになり、
+ *   SharePoint は HTML を返す → 「応答が JSON ではありません」で一覧取得に失敗する。
+ *   起動元のページやコピペされた URL がライブラリ配下であることは普通にあるので、
+ *   受け取った URL は必ずここで /sites/<x> (or /teams/<x>) までに切り詰める。
+ */
+export function normalizeWebUrl(raw: string): string {
+  const s = (raw ?? '').trim();
+  if (!s) return '';
+  let u: URL | null = null;
+  try { u = new URL(s); } catch { /* 絶対 URL でなければ次でページ基準に解決する */ }
+  if (!u) {
+    try {
+      const base = typeof location !== 'undefined' ? location.origin : '';
+      if (!base) return '';
+      u = new URL(s, base);
+    } catch { return ''; }
+  }
+  const m = u.pathname.match(/^(\/(?:sites|teams)\/[^/]+)/i);
+  if (m) return (u.origin + m[1]).replace(/\/$/, '');
+  // /sites/ を含まない (ルートサイト等) 場合は、ページやシステムパス以降を落とす。
+  const cut = u.pathname
+    .replace(/\/_(?:api|layouts|vti_bin|forms)\b.*$/i, '')
+    .replace(/\/[^/]*\.aspx$/i, '')
+    .replace(/\/Forms(?:\/.*)?$/i, '')
+    .replace(/\/(?:SitePages|Lists|Shared%20Documents|Shared Documents)$/i, '')
+    .replace(/\/$/, '');
+  return (u.origin + cut).replace(/\/$/, '');
+}
+
 export function getSelectedSiteUrl(): string {
-  try { return localStorage.getItem(KEY) || ''; } catch { return ''; }
+  try { return normalizeWebUrl(localStorage.getItem(KEY) || ''); } catch { return ''; }
 }
 
 export function setSelectedSiteUrl(url: string): void {
-  try { localStorage.setItem(KEY, url.replace(/\/$/, '')); } catch { /* noop */ }
+  try { localStorage.setItem(KEY, normalizeWebUrl(url)); } catch { /* noop */ }
 }
 
 export function hasSelectedSite(): boolean {
@@ -20,10 +53,13 @@ export function hasSelectedSite(): boolean {
  *  その場合は location.pathname の /sites/<x> or /teams/<x> から組み立てる。 */
 export function currentWebUrl(): string {
   const ctx = (window as unknown as { _spPageContextInfo?: { webAbsoluteUrl?: string } })._spPageContextInfo;
-  if (ctx && ctx.webAbsoluteUrl) return ctx.webAbsoluteUrl.replace(/\/$/, '');
-  const m = location.pathname.match(/^(\/(?:sites|teams)\/[^/]+)/i);
-  if (m) return (location.origin + m[1]).replace(/\/$/, '');
-  return '';
+  // ★ _spPageContextInfo の値もそのまま信用しない。ライブラリのページで起動すると
+  //   ページ URL が入っていることがある (実機で確認)。必ず正規化して使う。
+  if (ctx && ctx.webAbsoluteUrl) {
+    const n = normalizeWebUrl(ctx.webAbsoluteUrl);
+    if (n) return n;
+  }
+  return normalizeWebUrl(location.href);
 }
 
 /** 実際に読み書きしているサイトの URL。選択済みがあればそれ、無ければ現在のページのサイト。

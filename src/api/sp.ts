@@ -14,7 +14,7 @@ import {
 } from './sp/schema';
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
-import { getSelectedSiteUrl, currentWebUrl } from '../utils/spSites';
+import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
 
@@ -89,7 +89,9 @@ export class SpRepository implements Repository {
 
   constructor() {
     // 選択済みサイト URL があればそれを、なければ現在ページのサイトを使う。
-    this.webUrl = (getSelectedSiteUrl() || this.currentWebUrl()).replace(/\/$/, '');
+    // ★ 必ずサイトのルートに正規化する。ライブラリのページ URL のままだと
+    //   `…/AllItems.aspx/_api/web/…` を叩いて HTML が返る (実機で発生)。
+    this.webUrl = normalizeWebUrl(getSelectedSiteUrl() || this.currentWebUrl());
   }
 
   private currentWebUrl(): string {

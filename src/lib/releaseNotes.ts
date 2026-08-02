@@ -28,6 +28,15 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
   // ── 最新は先頭 ──────────────────────────────────────────────────────
   {
+    version: '2026-08-02k', date: '2026-08-02',
+    title: 'ライブラリのページから起動すると一覧が取得できない不具合を修正',
+    changes: [
+      'ドキュメントライブラリのページ（…/Shared Documents/Forms/AllItems.aspx など）を起点にすると、そのページ URL のまま SharePoint と通信してしまい「応答が JSON ではありません」で一覧取得に失敗していました。',
+      'サイト URL は常にサイトのルート（/sites/… まで）に正規化してから使うようにしました。設定に保存済みの URL やページから推定した URL も同様に正規化します。',
+      '※ 設定の「SP サイト URL」に誤った URL が保存されている場合も、これで自動的に補正されます。',
+    ],
+  },
+  {
     version: '2026-08-02j', date: '2026-08-02',
     title: '起動直後の「一覧の取得に失敗（not valid JSON）」と、サインイン待ちで止まる問題を修正',
     relayMin: '1.0.20',
