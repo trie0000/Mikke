@@ -280,6 +280,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     }
     bulkBusy = true;
     updateSubbar();
+    // 検査ツールへの問い合わせは 1 件あたり数秒かかることがあるので、開始したことを
+    // 明示する (ボタンの「更新中 n/N」だけだと押せたのか分かりにくい)。
+    toast(rootEl,
+      `検査ツールへ問い合わせています… ${ids.length} 件`
+      + (ids.length > REFRESH_PARALLEL ? ` (${REFRESH_PARALLEL} 件ずつ並列)` : ''),
+      'default', 4000);
     let ok = 0, fail = 0, firstErr = '';
     // レポートの内訳。アダプタ未実装なら以降は試さない (情報更新だけ続ける)。
     let report = 0, noItem = 0, reportFail = 0, reportSkipped = false;
@@ -368,7 +374,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         });
       }
     } finally { bulkBusy = false; }
-    const parts = [`情報更新: ${ok} 件成功`];
+    const parts = [`情報更新が完了しました: ${ok} 件成功`];
     if (fail) parts.push(`${fail} 件失敗`);
     if (report) parts.push(`レポート ${report} 件取得`);
     if (noItem) parts.push(`うち ${noItem} 件は連携用リストに該当アイテムなし`);
