@@ -168,6 +168,22 @@ if (watch || serve) {
     const manifest = relayFiles
       .filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'))
       .concat(fs.existsSync('dist/mikke.loader.js') ? ['mikke.loader.js'] : []);
+    // ★ manifest に relay の許可リスト外のファイルが入っていると、self-update は
+    //   その 1 件で 400 になり **全ファイルが更新されない** (relay 側で即 return)。
+    //   過去に mikke.loader.js を manifest だけに足して self-update が全滅したので、
+    //   ここでビルドを止める。
+    const allowMatch = relayPs1.match(/\$MIKKE_RELAY_MANAGED_FILES\s*=\s*@\(([\s\S]*?)\)/);
+    const allowed = allowMatch
+      ? [...allowMatch[1].matchAll(/'([^']+)'/g)].map((x) => x[1].toLowerCase())
+      : [];
+    const notAllowed = manifest.filter((f) => !allowed.includes(f.toLowerCase()));
+    if (notAllowed.length) {
+      throw new Error(
+        `[relay] self-update の manifest に許可リスト外のファイルがあります: ${notAllowed.join(', ')}\n`
+        + `        scripts/mikke-relay.ps1 の $MIKKE_RELAY_MANAGED_FILES に追加してください`
+        + ` (このまま配布すると self-update が 400 で全滅します)`,
+      );
+    }
     fs.writeFileSync('dist/relay-version.txt',
       JSON.stringify({ version: relayVersion, buildTime, files: manifest }, null, 2) + '\n');
     console.log(`[relay] dist/relay-version.txt: v${relayVersion} (${manifest.length} files)`);

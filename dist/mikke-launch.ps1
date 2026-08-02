@@ -259,8 +259,15 @@ public class MikkeCdp {
 
             # ローダ注入。バンドルではなく「ローダ」を入れることで、
             # バンドルは従来どおり SP から読まれ、サイレント自動更新が温存される。
+            # ★ ローダはランチャーと同じフォルダに必要。無いと CDP 注入ができず、
+            #   ブックマークレット手動クリックの従来フローに落ちる (= 自動で起動しない)。
+            #   dist/mikke.loader.js をこのフォルダにコピーすれば解決する。
             $loaderFile = Join-Path $scriptDir 'mikke.loader.js'
-            if (-not (Test-Path -LiteralPath $loaderFile)) { throw "ローダが見つかりません: $loaderFile" }
+            if (-not (Test-Path -LiteralPath $loaderFile)) {
+                throw ("mikke.loader.js が見つかりません: $scriptDir`n" +
+                       '        配布物 (dist) の mikke.loader.js を、このフォルダ (mikke-launch.bat と同じ場所) に' +
+                       'コピーしてください。これが無いと自動起動できません。')
+            }
             $loaderJs = Get-Content -LiteralPath $loaderFile -Raw -Encoding UTF8
             $res = $cdp.Eval($loaderJs, $false)
             if ($res -match '"exceptionDetails"') { throw "ローダの注入に失敗しました: $res" }
