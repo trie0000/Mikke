@@ -27,6 +27,10 @@
 #                           ポートの持ち主を判定して空きポートに退避する。
 #   MIKKE_EDGE_PATH     : msedge.exe のパス (未設定なら既定の場所を自動探索)
 #   MIKKE_EDGE_USERDATA : 専用プロファイルの置き場所 (既定 %LOCALAPPDATA%\mikke-edge)
+#                         ★ 新規作成時だけ、既存 Edge から SharePoint のサインインを
+#                           引き継ぐ。既存プロファイルは作り直さない (再サインイン防止)。
+#   MIKKE_EDGE_SOURCE_PROFILE : 引き継ぎ元の Edge プロファイル名 (既定 Default)
+#   MIKKE_SEED_COOKIES  : '0' でサインインの引き継ぎを無効化 (毎回手動サインイン)
 #   MIKKE_INJECT        : 'loader' で従来どおりローダを注入し、バンドルは SharePoint
 #                         から読む (サイレント自動更新を使いたい運用向け)。
 #                         既定は同じフォルダの mikke.bundle.js を直接注入。
@@ -143,6 +147,72 @@ function Invoke-LegacyFlow {
 #     'unsafe-eval' はあるので CDP の Runtime.evaluate 経由の実行は通る。
 #     ローダは同一オリジンの SP からバンドルを読むので本番経路と一致する。
 
+# 使用中でも読めるようにファイル共有モードでコピーする (Edge が掴んだままの Cookie DB 用)。
+function Copy-MikkeFileShared {
+    param([string]$Src, [string]$Dst)
+    if (-not (Test-Path -LiteralPath $Src)) { return }
+    $dir = Split-Path -Parent $Dst
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $in = New-Object System.IO.FileStream($Src, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $out = New-Object System.IO.FileStream($Dst, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try { $in.CopyTo($out) } finally { $out.Dispose() }
+    } finally { $in.Dispose() }
+}
+
+# ディレクトリ直下のファイルを共有読み取りコピー (leveldb 等のフラット構成向け)。
+function Copy-MikkeDirShared {
+    param([string]$SrcDir, [string]$DstDir)
+    if (-not (Test-Path -LiteralPath $SrcDir)) { return }
+    New-Item -ItemType Directory -Force -Path $DstDir | Out-Null
+    foreach ($f in (Get-ChildItem -LiteralPath $SrcDir -File -ErrorAction SilentlyContinue)) {
+        try { Copy-MikkeFileShared -Src $f.FullName -Dst (Join-Path $DstDir $f.Name) } catch { }
+    }
+}
+
+# ★ 専用プロファイルを新規作成するとき、既存 Edge から「必要なものだけ」引き継ぐ。
+#   (a) Cookie + Local State … SharePoint のサインイン (復号鍵が Local State にあるので両方要る)
+#   (b) Local Storage        … Mikke の画面状態 (選択サイト等)
+#   これをやらないと専用プロファイルは未サインイン状態で始まり、起動のたびに
+#   手動サインインが必要になる (= 「サインインを待っています」で止まる)。
+#   キャッシュ / 履歴 / パスワード / ブックマークは持ち込まない。
+#   すべて best-effort。失敗しても「初回サインインが必要」になるだけ。
+function Copy-MikkeProfileSeed {
+    param([string]$DestUserData)   # = 専用プロファイルの --user-data-dir
+
+    $srcUserData = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'
+    $srcProfName = if ($env:MIKKE_EDGE_SOURCE_PROFILE) { $env:MIKKE_EDGE_SOURCE_PROFILE } else { 'Default' }
+    $srcProf = Join-Path $srcUserData $srcProfName
+    if (-not (Test-Path -LiteralPath $srcProf)) {
+        Write-Host "コピー元の Edge プロファイルが見つかりません ($srcProf) → 空で開始します" -ForegroundColor DarkGray
+        return
+    }
+    $dstProf = Join-Path $DestUserData 'Default'
+    Write-Host 'サインイン情報を専用プロファイルへ引き継いでいます...' -ForegroundColor Cyan
+
+    Copy-MikkeDirShared -SrcDir (Join-Path $srcProf 'Local Storage\leveldb') -DstDir (Join-Path $dstProf 'Local Storage\leveldb')
+
+    if ($env:MIKKE_SEED_COOKIES -ne '0') {
+        try {
+            Copy-MikkeFileShared -Src (Join-Path $srcUserData 'Local State') -Dst (Join-Path $DestUserData 'Local State')
+            $ckNew = Join-Path $srcProf 'Network\Cookies'
+            $ckOld = Join-Path $srcProf 'Cookies'
+            if (Test-Path -LiteralPath $ckNew) {
+                Copy-MikkeFileShared -Src $ckNew -Dst (Join-Path $dstProf 'Network\Cookies')
+                foreach ($sfx in @('-wal', '-journal')) {
+                    $s = $ckNew + $sfx
+                    if (Test-Path -LiteralPath $s) { Copy-MikkeFileShared -Src $s -Dst (Join-Path $dstProf ('Network\Cookies' + $sfx)) }
+                }
+            } elseif (Test-Path -LiteralPath $ckOld) {
+                Copy-MikkeFileShared -Src $ckOld -Dst (Join-Path $dstProf 'Cookies')
+            }
+        } catch {
+            Write-Host "Cookie の引き継ぎをスキップしました (初回サインインが必要): $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+    }
+    Write-Host '引き継ぎ完了' -ForegroundColor Green
+}
+
 function Find-EdgeExe {
     param([string]$Explicit)
     if ($Explicit -and (Test-Path -LiteralPath $Explicit)) { return $Explicit }
@@ -213,7 +283,27 @@ if (-not $cdpEnabled) {
     if (-not $edge) {
         Write-Host 'Edge が見つかりませんでした。従来フローに切り替えます。' -ForegroundColor Yellow
     } else {
+        # サイト URL から origin / サイトルート (/sites/<x> or /teams/<x>) を導出する。
+        # ★ 設定に入っている URL はページやライブラリまで含むことがある。そのまま
+        #   REST のベースにすると誤った URL を叩くので、必ずサイトルートに正規化する。
+        $u = $null
+        try { $u = New-Object System.Uri($siteUrl) } catch { }
+        if (-not $u) { throw "サイト URL を解釈できません: $siteUrl" }
+        $origin = $u.Scheme + '://' + $u.Authority
+        $webRel = ''
+        $mm = [regex]::Match($u.AbsolutePath, '(?i)/(?:sites|teams)/[^/]+')
+        if ($mm.Success) { $webRel = $mm.Value }
+        $webAbs = $origin + $webRel
+
+        # ★ 既存の専用プロファイルは絶対に作り直さない (作り直すと再サインインになる)。
+        #   MIKKE_EDGE_USERDATA(明示) > 既存の %LOCALAPPDATA%\mikke-edge > 新規作成
         if (-not $edgeUserData) { $edgeUserData = Join-Path $env:LOCALAPPDATA 'mikke-edge' }
+        $profileExisted = Test-Path -LiteralPath $edgeUserData
+        if (-not $profileExisted) {
+            # 新規作成時だけ、既存 Edge からサインイン情報を引き継ぐ。
+            try { Copy-MikkeProfileSeed -DestUserData $edgeUserData }
+            catch { Write-Host "サインイン情報の引き継ぎをスキップ (初回サインインが必要): $($_.Exception.Message)" -ForegroundColor DarkGray }
+        }
         try {
             # 既に CDP 付きで起動済みなら再起動しない (SingletonLock のレース回避)。
             # ★ ただし「起動済み」= 自分のブラウザとは限らない。CDP を使う別ツールが
@@ -247,7 +337,10 @@ if (-not $cdpEnabled) {
                     "--user-data-dir=`"$edgeUserData`"",
                     '--no-first-run',
                     '--no-default-browser-check',
-                    $siteUrl
+                    # ★ 引用符で括ること。SharePoint の URL は空白を含むことがあり
+                    #   (例: /Shared Documents)、括らないと空白で分割されて 2 タブ開き、
+                    #   注入先のタブを取り違える。
+                    "`"$webAbs`""
                 ) | Out-Null
             }
 
@@ -289,21 +382,11 @@ public class MikkeCdp {
             $cdp = New-Object MikkeCdp
             $cdp.Connect($wsUrl)
 
-            # 認証待ち。ログイン中はクロスオリジンで fetch が失敗するので握って retry する。
-            # ★ r.ok だけを見てはいけない。サインイン画面は **200 のまま HTML** を返すため、
-            #   それを「認証済み」と誤判定して注入すると、Mikke は起動するものの以後の
-            #   REST が全部 HTML を掴み「Unexpected token '<'」で一覧取得に失敗する。
-            #   本文が JSON で Title が取れること、かつページ自身が対象サイト上にいること
-            #   (login.microsoftonline.com に居ないこと) の両方を確認する。
-            $origin = ([Uri]$siteUrl).GetLeftPart([UriPartial]::Authority)
-            $probe = '(async()=>{try{' +
-                     "if(location.href.indexOf('$origin')!==0)return false;" +
-                     "const r=await fetch('$siteUrl/_api/web?" + '$select=Title' + "'," +
-                     "{headers:{Accept:'application/json;odata=nometadata'},credentials:'include'});" +
-                     'if(!r.ok)return false;' +
-                     'const t=await r.text();' +
-                     'try{const j=JSON.parse(t);return !!(j&&typeof j.Title===' + "'string');}catch(e){return false;}" +
-                     '}catch(e){return false;}})()'
+            # 認証待ち (awaitPromise + retry。ログイン中は Failed to fetch → 握って継続)。
+            # JS は $ を含むので PS の単一引用符文字列で組み立てる ($select が展開されないように)。
+            $probe = '(async()=>{try{const r=await fetch("' + $webAbs + '/_api/web?$select=Title",' +
+                     '{headers:{Accept:"application/json;odata=nometadata"},credentials:"include"});' +
+                     'return r.ok;}catch(e){return false;}})()'
             Write-Host 'SharePoint へのサインインを待っています (初回のみ手動サインインが必要です)...' -ForegroundColor Cyan
             $authed = $false
             for ($i = 0; $i -lt 180; $i++) {
@@ -317,10 +400,9 @@ public class MikkeCdp {
 
             # ローダのベース解決を確定させる (モダンページで _spPageContextInfo が無い対策)。
             # ローダ自身も location.pathname から /sites/<x> を推定できるが、確実にしておく。
-            $webRel = ([Uri]$siteUrl).AbsolutePath.TrimEnd('/')
             $prelude = 'window._spPageContextInfo=Object.assign({},window._spPageContextInfo,{' +
-                       "webServerRelativeUrl:'$webRel',webAbsoluteUrl:'$siteUrl'," +
-                       "siteServerRelativeUrl:'$webRel',siteAbsoluteUrl:'$siteUrl'});true"
+                       'webServerRelativeUrl:"' + $webRel + '",webAbsoluteUrl:"' + $webAbs + '",' +
+                       'siteServerRelativeUrl:"' + $webRel + '",siteAbsoluteUrl:"' + $webAbs + '"});true'
             $cdp.Eval($prelude, $false) | Out-Null
 
             # ★ バンドル注入 (既定)

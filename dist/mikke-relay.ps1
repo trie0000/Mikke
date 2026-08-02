@@ -32,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.19'
+$MIKKE_RELAY_VERSION = '1.0.20'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
