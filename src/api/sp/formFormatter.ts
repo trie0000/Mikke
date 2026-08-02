@@ -22,6 +22,22 @@
 const COLUMN_FORMAT_SCHEMA =
   'https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json';
 
+/**
+ * 読み取り専用カードの文字をマウスで範囲選択できるようにするためのクラス。
+ *
+ * ★ 一覧からアイテムを開いた「詳細パネル」では SharePoint が本文全体に
+ *   user-select: none を掛けており、カードの値をドラッグしてコピーできない
+ *   (フルページの表示フォームでは選択できる)。
+ * ★ style に user-select を書いても SharePoint に除去される (DOM に残らないことを実測)。
+ *   一方 attributes.class は通るので、SharePoint 自身が「表示モードの項目は選択可」に
+ *   するために持っているルール `.ReactFieldEditor .ReactFieldEditor-core--display`
+ *   (user-select: text) を、祖先クラスと子クラスの組で自前の要素に再現する。
+ * ★ 祖先側のクラスは padding: 4px 3px を持ち込むので、ルート要素の style で
+ *   padding を 0 に上書きして見た目を変えない (inline が class より優先)。
+ */
+const SELECTABLE_PARENT_CLASS = 'ReactFieldEditor';
+const SELECTABLE_CLASS = 'ReactFieldEditor-core--display';
+
 const LABEL_STYLE = {
   'font-size': '11px',
   'font-weight': '400',
@@ -119,53 +135,67 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
   return {
     $schema: COLUMN_FORMAT_SCHEMA,
     elmType: 'div',
+    // 選択可にするルールの祖先側。padding は class が持ち込む 4px 3px を打ち消す。
+    attributes: { class: SELECTABLE_PARENT_CLASS },
     style: {
       // ヘッダー領域は外側で flex 行・中央寄せが効いているため、
       // 縦積みと左寄せをここで明示しないとカードが横に並ぶ。
       display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
       'text-align': 'left', width: '100%', 'box-sizing': 'border-box',
+      padding: '0px',
     },
-    children: [
-      // 件名 (カードの外に大きく)
-      {
-        elmType: 'div',
-        txtContent: "=if([$Title] == '', '（脆弱性タイトル未入力）', [$Title])",
-        style: {
-          'font-size': '18px', 'font-weight': '600', color: '#201f1e',
-          'padding-bottom': '2px', 'word-break': 'break-word',
+    children: [{
+      // 選択可にするルールの子側。中身は user-select: text を継承する。
+      elmType: 'div',
+      attributes: { class: SELECTABLE_CLASS },
+      style: {
+        display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+        width: '100%', 'box-sizing': 'border-box',
+        // 子側のクラスも padding 6px/7px・border 2px・margin-left -2px を持ち込むので打ち消す
+        padding: '0px', margin: '0px', border: 'none',
+      },
+      children: [
+        // 件名 (カードの外に大きく)
+        {
+          elmType: 'div',
+          txtContent: "=if([$Title] == '', '（脆弱性タイトル未入力）', [$Title])",
+          style: {
+            'font-size': '18px', 'font-weight': '600', color: '#201f1e',
+            'padding-bottom': '2px', 'word-break': 'break-word',
+          },
         },
-      },
-      {
-        elmType: 'div',
-        txtContent: "=if([$IssueInstanceId] == '', '', 'ID: ' + [$IssueInstanceId])",
-        style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' },
-      },
-      // カード 1: 脆弱性情報
-      card('脆弱性情報', '読み取り専用', [
-        twoColumns(
-          [item('管理番号', textValue('[$MgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
-          [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
-        ),
-      ]),
-      // カード 2: 資産情報
-      card('資産情報', '読み取り専用', [
-        twoColumns(
-          [
-            item('IP', textValue('[$AssetIp]')),
-            item('FQDN', textValue('[$AssetFqdn]')),
-            item('資産タイプ', textValue('[$AssetType]')),
-            item('事業会社', textValue('[$BusinessCompany]')),
-            item('管理会社', textValue('[$AffiliateCompany]')),
-          ],
-          [
-            item('資産管理ID', textValue('[$AssetMgmtId]')),
-            item('外部接続申請ID', textValue('[$ExtConnAppId]')),
-            item('関連資産', textValue('[$RelatedAssets]')),
-            item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
-          ],
-        ),
-      ]),
-    ],
+        {
+          elmType: 'div',
+          txtContent: "=if([$IssueInstanceId] == '', '', 'ID: ' + [$IssueInstanceId])",
+          style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' },
+        },
+        // カード 1: 脆弱性情報
+        card('脆弱性情報', '読み取り専用', [
+          twoColumns(
+            [item('管理番号', textValue('[$MgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
+            [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
+          ),
+        ]),
+        // カード 2: 資産情報
+        card('資産情報', '読み取り専用', [
+          twoColumns(
+            [
+              item('IP', textValue('[$AssetIp]')),
+              item('FQDN', textValue('[$AssetFqdn]')),
+              item('資産タイプ', textValue('[$AssetType]')),
+              item('事業会社', textValue('[$BusinessCompany]')),
+              item('管理会社', textValue('[$AffiliateCompany]')),
+            ],
+            [
+              item('資産管理ID', textValue('[$AssetMgmtId]')),
+              item('外部接続申請ID', textValue('[$ExtConnAppId]')),
+              item('関連資産', textValue('[$RelatedAssets]')),
+              item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
+            ],
+          ),
+        ]),
+      ],
+    }],
   };
 }
 

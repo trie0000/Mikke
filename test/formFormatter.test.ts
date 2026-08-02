@@ -47,6 +47,32 @@ describe('formFormatter: フォームヘッダーの書式設定', () => {
     }
   });
 
+  it('読み取り専用カードを選択可にするクラスの組を付けている', () => {
+    // 詳細パネルは本文全体に user-select:none を掛けており、style に user-select を
+    // 書いても SharePoint に除去される。SharePoint 自身の
+    // 「.ReactFieldEditor .ReactFieldEditor-core--display は選択可」ルールを借りる。
+    const h = buildVulnResponseHeader() as any;
+    expect(h.attributes.class).toBe('ReactFieldEditor');
+    expect(h.children[0].attributes.class).toBe('ReactFieldEditor-core--display');
+  });
+
+  it('借りたクラスが持ち込む余白/枠は style で打ち消す (見た目を変えない)', () => {
+    const h = buildVulnResponseHeader() as any;
+    expect(h.style.padding).toBe('0px');                 // 祖先側: padding 4px 3px
+    expect(h.children[0].style.padding).toBe('0px');     // 子側: padding 6px 0 7px
+    expect(h.children[0].style.margin).toBe('0px');      // 子側: margin-left -2px
+    expect(h.children[0].style.border).toBe('none');     // 子側: border 2px
+  });
+
+  it('件名・カードは選択可にする要素の内側に入っている', () => {
+    const h = buildVulnResponseHeader() as any;
+    expect(h.children).toHaveLength(1);
+    const texts = collectExpressions(h.children[0]);
+    expect(texts.some((t) => t.includes('[$Title]'))).toBe(true);
+    expect(texts).toContain('脆弱性情報');
+    expect(texts).toContain('資産情報');
+  });
+
   it('参照する列はすべて連携用リストに定義されている', () => {
     const defined = new Set(vulnResponseFieldSpecs().map((f) => f.name));
     defined.add('ID'); // 組み込み列
