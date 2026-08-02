@@ -272,6 +272,46 @@ public class MikkeCdp {
             $res = $cdp.Eval($loaderJs, $false)
             if ($res -match '"exceptionDetails"') { throw "ローダの注入に失敗しました: $res" }
 
+            # ★ 注入できた = 画面が出た、ではない。ローダは SharePoint から
+            #   mikke.bundle.js を **非同期に** 取りに行き、失敗しても console.warn
+            #   するだけなので、ここで確認しないと「ブラウザは上がるが画面が出ない」
+            #   状態のまま「起動しました」と表示してしまう。
+            #   #mikke-root が生えるまで待ち、出なければバンドル取得の状況を取りに行く。
+            Write-Host 'Mikke の画面が出るのを待っています...' -ForegroundColor Cyan
+            $waitJs = '(async()=>{for(var i=0;i<40;i++){' +
+                      'if(document.getElementById("mikke-root"))return "ok";' +
+                      'await new Promise(function(r){setTimeout(r,500);});}return "timeout";})()'
+            $mounted = ''
+            try {
+                $wr = $cdp.Eval($waitJs, $true) | ConvertFrom-Json
+                $mounted = [string]$wr.result.result.value
+            } catch { $mounted = 'unknown' }
+
+            if ($mounted -ne 'ok') {
+                # ローダに焼き込まれているバンドル配置パスを取り出して、実際に取得を試す。
+                $libPath = '/Shared%20Documents/Mikke'
+                $mLib = [regex]::Match($loaderJs, 'return r\?r\+"([^"]+)"')
+                if ($mLib.Success) { $libPath = $mLib.Groups[1].Value }
+                $diagJs = '(async()=>{try{' +
+                          'var c=window._spPageContextInfo||{};' +
+                          'var rel=(c.webServerRelativeUrl||"").replace(/\/$/,"");' +
+                          'var u=rel+"' + $libPath + '/mikke.bundle.js";' +
+                          'var r=await fetch(u,{credentials:"same-origin",cache:"no-store"});' +
+                          'var t=await r.text();' +
+                          'return u+" -> HTTP "+r.status+" / "+t.length+" bytes";' +
+                          '}catch(e){return "fetch error: "+(e&&e.message||e);}})()'
+                $diag = ''
+                try {
+                    $dr = $cdp.Eval($diagJs, $true) | ConvertFrom-Json
+                    $diag = [string]$dr.result.result.value
+                } catch { $diag = '(取得できませんでした)' }
+                throw ("ローダは注入できましたが Mikke の画面が出ませんでした。" +
+                       "SharePoint 上のバンドル配置を確認してください。`n" +
+                       "        $diag`n" +
+                       "        HTTP 404 ならドキュメント ライブラリの Mikke フォルダに " +
+                       "mikke.bundle.js / version.txt が置かれていません。")
+            }
+
             Write-Host ''
             Write-Host 'Mikke を起動しました (ブックマークレット不要)。このウィンドウのブラウザをそのままお使いください。' -ForegroundColor Green
             $cdpDone = $true
