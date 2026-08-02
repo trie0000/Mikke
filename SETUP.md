@@ -31,6 +31,25 @@ npm run build      # dist/ に配布物を生成
 | `mikke-relay.ps1` ほか | ローカル中継サーバ一式 | 各利用者 PC |
 | `relay-version.txt` | relay 自動更新 manifest | ★ SharePoint |
 
+> **git で追跡しているのは「他に原本が無いファイル」だけ**です（`mikke.bundle.js` /
+> `version.txt` / `relay-version.txt` / 各 html / `bookmarklet.txt`）。
+> relay 一式・仕様書・CSV 雛形は `scripts/` やリポジトリ直下が原本で、`dist/` へは
+> ビルド時にコピーされます（同じ内容を git に二重に持たないため）。
+> **`git pull` だけで配布物を揃えたい場合は、relay 一式は `scripts/` から取ってください。**
+
+### 中継サーバ一式（各利用者 PC に置くフォルダ）
+
+`scripts/` の次の 5 ファイルを 1 つのフォルダにまとめて配ります（`dist/` にも同じものがコピーされます）。
+
+| ファイル | 役割 |
+| --- | --- |
+| `mikke-relay.ps1` | 中継サーバ本体 |
+| `mikke-launch.ps1` / `mikke-launch.bat` | ワンクリック起動（CDP） |
+| `mikke-relay.bat` | 中継サーバ単体起動 |
+| `mikke.loader.js` | CDP 起動時に注入するローダ（**これが無いと自動起動しません**） |
+
+`mikke-relay.env` は各 PC の設定なので配布対象外です（雛形は `mikke-relay.env.example`）。
+
 ---
 
 ## 2. SharePoint への配置（初回・管理者）

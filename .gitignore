@@ -1,26 +1,17 @@
 node_modules/
-# Build artifacts: keep the standalone HTML + bundle under version control;
-# ignore the regenerable JS sourcemap.
+# dist/ はビルド生成物。追跡するのは「他に原本が無いもの」だけにする。
+# ★ scripts/ や リポジトリ直下に原本があるファイル (relay の ps1/bat/loader、
+#   仕様書、CSV 雛形など) は dist にコピーされるが **追跡しない**。
+#   両方を追跡すると同じ内容が git に二重に入り、1 箇所の修正で毎回 2 ファイル
+#   分の差分が出るため。配布物一式が要るときは `npm run build` で dist に揃う。
 dist/*
 !dist/index.html
 !dist/install.html
 !dist/install-loader.html
 !dist/bookmarklet.txt
-!dist/mikke.loader.js
 !dist/mikke.bundle.js
 !dist/version.txt
-# relay self-update 用の配置物 (= build.js が scripts/ からコピー + 自動生成)。
-!dist/mikke-relay.ps1
-!dist/mikke-launch.ps1
-!dist/mikke-relay.bat
-!dist/mikke-launch.bat
 !dist/relay-version.txt
-!dist/mikke-relay.env.example
-!dist/mikke-scanner-adapter.example.ps1
-!dist/SCANNER-ADAPTER-SPEC.md
-!dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md
-!dist/sample-import-template.csv
-!dist/SETUP-README.md
 !dist/README.md
 *.log
 .DS_Store

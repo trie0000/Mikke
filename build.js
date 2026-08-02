@@ -135,7 +135,10 @@ if (watch || serve) {
     `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
     `fetch(base+'/mikke.bundle.js',{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
     `load(primary);})();`;
-  fs.writeFileSync('dist/mikke.loader.js', loader);
+  // ★ ローダは「relay と同じフォルダに置くファイル」なので scripts/ を正とする
+  //   (CDP 起動でランチャーが読む)。dist へは他の relay 配布物と同じくコピーする。
+  //   git で追跡するのは scripts/ 側だけ (dist は生成物なので重複させない)。
+  fs.writeFileSync('scripts/mikke.loader.js', loader);
   const loaderHref = 'javascript:' + encodeURIComponent(loader);
   fs.writeFileSync('dist/bookmarklet.txt', loaderHref);
   fs.writeFileSync('dist/install-loader.html', renderInstallHtml(loaderHref, false));
@@ -144,6 +147,8 @@ if (watch || serve) {
   // ── relay 配布物 + 自動更新 manifest ──
   const relayFiles = [
     'mikke-relay.ps1', 'mikke-launch.ps1', 'mikke-relay.bat', 'mikke-launch.bat',
+    // CDP ワンクリック起動でランチャーが読む (ビルド生成物。上で scripts/ に出力済み)
+    'mikke.loader.js',
     'mikke-relay.env.example',
     // 検査ツール API アダプタの雛形。実装版 (mikke-scanner-adapter.ps1) は
     // 委託先環境で作成し、self-update 管理外・git 管理外 (固有情報を含むため)。
@@ -163,11 +168,8 @@ if (watch || serve) {
     // relay-version.txt = self-update manifest (UI が SP の値と比較)
     // .example.* は配布はするが self-update の管理対象 (manifest) には含めない
     // (relay 側の許可リスト外ファイルを送ると self-update 全体が 400 になる)。
-    // mikke.loader.js はビルド生成物 (上で dist/ に直接出力済み) なので scripts/ には無いが、
-    // ランチャーが CDP 注入で読むため、self-update の配布対象に含める。
     const manifest = relayFiles
-      .filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'))
-      .concat(fs.existsSync('dist/mikke.loader.js') ? ['mikke.loader.js'] : []);
+      .filter((f) => fs.existsSync(path.join('scripts', f)) && !f.includes('.example'));
     // ★ manifest に relay の許可リスト外のファイルが入っていると、self-update は
     //   その 1 件で 400 になり **全ファイルが更新されない** (relay 側で即 return)。
     //   過去に mikke.loader.js を manifest だけに足して self-update が全滅したので、

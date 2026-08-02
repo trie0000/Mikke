@@ -1,2 +1,0 @@
-Issue Instance ID,Title,Severity,Status,Asset,CVE,First Seen,Last Seen,CVSS,Category,Port,Verified
-IID-1001,TLS 1.0 が有効になっている,High,open,web01.example.com,CVE-2011-3389,2026-03-12,2026-05-01 09:30,7.4,Encryption,443,false
