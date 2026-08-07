@@ -414,11 +414,16 @@ public class MikkeCdp {
             $relayJs = 'try{localStorage.setItem("mikke.relay.base","http://127.0.0.1:' + $Port + '/mikke");}catch(e){};true'
             try { $cdp.Eval($relayJs, $false) | Out-Null } catch { }
 
-            # ★ 起動方法をブラウザ側に伝える。ワンクリック起動ではバンドルをローカルから
-            #   直接注入しているので、ページを再読込しても新しい版にはならない
-            #   (むしろ画面が消える)。更新の案内を「再読込」ではなく
-            #   「mikke-launch.bat を実行し直す」に切り替えるための目印。
-            try { $cdp.Eval('try{localStorage.setItem("mikke.launch.mode","cdp");}catch(e){};true', $false) | Out-Null } catch { }
+            # ★ バンドルの取得元を relay に固定する。
+            #   relay は自分のフォルダ (= git pull した dist) の mikke.bundle.js /
+            #   version.txt を配信するので、
+            #     - ローダは起動のたびに最新を読む
+            #     - UI の更新ボタンは取り直して差し替えるだけで最新になる
+            #   となり、mikke-launch.bat を実行し直す必要が無くなる。
+            #   SharePoint 上の配布物は参照しない (開発中はローカルが正)。
+            $srcJs = 'try{localStorage.setItem("mikke.dev.bundle-source","local");' +
+                     'localStorage.setItem("mikke.dev.local-base","http://127.0.0.1:' + $Port + '/mikke");}catch(e){};true'
+            try { $cdp.Eval($srcJs, $false) | Out-Null } catch { }
 
             # ★ バンドル注入 (既定)
             #   CDP が繋がっているので、ローカルの mikke.bundle.js をそのまま
@@ -427,22 +432,27 @@ public class MikkeCdp {
             #   (開発中はこれが最短。SP に古いバンドルがあっても影響を受けない)。
             #   MIKKE_INJECT=loader を指定すると、従来どおりローダ (SP からの
             #   サイレント自動更新つき) を注入する。
+            # ★ 既定は **ローダ** を注入する。
+            #   ローダは毎回 relay から mikke.bundle.js を取り直すので、
+            #   再読込しても、更新ボタンを押しても、常に最新のローカル dist が動く。
+            #   バンドルを直接流し込むと「注入した瞬間の中身」で固定されてしまい、
+            #   更新のたびに mikke-launch.bat を実行し直す羽目になる。
+            #   MIKKE_INJECT=bundle で従来どおりの直接注入に戻せる (relay 不調時の逃げ道)。
             $injectMode = [Environment]::GetEnvironmentVariable('MIKKE_INJECT')
             $bundleFile = Join-Path $scriptDir 'mikke.bundle.js'
             $loaderFile = Join-Path $scriptDir 'mikke.loader.js'
-            $useBundle = ($injectMode -ne 'loader') -and (Test-Path -LiteralPath $bundleFile)
+            $useBundle = ($injectMode -eq 'bundle') -or (-not (Test-Path -LiteralPath $loaderFile))
 
             if ($useBundle) {
-                $js = Get-Content -LiteralPath $bundleFile -Raw -Encoding UTF8
-                $srcLabel = "ローカルのバンドル ($([math]::Round((Get-Item $bundleFile).Length / 1KB)) KB)"
-            } else {
-                if (-not (Test-Path -LiteralPath $loaderFile)) {
+                if (-not (Test-Path -LiteralPath $bundleFile)) {
                     throw ("mikke.bundle.js も mikke.loader.js も見つかりません: $scriptDir`n" +
-                           '        配布物 (dist) の mikke.bundle.js を、このフォルダ (mikke-launch.bat と同じ場所) に' +
-                           'コピーしてください。これが無いと自動起動できません。')
+                           '        配布物 (dist) を、このフォルダ (mikke-launch.bat と同じ場所) に置いてください。')
                 }
+                $js = Get-Content -LiteralPath $bundleFile -Raw -Encoding UTF8
+                $srcLabel = "バンドル直挿し ($([math]::Round((Get-Item $bundleFile).Length / 1KB)) KB / 更新は launcher 再実行が必要)"
+            } else {
                 $js = Get-Content -LiteralPath $loaderFile -Raw -Encoding UTF8
-                $srcLabel = 'ローダ (SharePoint からバンドルを取得)'
+                $srcLabel = "ローダ (中継サーバ 127.0.0.1:$Port から毎回バンドルを取得)"
             }
             Write-Host "注入します: $srcLabel" -ForegroundColor Cyan
             $res = $cdp.Eval($js, $false)

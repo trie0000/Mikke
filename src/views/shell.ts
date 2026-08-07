@@ -13,8 +13,8 @@ import { openSiteSelectionModal } from './siteSelectionModal';
 import { resolveSiteUrl } from '../utils/spSites';
 import { LIST_VULNRESPONSE } from '../api/sp/schema';
 import { toast } from '../components/toast';
-import { checkBundleUpdate, stableBuildId } from '../utils/bundleVersion';
-import { checkRelayUpdate } from '../utils/relayUpdate';
+import { checkBundleUpdate, stableBuildId, reloadBundleInPlace } from '../utils/bundleVersion';
+import { checkRelayUpdate, performRelayUpdate } from '../utils/relayUpdate';
 import { currentBuildId } from '../utils/bundleVersion';
 import { LATEST_RELEASE } from '../lib/releaseNotes';
 
@@ -82,10 +82,7 @@ function startBundleUpdatePolling(root: HTMLElement): void {
     if (stableBuildId(latest) === getAckVersion()) return;
     notified = true;
     setState({ bundleUpdateAvailable: latest }); // 右上アイコンが強調される
-    toast(root, isCdpLaunch()
-      ? '新しいバージョンがあります。mikke-launch.bat を実行し直すと最新版になります。更新後、設定 → 更新履歴 で変更内容を確認できます。'
-      : '新しいバージョンがあります。右上の更新アイコンで最新版に更新できます。更新後、設定 → 更新履歴 で変更内容を確認できます。',
-      'warn', 0);
+    toast(root, '新しいバージョンがあります。右上の更新アイコンを押すと最新版になります。', 'warn', 0);
   };
   // 起動 5 秒後に初回、以降 60 秒ごと (キャッシュ温存と検知性のバランス)。
   window.setTimeout(() => { void check(); }, 5000);
@@ -110,53 +107,59 @@ function notifyIfUpdated(root: HTMLElement): void {
   }, 1500);
 }
 
-/** 起動後 1 回、relay スクリプトの更新を確認し、あれば通知。
- *  適用は 設定→接続「中継サーバを今すぐ更新」ボタンから (relay 再起動を伴うため手動)。 */
+/** 起動後 1 回、relay スクリプトの更新を確認し **自動で適用する**。
+ *  ★ 放置による旧版残りを防ぐため、利用者の操作を挟まない。
+ *    自動適用に失敗した時だけ、設定→接続 の手動ボタンを出す。 */
 function checkRelayUpdateOnStartup(root: HTMLElement): void {
   window.setTimeout(async () => {
     if (!root.isConnected) return;
     try {
       const info = await checkRelayUpdate();
       if (!info) return;
-      setState({ relayUpdateAvailable: info });
-      toast(root, `中継サーバの更新があります (v${info.localVersion} → v${info.remoteVersion})。設定 → 接続 から更新できます。`, 'warn', 0);
+      toast(root, `中継サーバを更新しています… v${info.localVersion} → v${info.remoteVersion}（再起動に十数秒かかります）`, 'default', 8000);
+      try {
+        const res = await performRelayUpdate(info.files, info.source);
+        if (res.relayBackUp) {
+          toast(root, `中継サーバを更新しました${res.newVersion ? ` (v${res.newVersion})` : ''}。`, 'ok', 6000);
+        } else {
+          // 置換自体は別プロセスで進んでいる。応答が戻らないだけなので失敗扱いにしない。
+          toast(root, '中継サーバを更新しました。再起動の完了に時間がかかっています。', 'warn', 8000);
+        }
+      } catch (e) {
+        console.warn('[mikke/relay-update] 自動適用に失敗 → 手動導線を出す:', (e as Error).message);
+        setState({ relayUpdateAvailable: info });
+        toast(root, `中継サーバの自動更新に失敗しました。設定 → 接続 から更新してください。（${(e as Error).message}）`, 'warn', 0);
+      }
     } catch { /* noop */ }
   }, 6500);
 }
 
-/** ワンクリック起動 (mikke-launch.bat / CDP) で立ち上がったか。launcher が立てる。 */
-function isCdpLaunch(): boolean {
-  try { return localStorage.getItem('mikke.launch.mode') === 'cdp'; } catch { return false; }
-}
-
-/** 更新アイコンクリック時: 更新があれば再読込、無ければ手動チェック。
+/**
+ * 更新アイコン: **1 回押すだけで** 確認 → 適用まで済ませる。
  *
- * ★ ワンクリック起動では **再読込しない**。
- *   この起動方法はローカルの mikke.bundle.js を CDP で直接注入しているので、
- *   ページを再読込しても新しい版にはならず、Mikke の画面が消えるだけになる
- *   (「更新したら画面が出なくなった」の原因)。最新版にするには launcher を
- *   実行し直す = 新しいバンドルが注入される、が正しい手順。 */
+ * ★ 適用は再読込ではなく in-place 差し替え。Mikke はホストページに後から
+ *   流し込まれているので、再読込するとホストページだけが読み直されて Mikke が
+ *   消える (ワンクリック起動では戻す手段が無い)。バンドルを取り直して eval すれば
+ *   ページはそのままで新版になる。取り直せない時だけ再読込にフォールバックする。
+ */
 async function onSync(root: HTMLElement): Promise<void> {
-  const latest = getState().bundleUpdateAvailable;
-  if (latest) {
-    if (isCdpLaunch()) {
-      toast(root, '最新版にするには mikke-launch.bat を実行し直してください。'
-        + 'ワンクリック起動では、ページを再読込しても新しい版にはなりません。', 'warn', 12000);
-      return;
-    }
-    // この版は「更新を試みた」と記録 → 再読込後も同じ版なら再通知しない。
-    setAckVersion(stableBuildId(latest));
-    toast(root, 'ページを再読込します。Mikke が消えたらブックマークの「Mikke」を再クリックして最新版を読み込んでください。', 'ok', 5000);
-    setTimeout(() => location.reload(), 1200);
+  const latest = getState().bundleUpdateAvailable ?? await (async () => {
+    toast(root, '更新を確認中…', 'default', 3000);
+    return await checkBundleUpdate();
+  })();
+  if (!latest) {
+    toast(root, `最新版です (${currentBuildId()})`, 'ok', 4000);
     return;
   }
-  toast(root, '更新を確認中…', 'default');
-  const found = await checkBundleUpdate();
-  if (found) {
-    setState({ bundleUpdateAvailable: found });
-    toast(root, '新しいバージョンが見つかりました。もう一度クリックで更新します。', 'warn', 0);
-  } else {
-    toast(root, '最新版です。', 'ok');
+  setAckVersion(stableBuildId(latest));
+  setState({ bundleUpdateAvailable: null });
+  toast(root, '最新版に更新しています…', 'default', 4000);
+  try {
+    await reloadBundleInPlace();   // 成功するとこの画面は新版に差し替わる
+  } catch (e) {
+    console.warn('[mikke/update] in-place 差し替えに失敗 → 再読込にフォールバック:', (e as Error).message);
+    toast(root, 'ページを再読込して更新します。', 'warn', 5000);
+    setTimeout(() => location.reload(), 1200);
   }
 }
 

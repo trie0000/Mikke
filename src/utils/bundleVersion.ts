@@ -79,6 +79,35 @@ export async function fetchLatestBuildId(): Promise<string | null> {
   }
 }
 
+/**
+ * 新しいバンドルを取得して **その場で** 差し替える (ページ再読込なし)。
+ *
+ * ★ なぜ reload ではないのか
+ *   Mikke はホストページ (SharePoint) に後から流し込まれている。再読込すると
+ *   ホストページだけが読み直されて Mikke は消え、CDP ワンクリック起動では
+ *   戻す手段が無かった (= 「更新したら画面が出ない」)。ローダと同じく
+ *   バンドルを取り直して eval すれば、ページはそのままで新版に入れ替わる。
+ *   main.ts は起動時に既存の #mikke-root を消すので、二重表示にはならない。
+ */
+export async function reloadBundleInPlace(): Promise<void> {
+  const base = resolveBundleBase();
+  if (!base) throw new Error('バンドルの取得元を解決できません');
+  let ver = String(Date.now());
+  try {
+    const vr = await fetch(`${base}/version.txt?t=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
+    if (vr.ok) ver = (await vr.text()).trim() || ver;
+  } catch { /* version.txt が取れなくても ?t= で新鮮化して続行 */ }
+  const r = await fetch(`${base}/mikke.bundle.js?v=${encodeURIComponent(ver)}&t=${Date.now()}`,
+    { credentials: 'same-origin', cache: 'no-store' });
+  if (!r.ok) throw new Error(`バンドル取得に失敗: HTTP ${r.status}`);
+  const code = await r.text();
+  if (!code || code.length < 1000) throw new Error(`バンドルが小さすぎます (${code.length} バイト)`);
+  try { document.getElementById('mikke-script')?.remove(); } catch { /* noop */ }
+  // ローダと同じ経路で実行する (CSP は unsafe-eval 許可)。
+  // eslint-disable-next-line no-eval
+  (0, eval)(code);
+}
+
 /** 現在実行中の build id。 */
 export function currentBuildId(): string {
   try { return __MIKKE_BUILD_ID__; } catch { return ''; }
