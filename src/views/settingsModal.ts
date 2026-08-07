@@ -687,9 +687,11 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
         `中継サーバの更新があります: v${ru.localVersion} → v${ru.remoteVersion}`,
       ]),
       el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-3);line-height:1.6' }, [
-        ru.source === 'relay'
-          ? '中継サーバのフォルダにある最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。'
-          : 'SharePoint 上の最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。',
+        ru.source === 'bundle'
+          ? 'この Mikke に同梱されている最新スクリプトを送信し、自動で入れ替え＆再起動します。'
+          : ru.source === 'relay'
+            ? '中継サーバのフォルダにある最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。'
+            : 'SharePoint 上の最新スクリプトを取得して送信し、自動で入れ替え＆再起動します。',
       ]),
       btn,
     ]);

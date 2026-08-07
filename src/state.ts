@@ -1,5 +1,6 @@
 // Tiny global state — single store with subscribe.
 import type { ViewName, SiteUser } from './types';
+import type { RelayUpdateInfo } from './utils/relayUpdate';
 
 interface Filter {
   // 複数選択可 = 配列。空配列 = フィルタ無効。配列内いずれか一致 (OR) でヒット。
@@ -29,13 +30,7 @@ interface State {
   ready: boolean;
   errorBanner: string | null;
   /** relay スクリプト更新通知 (配布元の relay-version.txt と relay 自己 version の差)。 */
-  relayUpdateAvailable: {
-    localVersion: string;
-    remoteVersion: string;
-    files: string[];
-    /** 配布元 ('relay' = 中継サーバのフォルダ / 'sp' = SharePoint)。 */
-    source: 'relay' | 'sp';
-  } | null;
+  relayUpdateAvailable: RelayUpdateInfo | null;
   /** バンドル本体の更新通知 (version.txt と起動中 build id の差)。最新 build id か null。 */
   bundleUpdateAvailable: string | null;
 }

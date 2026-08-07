@@ -31,6 +31,33 @@ const buildTime = new Date(Date.now() + 9 * 3600_000).toISOString().replace(/\.\
 const buildId = `${pkg.version}-${gitSha}${gitDirty} (${buildTime})`;
 console.log(`[build] id: ${buildId}`);
 
+const loaderJs = (() => {
+  const loader =
+    `(function(){var d=document,w=window;` +
+    `function REL(){try{var c=w._spPageContextInfo;if(c&&c.webServerRelativeUrl)return c.webServerRelativeUrl.replace(/\\/$/,'');}catch(e){}` +
+    `try{var m=location.pathname.match(/^(\\/(?:sites|teams)\\/[^/]+)/i);if(m)return m[1];}catch(e){}return '';}` +
+    `function SP(){var r=REL();return r?r+${JSON.stringify(libPath)}:'';}` +
+    `var sp=SP(),dev='';` +
+    `try{if(w.localStorage&&localStorage.getItem('mikke.dev.bundle-source')==='local')dev=(localStorage.getItem('mikke.dev.local-base')||'http://127.0.0.1:18080/mikke').replace(/\\/+$/,'');}catch(e){}` +
+    `var primary=dev||${overrideBase}||sp;var fb=(primary!==sp&&sp)?sp:'';var isLocal=!!dev;` +
+    `if(!primary){alert('[Mikke] 起動できません: SharePoint サイト (/sites/<name>) 上で実行してください。');return;}` +
+    `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / 配置 / CORS を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
+    `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
+    `fetch(base+'/mikke.bundle.js',{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
+    `load(primary);})();`;
+  // ローダは relay と同じフォルダ (= dist) に置く。CDP 起動でランチャーが読む。
+  return loader;
+})();
+
+// relay スクリプト群の版数。バンドルへ埋め込み、自己更新の配布元にする。
+const relayVersionForBundle = (() => {
+  try {
+    const t = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
+    const m = t.match(/\$MIKKE_RELAY_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    return m ? m[1] : '0.0.0';
+  } catch { return '0.0.0'; }
+})();
+
 const buildOptions = {
   entryPoints: ['src/main.ts'],
   bundle: true,
@@ -41,13 +68,17 @@ const buildOptions = {
   platform: 'browser',
   minify: prod,
   sourcemap: !prod,
-  loader: { '.css': 'text' },
+  // ★ relay スクリプトはテキストとして取り込み、バンドル自身を自己更新の
+  //   配布元にする (BOM は esbuild が保持することを実測で確認済み)。
+  loader: { '.css': 'text', '.ps1': 'text', '.bat': 'text' },
   define: {
     'process.env.NODE_ENV': prod ? '"production"' : '"development"',
     __MIKKE_BUILD_ID__: JSON.stringify(buildId),
     __MIKKE_BUILD_TIME__: JSON.stringify(buildTime),
     __MIKKE_BUILD_SHA__: JSON.stringify(gitSha + gitDirty),
     __MIKKE_VERSION__: JSON.stringify(pkg.version),
+    __MIKKE_RELAY_VERSION__: JSON.stringify(relayVersionForBundle),
+    __MIKKE_LOADER_JS__: JSON.stringify(loaderJs),
   },
   // @kenjiuno/msgreader (.msg 解析) が iconv-lite (→ safer-buffer → buffer +
   // string_decoder) を持ち込むが、現代の Unicode .msg では実呼びしないため、
@@ -122,22 +153,9 @@ if (watch || serve) {
   // bundle 読込は SP / ローカルとも fetch+eval に統一:
   //   SP は `mikke.bundle.js?v=` のクエリ付き .js を 404 にすることがあるため、
   //   クエリ無し URL を fetch してテキストを eval する (SP の CSP は unsafe-eval 可)。
-  const loader =
-    `(function(){var d=document,w=window;` +
-    `function REL(){try{var c=w._spPageContextInfo;if(c&&c.webServerRelativeUrl)return c.webServerRelativeUrl.replace(/\\/$/,'');}catch(e){}` +
-    `try{var m=location.pathname.match(/^(\\/(?:sites|teams)\\/[^/]+)/i);if(m)return m[1];}catch(e){}return '';}` +
-    `function SP(){var r=REL();return r?r+${JSON.stringify(libPath)}:'';}` +
-    `var sp=SP(),dev='';` +
-    `try{if(w.localStorage&&localStorage.getItem('mikke.dev.bundle-source')==='local')dev=(localStorage.getItem('mikke.dev.local-base')||'http://127.0.0.1:18080/mikke').replace(/\\/+$/,'');}catch(e){}` +
-    `var primary=dev||${overrideBase}||sp;var fb=(primary!==sp&&sp)?sp:'';var isLocal=!!dev;` +
-    `if(!primary){alert('[Mikke] 起動できません: SharePoint サイト (/sites/<name>) 上で実行してください。');return;}` +
-    `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / 配置 / CORS を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
-    `function load(base){var o=d.getElementById('mikke-script');if(o)o.remove();` +
-    `fetch(base+'/mikke.bundle.js',{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(t){if(!t||t.length<1000)throw new Error('bundle too small ('+t.length+')');try{(0,eval)(t);}catch(e){fail(base,'eval: '+(e&&e.message||e));}}).catch(function(e){fail(base,e&&e.message||'fetch error');if(!isLocal&&fb){var x=fb;fb='';load(x);}});}` +
-    `load(primary);})();`;
-  // ローダは relay と同じフォルダ (= dist) に置く。CDP 起動でランチャーが読む。
-  fs.writeFileSync('dist/mikke.loader.js', loader);
-  const loaderHref = 'javascript:' + encodeURIComponent(loader);
+  // ローダ本文はトップレベルで生成済み (buildLoaderJs)。
+  fs.writeFileSync('dist/mikke.loader.js', loaderJs);
+  const loaderHref = 'javascript:' + encodeURIComponent(loaderJs);
   fs.writeFileSync('dist/bookmarklet.txt', loaderHref);
   fs.writeFileSync('dist/install-loader.html', renderInstallHtml(loaderHref, false));
   console.log(`[loader] dist/mikke.bundle.js: ${sizeKb('dist/mikke.bundle.js')} KB / version.txt: "${buildId}"`);
@@ -181,6 +199,18 @@ if (watch || serve) {
         + ` (このまま配布すると self-update が 400 で全滅します)`,
       );
     }
+    // ★ バンドル同梱 (src/utils/relayPayload.ts) が manifest と食い違うと、
+    //   自己更新で「manifest にあるがバンドルに無い」ファイルが出て失敗する。
+    const payloadSrc = fs.readFileSync('src/utils/relayPayload.ts', 'utf8');
+    const bundled = [...payloadSrc.matchAll(/name:\s*'([^']+)'/g)].map((x) => x[1]);
+    const missing = manifest.filter((f) => !bundled.includes(f));
+    if (missing.length) {
+      throw new Error(
+        `[relay] manifest にあるがバンドルに同梱されていません: ${missing.join(', ')}\n`
+        + `        src/utils/relayPayload.ts の BUNDLED_RELAY_FILES に追加してください`,
+      );
+    }
+
     fs.writeFileSync('dist/relay-version.txt',
       JSON.stringify({ version: relayVersion, buildTime, files: manifest }, null, 2) + '\n');
     console.log(`[relay] dist/relay-version.txt: v${relayVersion} (${manifest.length} files)`);
