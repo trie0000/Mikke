@@ -2,6 +2,7 @@
 import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
 import type { VulnResponseItem } from '../lib/responseSync';
+import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 
 export interface Repository {
   /** リスト自動作成 (ensureLists 相当)。 */
@@ -59,6 +60,14 @@ export interface Repository {
   deleteDocFile(serverRelativeUrl: string): Promise<void>;
   /** 保存済みファイルをブラウザで開く/保存するための href を返す (SP=絶対URL / mock=data URL)。 */
   docFileHref(serverRelativeUrl: string): Promise<string>;
+  /** 連携用リストの既存アイテム (Mikke が書き込む項目のみ)。反映の差分計算に使う。 */
+  listVulnResponseRows(): Promise<VulnResponseRow[]>;
+  /** 連携用リストにアイテムを追加する。 */
+  createVulnResponseItem(fields: VulnResponseFields): Promise<void>;
+  /** 連携用リストのアイテムを更新する (Mikke が持つ項目だけ)。 */
+  updateVulnResponseItem(id: number, fields: Partial<VulnResponseFields>): Promise<void>;
+  /** 連携用リストのアイテムを削除する (管理対象外にしたとき)。 */
+  deleteVulnResponseItem(id: number): Promise<void>;
   /** 連携用リストの記入内容 (資産管理者が変更できる欄) を全件取得する。
    *  管理対象一覧への取り込みに使う。未作成なら空配列。 */
   listVulnResponses(): Promise<VulnResponseItem[]>;

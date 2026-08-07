@@ -15,6 +15,7 @@ import {
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
+import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -499,6 +500,83 @@ export class SpRepository implements Repository {
       }
     } catch { return out; }
     return out;
+  }
+
+  /** 連携用リストの既存アイテム (Mikke が書き込む項目のみ)。反映の差分計算に使う。
+   *  リストが未作成 / 権限が無い場合は空配列。 */
+  async listVulnResponseRows(): Promise<VulnResponseRow[]> {
+    const out: VulnResponseRow[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
+      + '?$select=Id,IssueInstanceId,Title,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
+      + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
+      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence&$top=5000';
+    try {
+      while (url) {
+        const j: any = await this.spGet(url);
+        for (const r of j.d.results as any[]) {
+          out.push({
+            id: r.Id,
+            issueInstanceId: r.IssueInstanceId ?? '',
+            title: r.Title ?? '',
+            legacyMgmtNumber: r.LegacyMgmtNumber ?? '',
+            detectionStatus: r.DetectionStatus ?? '',
+            firstSeen: r.FirstSeen ?? '',
+            lastSeen: r.LastSeen ?? '',
+            assetIp: r.AssetIp ?? '',
+            assetFqdn: r.AssetFqdn ?? '',
+            assetType: r.AssetType ?? '',
+            businessCompany: r.BusinessCompany ?? '',
+            affiliateCompany: r.AffiliateCompany ?? '',
+            assetMgmtId: r.AssetMgmtId ?? '',
+            extConnAppId: r.ExtConnAppId ?? '',
+            relatedAssets: r.RelatedAssets ?? '',
+            identifyEvidence: r.IdentifyEvidence ?? '',
+          });
+        }
+        url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+      }
+    } catch { return out; }
+    return out;
+  }
+
+  /** 連携用リストの項目 → SP の列。日付は空文字だと 400 になるので null で送る。 */
+  private vulnResponseRow(f: Partial<VulnResponseFields>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (f.issueInstanceId !== undefined) row.IssueInstanceId = f.issueInstanceId;
+    if (f.title !== undefined) row.Title = f.title;
+    if (f.legacyMgmtNumber !== undefined) row.LegacyMgmtNumber = f.legacyMgmtNumber;
+    if (f.detectionStatus !== undefined) row.DetectionStatus = f.detectionStatus;
+    if (f.firstSeen !== undefined) row.FirstSeen = f.firstSeen || null;
+    if (f.lastSeen !== undefined) row.LastSeen = f.lastSeen || null;
+    if (f.assetIp !== undefined) row.AssetIp = f.assetIp;
+    if (f.assetFqdn !== undefined) row.AssetFqdn = f.assetFqdn;
+    if (f.assetType !== undefined) row.AssetType = f.assetType;
+    if (f.businessCompany !== undefined) row.BusinessCompany = f.businessCompany;
+    if (f.affiliateCompany !== undefined) row.AffiliateCompany = f.affiliateCompany;
+    if (f.assetMgmtId !== undefined) row.AssetMgmtId = f.assetMgmtId;
+    if (f.extConnAppId !== undefined) row.ExtConnAppId = f.extConnAppId;
+    if (f.relatedAssets !== undefined) row.RelatedAssets = f.relatedAssets;
+    if (f.identifyEvidence !== undefined) row.IdentifyEvidence = f.identifyEvidence;
+    return row;
+  }
+
+  async createVulnResponseItem(fields: VulnResponseFields): Promise<void> {
+    const type = await this.listEntityType(LIST_VULNRESPONSE);
+    await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`,
+      { __metadata: { type }, ...this.vulnResponseRow(fields) });
+  }
+
+  async updateVulnResponseItem(id: number, fields: Partial<VulnResponseFields>): Promise<void> {
+    const type = await this.listEntityType(LIST_VULNRESPONSE);
+    await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items(${id})`,
+      { __metadata: { type }, ...this.vulnResponseRow(fields) },
+      { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+  }
+
+  async deleteVulnResponseItem(id: number): Promise<void> {
+    await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items(${id})`,
+      undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
   }
 
   async vulnResponseListUrl(): Promise<string | null> {

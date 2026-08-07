@@ -17,6 +17,7 @@ import { buildImportPlan, type ImportMode } from '../lib/import';
 import { storeIssueReport, sampleIssueReport, issueReportFolder, isAdapterMissing } from '../lib/issueReport';
 import { notifyStatusOf, NOTIFY_ORDER, type NotifyStatus } from '../lib/notifyStatus';
 import { buildResponseSyncPlan } from '../lib/responseSync';
+import { buildVulnResponsePlan } from '../lib/vulnResponseSync';
 import type { ManagedIssue } from '../types';
 
 /** 情報更新の並列数。relay 側 (/mikke/issues の runspace プール) と同じ値にする。
@@ -221,6 +222,59 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         fail ? 'error' : 'ok', fail ? 12000 : 6000);
     } catch (e) {
       if (!silent) toast(rootEl, `連携内容の取り込みに失敗しました: ${(e as Error).message}`, 'error', 10000);
+    } finally {
+      bulkBusy = false;
+      await load();
+    }
+  }
+
+  /**
+   * 管理対象一覧 → 連携用リストへ反映する。
+   * ★ 資産管理者が記入する欄 (対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考) には触らない。
+   *   管理対象外にしたものは連携用リストから削除する (解除すれば次回また追加される)。
+   */
+  async function pushToVulnResponse(): Promise<void> {
+    if (bulkBusy) return;
+    bulkBusy = true;
+    try {
+      const [existing, assets] = await Promise.all([
+        getRepo().listVulnResponseRows(),
+        getRepo().listAssets().catch(() => []),
+      ]);
+      const assetsByKey = new Map(assets.map((a) => [a.assetKey, a]));
+      const keysOf = (i: ManagedIssue): string[] => {
+        const set = new Set<string>();
+        for (const col of assetColumns) {
+          const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
+          for (const k of splitAssetCell(resolveScanValue(i.scanFields, key, csvHeaders) ?? '')) set.add(k);
+        }
+        return [...set];
+      };
+      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing);
+      const total = plan.creates.length + plan.updates.length + plan.deletes.length;
+      if (!total) {
+        toast(rootEl, `連携リストへの反映: 変更はありません（一致 ${plan.unchanged} 件）。`, 'ok', 6000);
+        return;
+      }
+      toast(rootEl, `連携リストへ反映しています… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
+
+      let ok = 0, fail = 0, firstErr = '';
+      const run = async (fn: () => Promise<void>): Promise<void> => {
+        try { await fn(); ok++; } catch (e) { fail++; if (!firstErr) firstErr = (e as Error).message; }
+      };
+      // 削除 → 追加 → 更新 の順。先に消しておくと、対象外を解除した直後の
+      // 追加と取り違えにくい。
+      await mapLimit(plan.deletes, REFRESH_PARALLEL, (d) => run(() => getRepo().deleteVulnResponseItem(d.id)));
+      await mapLimit(plan.creates, REFRESH_PARALLEL, (c) => run(() => getRepo().createVulnResponseItem(c)));
+      await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(() => getRepo().updateVulnResponseItem(u.id, u.fields)));
+
+      toast(rootEl,
+        `連携リストへ反映しました: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
+        + ` / 変更なし ${plan.unchanged}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
+        fail ? 'error' : 'ok', fail ? 12000 : 8000);
+      void ok;
+    } catch (e) {
+      toast(rootEl, `連携リストへの反映に失敗しました: ${(e as Error).message}`, 'error', 10000);
     } finally {
       bulkBusy = false;
       await load();
@@ -527,6 +581,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         onchange: (e: Event) => { setFilter({ showHidden: (e.target as HTMLInputElement).checked }, { silent: true }); refresh(); paint(); } }),
       '対象外・過検出・未検出も表示',
     ]);
+    const pushBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+      title: '管理対象の内容を連携用リストへ反映します（資産管理者の記入欄には触れません。管理対象外は削除されます）',
+      ...(bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => { void pushToVulnResponse(); },
+      html: icon('upload') + '<span>連携リストへ反映</span>',
+    });
     const syncBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '連携用リストで資産管理者が記入した内容 (対応状況・対応者・対応期日・対応経緯・備考) を取り込みます',
@@ -551,7 +612,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     toolbar.append(
       el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
       search, wrapBtn, ...(clearBtn ? [clearBtn] : []),
-      el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [syncBtn, bulkFixedBtn, bulkAddBtn]),
+      el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [pushBtn, syncBtn, bulkFixedBtn, bulkAddBtn]),
       hiddenToggle,
     );
 

@@ -1,0 +1,158 @@
+// Mikke の管理対象一覧 → 資産管理者への連携用リスト への反映。
+//
+// ★ 書き分けの原則
+//   - Mikke が持つ情報 (脆弱性・資産) だけを書く。
+//     資産管理者が記入する 対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考 には触らない。
+//   - 値が変わるものだけ更新する (毎回全件書き込むと、資産管理者側の更新時刻が
+//     動いて「通知」列の判定が濁る)。
+//   - 管理対象外にしたものは連携用リストから削除する。対象外を解除すれば
+//     「連携用リストに無い」状態になり、次の反映で作り直される。
+import type { ManagedIssue, ManagedAsset } from '../types';
+
+/** 連携用リストに Mikke が書き込む項目。 */
+export interface VulnResponseFields {
+  issueInstanceId: string;
+  title: string;
+  legacyMgmtNumber: string;
+  detectionStatus: string;
+  firstSeen: string;
+  lastSeen: string;
+  assetIp: string;
+  assetFqdn: string;
+  assetType: string;
+  businessCompany: string;
+  affiliateCompany: string;
+  assetMgmtId: string;
+  extConnAppId: string;
+  relatedAssets: string;
+  identifyEvidence: string;
+}
+
+/** 連携用リストの既存アイテム (Mikke が書く項目のみ)。 */
+export interface VulnResponseRow extends VulnResponseFields {
+  id: number;
+}
+
+export interface VulnResponsePlan {
+  creates: VulnResponseFields[];
+  updates: { id: number; issueInstanceId: string; fields: Partial<VulnResponseFields> }[];
+  deletes: { id: number; issueInstanceId: string; reason: '対象外' | '管理対象に無い' }[];
+  /** 既にあり、内容も一致していた件数。 */
+  unchanged: number;
+}
+
+const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
+
+/** 日付は日単位で比べる (時刻差で毎回差分にしない)。 */
+function day(iso?: string): string {
+  const s = text(iso);
+  if (!s) return '';
+  const t = new Date(s);
+  return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
+}
+
+/** IPv4 か (資産キーを IP と FQDN に振り分けるための簡易判定)。 */
+function isIpKey(s: string): boolean {
+  const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return !!m && m.slice(1).every((o) => Number(o) <= 255);
+}
+
+/** 管理対象から外れているか (連携用リストから消す対象)。 */
+export function isExcluded(issue: ManagedIssue): boolean {
+  return issue.isOutOfScope || issue.mgmtStatus === '対象外';
+}
+
+/**
+ * 1 件分の書き込み内容を組み立てる。
+ * 資産の情報 (事業会社 / 管理会社 / Web資産管理ID / 特定根拠) は資産リストから引く。
+ * 複数の資産に跨る場合、代表値は最初に見つかったものを使い、資産キーは全部並べる。
+ */
+export function toVulnResponseFields(
+  issue: ManagedIssue,
+  assetKeys: string[],
+  assetsByKey: Map<string, ManagedAsset>,
+): VulnResponseFields {
+  const ips = assetKeys.filter(isIpKey);
+  const fqdns = assetKeys.filter((k) => !isIpKey(k));
+  const pick = (get: (a: ManagedAsset) => string | undefined): string => {
+    for (const k of assetKeys) {
+      const v = text(get(assetsByKey.get(k) ?? ({} as ManagedAsset)));
+      if (v) return v;
+    }
+    return '';
+  };
+  // 代表以外の資産キー = 関連資産 (どの資産と一緒に検出されたかが分かる)
+  const primary = fqdns[0] ?? ips[0] ?? '';
+  const related = assetKeys.filter((k) => k !== primary);
+
+  return {
+    issueInstanceId: text(issue.issueInstanceId),
+    title: text(issue.title),
+    legacyMgmtNumber: text(issue.legacyMgmtNumber),
+    detectionStatus: text(issue.detectionStatus),
+    firstSeen: text(issue.firstSeen),
+    lastSeen: text(issue.lastSeen),
+    assetIp: ips.join(' | '),
+    assetFqdn: fqdns.join(' | '),
+    assetType: fqdns.length ? 'FQDN' : (ips.length ? 'IP' : ''),
+    businessCompany: pick((a) => a.businessCompany),
+    affiliateCompany: pick((a) => a.affiliateCompany),
+    assetMgmtId: pick((a) => a.mgmtNumber),
+    extConnAppId: text(issue.extConnAppId),
+    relatedAssets: related.join(' | '),
+    identifyEvidence: pick((a) => a.identifyEvidence),
+  };
+}
+
+/** 日付として比べる項目 (他は文字列として比べる)。 */
+const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
+
+/**
+ * 管理対象一覧と連携用リストを突合し、追加 / 更新 / 削除の計画を組み立てる。
+ *
+ * @param assetKeysOf 脆弱性から資産キーを取り出す関数 (設定の資産列に依存するため外から渡す)
+ */
+export function buildVulnResponsePlan(
+  issues: ManagedIssue[],
+  assetsByKey: Map<string, ManagedAsset>,
+  assetKeysOf: (issue: ManagedIssue) => string[],
+  existing: VulnResponseRow[],
+): VulnResponsePlan {
+  const byId = new Map(existing.filter((r) => r.issueInstanceId).map((r) => [r.issueInstanceId, r]));
+  const plan: VulnResponsePlan = { creates: [], updates: [], deletes: [], unchanged: 0 };
+  const seen = new Set<string>();
+
+  for (const issue of issues) {
+    const iid = text(issue.issueInstanceId);
+    if (!iid) continue;              // 突合キーが無いものは扱えない
+    seen.add(iid);
+    const row = byId.get(iid);
+
+    if (isExcluded(issue)) {
+      // 管理対象外 → 連携用リストから消す。解除すれば次回また追加される。
+      if (row) plan.deletes.push({ id: row.id, issueInstanceId: iid, reason: '対象外' });
+      continue;
+    }
+
+    const fields = toVulnResponseFields(issue, assetKeysOf(issue), assetsByKey);
+    if (!row) { plan.creates.push(fields); continue; }
+
+    const diff: Partial<VulnResponseFields> = {};
+    for (const k of Object.keys(fields) as (keyof VulnResponseFields)[]) {
+      if (k === 'issueInstanceId') continue;   // 突合キーは変えない
+      const a = DATE_FIELDS.includes(k) ? day(fields[k]) : text(fields[k]);
+      const b = DATE_FIELDS.includes(k) ? day(row[k]) : text(row[k]);
+      if (a !== b) diff[k] = fields[k];
+    }
+    if (Object.keys(diff).length) plan.updates.push({ id: row.id, issueInstanceId: iid, fields: diff });
+    else plan.unchanged++;
+  }
+
+  // 管理対象から消えた (削除された) ものも連携用リストから消す。
+  for (const row of existing) {
+    if (row.issueInstanceId && !seen.has(row.issueInstanceId)) {
+      plan.deletes.push({ id: row.id, issueInstanceId: row.issueInstanceId, reason: '管理対象に無い' });
+    }
+  }
+  return plan;
+}

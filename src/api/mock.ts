@@ -5,6 +5,7 @@ import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, Mikke
 import type { ImportOp } from '../lib/import';
 import { vulnResponseFieldSpecs } from './sp/schema';
 import type { VulnResponseItem } from '../lib/responseSync';
+import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
@@ -13,6 +14,7 @@ const LS_HISTORY = 'mikke.mock.history';
 const LS_CHANGELOG = 'mikke.mock.changelog';
 const LS_DOWNLOADS = 'mikke.mock.downloads';
 const LS_DOCFILES = 'mikke.mock.docfiles';
+const LS_VULNRESPONSE = 'mikke.mock.vulnresponse';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -171,6 +173,25 @@ export class MockRepository implements Repository {
   async docFileHref(serverRelativeUrl: string): Promise<string> {
     const store = load<Record<string, string>>(LS_DOCFILES, {});
     return store[serverRelativeUrl] ?? '';
+  }
+
+  // ── 連携用リスト (モックには実体が無いので localStorage に持つ) ───────────
+  async listVulnResponseRows(): Promise<VulnResponseRow[]> {
+    return load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
+  }
+  async createVulnResponseItem(fields: VulnResponseFields): Promise<void> {
+    const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
+    rows.push({ ...fields, id: rows.reduce((m, r) => Math.max(m, r.id), 0) + 1 });
+    save(LS_VULNRESPONSE, rows);
+  }
+  async updateVulnResponseItem(id: number, fields: Partial<VulnResponseFields>): Promise<void> {
+    const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx >= 0) { rows[idx] = { ...rows[idx]!, ...fields, id }; save(LS_VULNRESPONSE, rows); }
+  }
+  async deleteVulnResponseItem(id: number): Promise<void> {
+    const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []).filter((r) => r.id !== id);
+    save(LS_VULNRESPONSE, rows);
   }
 
   /** モックには連携用リストの実体が無いので、取り込む記入内容も無い。 */
