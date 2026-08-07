@@ -226,7 +226,9 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     { name: 'Title', type: 'Text', displayName: '脆弱性タイトル', conditionalFormula: HIDDEN_UNLESS_NEW, required: false },
     // 突合キー。Mikke 側の Issue Instance ID と 1:1。
     pushed('IssueInstanceId', '脆弱性ID', { indexed: true }),
-    pushed('MgmtNumber', '管理番号'),
+    // ★ Excel 運用時代の暫定 ID (事業会社名-YYMM-XX)。将来廃止するが、移行期間中は
+    //   資産管理者にも見えるようにする。内部名は管理対象リスト側と揃えてある。
+    pushed('LegacyMgmtNumber', '旧管理番号'),
     pushed('DetectionStatus', '検知状況'),
     pushed('FirstSeen', '初回検知日', { type: 'DateTime', dateOnly: true }),
     pushed('LastSeen', '最終検知日', { type: 'DateTime', dateOnly: true }),
@@ -244,9 +246,6 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('AffiliateCompany', '管理会社'),
     pushed('AssetMgmtId', '資産管理ID', { indexed: true }),
     pushed('ExtConnAppId', '外部接続申請ID'),
-    // ★ Excel 運用時代の暫定 ID (事業会社名-YYMM-XX)。将来廃止するが、移行期間中は
-    //   資産管理者にも見えるようにここへも渡す。
-    pushed('LegacyMgmtNumber', '旧管理番号'),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
     pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),
 
@@ -270,6 +269,7 @@ export const VULNRESPONSE_OBSOLETE_FIELDS = [
   'ResponseDate',    // 対応日 (対応期日に集約)
   'ExceptionReason', // 例外・対象外の理由
   'TargetAsset',     // 対象資産 (IP / FQDN に分割)
+  'MgmtNumber',      // 管理番号 → 旧管理番号 (LegacyMgmtNumber) に一本化
 ];
 
 /**
@@ -294,7 +294,7 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
-  'IssueInstanceId', 'MgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
+  'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
   'BusinessCompany', 'AssetMgmtId', 'ResponseStatus', 'DueDate', 'Responder',
 ];
 

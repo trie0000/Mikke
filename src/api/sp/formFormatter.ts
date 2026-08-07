@@ -172,7 +172,7 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         // カード 1: 脆弱性情報
         card('脆弱性情報', '読み取り専用', [
           twoColumns(
-            [item('管理番号', textValue('[$MgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
+            [item('旧管理番号', textValue('[$LegacyMgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
             [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
           ),
         ]),
@@ -189,7 +189,6 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
             [
               item('資産管理ID', textValue('[$AssetMgmtId]')),
               item('外部接続申請ID', textValue('[$ExtConnAppId]')),
-              item('旧管理番号', textValue('[$LegacyMgmtNumber]')),
               item('関連資産', textValue('[$RelatedAssets]')),
               item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
             ],

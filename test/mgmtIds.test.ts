@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { managedIssueFieldSpecs, assetFieldSpecs, vulnResponseFieldSpecs } from '../src/api/sp/schema';
+import { managedIssueFieldSpecs, assetFieldSpecs, vulnResponseFieldSpecs,
+  VULNRESPONSE_OBSOLETE_FIELDS, VULNRESPONSE_VIEW_FIELDS } from '../src/api/sp/schema';
 import { diffManagedIssue } from '../src/lib/issueChangeLog';
 import type { ManagedIssue } from '../src/types';
 
@@ -34,6 +35,18 @@ describe('管理系 ID の持ち場所', () => {
   it('旧管理番号は管理対象・連携用リストの両方で見られる (移行期間中の参考情報)', () => {
     expect(managed).toContain('LegacyMgmtNumber');
     expect(vulnNames).toContain('LegacyMgmtNumber');
+  });
+
+  it('連携用リストの「管理番号」は旧管理番号に一本化した (同じ値の列を並べない)', () => {
+    expect(vulnNames).not.toContain('MgmtNumber');
+    expect(VULNRESPONSE_OBSOLETE_FIELDS).toContain('MgmtNumber');
+    // 表示名も揃える
+    expect(vuln.find((f) => f.name === 'LegacyMgmtNumber')?.displayName).toBe('旧管理番号');
+  });
+
+  it('既定ビューにも旧管理番号を出す', () => {
+    expect(VULNRESPONSE_VIEW_FIELDS).toContain('LegacyMgmtNumber');
+    expect(VULNRESPONSE_VIEW_FIELDS).not.toContain('MgmtNumber');
   });
 
   it('連携用リストの ID 系はカードで見せるので本体では隠す', () => {

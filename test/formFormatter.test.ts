@@ -97,7 +97,7 @@ describe('schema: 連携用リストの列定義', () => {
   });
 
   it('Mikke が書き込む脆弱性情報の列は「新規時だけ入力可」', () => {
-    for (const name of ['Title', 'IssueInstanceId', 'MgmtNumber', 'DetectionStatus', 'FirstSeen', 'LastSeen']) {
+    for (const name of ['Title', 'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus', 'FirstSeen', 'LastSeen']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBe(HIDDEN_UNLESS_NEW);
     }
   });
