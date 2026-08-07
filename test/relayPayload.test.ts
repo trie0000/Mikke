@@ -45,3 +45,33 @@ describe('自己更新: PowerShell スクリプトの BOM', () => {
     expect([b[3], b[4], b[5]]).not.toEqual([0xef, 0xbb, 0xbf]);
   });
 });
+
+describe('自己更新: 生成される updater.bat は ASCII のみ', () => {
+  // ★ 実機 (日本語 Windows) で再現した事故:
+  //   cmd.exe は .bat をシステム ANSI コードページ (CP932) で解釈する。
+  //   UTF-8 の日本語を書くと化けたバイト列が行を分断し、バッチが別のコマンドとして
+  //   実行されて置換も再起動も起きない。relay は既に終了しているので
+  //   「更新したら中継サーバが落ちたまま」になる。
+  const src = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
+  const start = src.indexOf('$batContent = @"');
+  const bat = src.slice(start, src.indexOf('\n"@', start));
+
+  it('here-string の中身に非 ASCII が無い', () => {
+    const bad = [...bat].filter((c) => c.charCodeAt(0) > 127);
+    expect(bad).toEqual([]);
+  });
+
+  it('ASCII エンコードで書き出している', () => {
+    expect(src).toContain('[System.Text.ASCIIEncoding]::new()');
+  });
+
+  it('待機は timeout ではなく ping (標準入力がリダイレクトされていても動く)', () => {
+    expect(bat).not.toContain('timeout /t');
+    expect(bat).toContain('ping -n 2 127.0.0.1');
+  });
+
+  it('再起動時にポートを引き継ぐ / ポート掃除の $_ が壊れていない', () => {
+    expect(bat).toContain('-Port %RELAY_PORT%');
+    expect(bat).toContain('Stop-Process -Id `$_ -Force');
+  });
+});
