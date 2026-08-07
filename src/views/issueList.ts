@@ -16,6 +16,7 @@ import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES, mapLimit, base64ToB
 import { buildImportPlan, type ImportMode } from '../lib/import';
 import { storeIssueReport, sampleIssueReport, issueReportFolder, isAdapterMissing } from '../lib/issueReport';
 import { notifyStatusOf, NOTIFY_ORDER, type NotifyStatus } from '../lib/notifyStatus';
+import { buildResponseSyncPlan } from '../lib/responseSync';
 import type { ManagedIssue } from '../types';
 
 /** 情報更新の並列数。relay 側 (/mikke/issues の runspace プール) と同じ値にする。
@@ -46,6 +47,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let lastFiltered: ManagedIssue[] = [];
   const selected = new Set<number>();
   let bulkBusy = false;
+  /** 連携内容の自動取り込みはこの画面を開いたとき 1 回だけ (毎回の再描画で走らせない)。 */
+  let autoSyncDone = false;
 
   const table = new DataTable<ManagedIssue>(tableWrap, {
     storeKey: 'mikke.issues',
@@ -108,6 +111,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       setState({ issueCount: all.length }, { silent: true });
       table.setColumns(buildColumns());
       paint();
+      // 画面を開いた直後に 1 回だけ、連携用リストの記入内容を取り込む。
+      if (!autoSyncDone) { autoSyncDone = true; void syncFromVulnResponse(true); }
     } catch (e) {
       clear(tableWrap);
       tableWrap.appendChild(el('div', { class: 'mikke-error' }, [
@@ -165,6 +170,57 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         fail ? 'warn' : 'ok', 12000);
     } catch (e) {
       toast(rootEl, `一括更新に失敗しました: ${(e as Error).message}`, 'error', 10000);
+    } finally {
+      bulkBusy = false;
+      await load();
+    }
+  }
+
+  /**
+   * 連携用リストの記入内容 (対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考) を取り込む。
+   * ★ 差分があるものだけ書き込み、更新履歴にも残す。
+   * @param silent 自動実行。取り込む差分が無ければ何も表示しない。
+   */
+  async function syncFromVulnResponse(silent: boolean): Promise<void> {
+    if (bulkBusy) return;
+    bulkBusy = true;
+    try {
+      const responses = await getRepo().listVulnResponses();
+      if (!responses.length) {
+        if (!silent) {
+          toast(rootEl, '連携用リストにアイテムがありません（まだ渡していない、またはリスト未作成）。', 'warn', 8000);
+        }
+        return;
+      }
+      const plan = buildResponseSyncPlan(cache, responses, new Date().toISOString());
+      if (!plan.patches.length) {
+        if (!silent) {
+          toast(rootEl, `連携内容の取り込み: 変更はありません（照合 ${plan.unchanged} 件 / 連携用リストに無し ${plan.notLinked} 件）。`, 'ok', 6000);
+        }
+        return;
+      }
+      let ok = 0, fail = 0, firstErr = '';
+      await mapLimit(plan.patches, REFRESH_PARALLEL, async (p) => {
+        try {
+          await getRepo().updateIssue(p.id, p.patch);
+          // 誰の変更か分かるよう更新履歴にも残す。
+          await getRepo().createChangeLog({
+            issueInstanceId: p.issueInstanceId,
+            changedAt: new Date().toISOString(),
+            changedBy: '連携用リストから取り込み',
+            changes: p.changes,
+          }).catch(() => { /* 履歴が残せなくても取り込みは成立させる */ });
+          ok++;
+        } catch (e) {
+          fail++;
+          if (!firstErr) firstErr = (e as Error).message;
+        }
+      });
+      toast(rootEl,
+        `連携内容を取り込みました: ${ok} 件更新${fail ? ` / ${fail} 件失敗 — ${firstErr}` : ''}`,
+        fail ? 'error' : 'ok', fail ? 12000 : 6000);
+    } catch (e) {
+      if (!silent) toast(rootEl, `連携内容の取り込みに失敗しました: ${(e as Error).message}`, 'error', 10000);
     } finally {
       bulkBusy = false;
       await load();
@@ -471,6 +527,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         onchange: (e: Event) => { setFilter({ showHidden: (e.target as HTMLInputElement).checked }, { silent: true }); refresh(); paint(); } }),
       '対象外・過検出・未検出も表示',
     ]);
+    const syncBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+      title: '連携用リストで資産管理者が記入した内容 (対応状況・対応者・対応期日・対応経緯・備考) を取り込みます',
+      ...(bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => { void syncFromVulnResponse(false); },
+      html: icon('sync') + '<span>連携内容を取込</span>',
+    });
     const bulkFixedBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '検査ツールから全レポートを取得し、固定モードで反映（新規は追加せず・検知中は据え置き）',
@@ -488,7 +551,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     toolbar.append(
       el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
       search, wrapBtn, ...(clearBtn ? [clearBtn] : []),
-      el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [bulkFixedBtn, bulkAddBtn]),
+      el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [syncBtn, bulkFixedBtn, bulkAddBtn]),
       hiddenToggle,
     );
 

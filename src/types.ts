@@ -17,6 +17,7 @@ export const DETECTION_STATUSES: DetectionStatus[] = [
 export type MgmtStatus =
   | '未通知'      // 管理対象化したが未通知 (初期値)
   | '通知'        // 関係者に通知済み
+  | '未着手'      // 連携用リストで資産管理者が「未着手」を選んだ状態
   | '対応中'      // 修正・対処を進めている
   | '対応済み'    // 対処完了
   | 'リスク受容'  // 対処せずリスクを受容
@@ -24,7 +25,7 @@ export type MgmtStatus =
   | '対象外';     // 管理対象から外す
 
 export const MGMT_STATUSES: MgmtStatus[] = [
-  '未通知', '通知', '対応中', '対応済み', 'リスク受容', '過検出', '対象外',
+  '未通知', '通知', '未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外',
 ];
 
 /** 取込経緯。 */
@@ -80,6 +81,12 @@ export interface ManagedIssue {
   reportAt?: string;
   /** SharePoint 上の最終更新日時 (ISO)。連携用リストとの差分判定に使う。 */
   updatedAt?: string;
+  /** 連携用リストで資産管理者が書いた対応経緯 (HTML)。Mikke 側のメモとは別に保持する。 */
+  responseNote?: string;
+  /** 連携用リストで資産管理者が書いた備考。 */
+  responseRemarks?: string;
+  /** 連携用リストの内容を取り込んだ日時 (ISO)。 */
+  responseSyncedAt?: string;
   /** 動的列 (F6 でチェックした検査ツール CSV 列。キー = Scan_<列名>)。 */
   scanFields: Record<string, string>;
 }

@@ -4,6 +4,7 @@ import type { Repository, ImportLogEntry } from './repo';
 import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
 import { vulnResponseFieldSpecs } from './sp/schema';
+import type { VulnResponseItem } from '../lib/responseSync';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
@@ -170,6 +171,11 @@ export class MockRepository implements Repository {
   async docFileHref(serverRelativeUrl: string): Promise<string> {
     const store = load<Record<string, string>>(LS_DOCFILES, {});
     return store[serverRelativeUrl] ?? '';
+  }
+
+  /** モックには連携用リストの実体が無いので、取り込む記入内容も無い。 */
+  async listVulnResponses(): Promise<VulnResponseItem[]> {
+    return [];
   }
 
   /** モックには連携用リストの実体が無いので、全件「未通知」になる。 */

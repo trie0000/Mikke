@@ -14,6 +14,7 @@ import {
 } from './sp/schema';
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
+import type { VulnResponseItem } from '../lib/responseSync';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -468,6 +469,35 @@ export class SpRepository implements Repository {
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
       }
     } catch { return out; }   // 未作成 (404) 等はここに来る
+    return out;
+  }
+
+  /** 連携用リストの記入内容 (資産管理者が変更できる欄) を全件取得する。
+   *  ★ 対応者は User 列なので $expand で表示名まで取る。
+   *  リストが未作成 / 権限が無い場合は空配列 (画面を止めない)。 */
+  async listVulnResponses(): Promise<VulnResponseItem[]> {
+    const out: VulnResponseItem[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
+      + '?$select=IssueInstanceId,ResponseStatus,DueDate,ResponseNote,Remarks,Responder/Title'
+      + '&$expand=Responder&$top=5000';
+    try {
+      while (url) {
+        const j: any = await this.spGet(url);
+        for (const row of j.d.results as any[]) {
+          if (!row.IssueInstanceId) continue;
+          out.push({
+            issueInstanceId: row.IssueInstanceId,
+            responseStatus: row.ResponseStatus ?? undefined,
+            responderName: row.Responder?.Title ?? undefined,
+            dueDate: row.DueDate ?? undefined,
+            responseNote: row.ResponseNote ?? undefined,
+            remarks: row.Remarks ?? undefined,
+          });
+        }
+        url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+      }
+    } catch { return out; }
     return out;
   }
 
@@ -1151,6 +1181,9 @@ export class SpRepository implements Repository {
       reportAt: row.ReportAt ?? undefined,
       // SP の組み込み列。連携用リストとの新旧比較に使う (書き込みはしない)。
       updatedAt: row.Modified ?? undefined,
+      responseNote: row.ResponseNote ?? undefined,
+      responseRemarks: row.ResponseRemarks ?? undefined,
+      responseSyncedAt: row.ResponseSyncedAt ?? undefined,
       scanFields,
     };
   }
@@ -1179,6 +1212,9 @@ export class SpRepository implements Repository {
     if (p.reportUrl !== undefined) row.ReportUrl = p.reportUrl;
     if (p.reportName !== undefined) row.ReportName = p.reportName;
     if (p.reportAt !== undefined) row.ReportAt = p.reportAt || null;
+    if (p.responseNote !== undefined) row.ResponseNote = p.responseNote;
+    if (p.responseRemarks !== undefined) row.ResponseRemarks = p.responseRemarks;
+    if (p.responseSyncedAt !== undefined) row.ResponseSyncedAt = p.responseSyncedAt || null;
     // ★ 検査ツール由来の全項目は個別列ではなく ScanData に JSON で集約する
     //   (SP の列数上限/行サイズ上限を回避)。キーは元の "Scan_<元名>" のまま保持し、
     //   表示側 resolveScanValue が raw/安全名/エンコードのいずれでも引ける。

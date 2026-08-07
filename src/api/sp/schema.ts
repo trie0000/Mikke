@@ -101,7 +101,7 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'DetectionStatus', type: 'Choice', indexed: true,
       choices: ['新規', '継続', '再検知', '未検出(New)', '未検出'] },
     { name: 'MgmtStatus', type: 'Choice', indexed: true,
-      choices: ['未通知', '通知', '対応中', '対応済み', 'リスク受容', '過検出', '対象外'] },
+      choices: ['未通知', '通知', '未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外'] },
     { name: 'IsOutOfScope', type: 'Boolean', indexed: true },
     { name: 'OutOfScopeReason', type: 'Note' },
     { name: 'Assignee', type: 'Text' },
@@ -124,6 +124,10 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'ReportUrl', type: 'Note' },
     { name: 'ReportName', type: 'Text' },
     { name: 'ReportAt', type: 'DateTime' },
+    // 連携用リストから取り込んだ資産管理者の記入内容 (Mikke 側のメモとは別に保持)。
+    { name: 'ResponseNote', type: 'NoteRich', schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
+    { name: 'ResponseRemarks', type: 'Note' },
+    { name: 'ResponseSyncedAt', type: 'DateTime' },
     // ★ 検査ツール由来の全項目 (Scan_*) は個別列にせず、この 1 列へ JSON で集約する。
     //   個別列にすると SP の列数上限 (複数行テキストは 1 リスト約192列) と 1 行あたり
     //   約8KB のサイズ上限に抵触し、検査ツールの 259 列 CSV で列作成が HTTP 500 /
