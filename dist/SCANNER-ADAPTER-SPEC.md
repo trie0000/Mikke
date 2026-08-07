@@ -10,7 +10,7 @@
 
 ```
 [ブラウザ UI]  詳細画面の「最新状態を取得」ボタン
-   │  POST http://127.0.0.1:18080/mikke/issue   body: {"issueInstanceId":"<ID>"}
+   │  POST http://127.0.0.1:18120/mikke/issue   body: {"issueInstanceId":"<ID>"}
    ▼
 [mikke-relay.ps1]  ローカル中継サーバ（HttpListener / 編集禁止・自動更新で管理）
    │  毎リクエスト  . mikke-scanner-adapter.ps1  を dot-source し、
@@ -223,7 +223,7 @@ powershell -NoProfile -Command ". .\mikke-scanner-adapter.ps1; Invoke-MikkeScann
 relay（`mikke-launch.bat`）を起動した状態で:
 
 ```powershell
-Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issue' -Method Post `
+Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/issue' -Method Post `
   -ContentType 'application/json' -Body '{"issueInstanceId":"<実在するID>"}'
 ```
 
@@ -258,7 +258,7 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 
 ```
 [ブラウザ UI]  「ダウンロードデータ」→「取得」→ 対象種別を選択
-   │  POST http://127.0.0.1:18080/mikke/download   body: {"types":["vuln","ip",...]}
+   │  POST http://127.0.0.1:18120/mikke/download   body: {"types":["vuln","ip",...]}
    ▼
 [mikke-relay.ps1]  毎リクエスト mikke-scanner-adapter.ps1 を dot-source し、
    │               Invoke-MikkeScannerDownload -Types <string[]> を呼ぶ
@@ -348,7 +348,7 @@ powershell -NoProfile -Command ". .\mikke-scanner-adapter.ps1; (Invoke-MikkeScan
 relay 経由:
 
 ```powershell
-Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/download' -Method Post `
+Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/download' -Method Post `
   -ContentType 'application/json' -Body '{"types":["vuln","ip"]}'
 ```
 
@@ -465,7 +465,7 @@ relay 経由:
 
 ```powershell
 $body = @{ files = @(@{ type='vuln'; fileName='v.zip'; contentBase64='<base64>' }) } | ConvertTo-Json -Depth 5
-Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/merge' -Method Post -ContentType 'application/json' -Body $body
 ```
 
 → `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[merge] N file(s) -> merged_....csv (M rows)` が出る。
@@ -575,7 +575,7 @@ relay 経由:
 
 ```powershell
 $body = @{ issueInstanceId = 'IID-1001' } | ConvertTo-Json
-Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issue-report' -Method Post -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/issue-report' -Method Post -ContentType 'application/json' -Body $body
 ```
 
 → `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[issue-report] IID-1001 -> ....pdf (N KB base64)` が出る。
@@ -661,7 +661,7 @@ relay の受付ループは `GetContext()` の逐次ループで、**1 リクエ
 $body = @{ issueInstanceIds = @('IID-1','IID-2','IID-3','IID-4','IID-5','IID-6')
            includeReport = $true } | ConvertTo-Json
 Measure-Command {
-  $r = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issues' -Method Post `
+  $r = Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/issues' -Method Post `
                          -ContentType 'application/json' -Body $body
   $r.items | Select-Object issueInstanceId, ok, error
 }

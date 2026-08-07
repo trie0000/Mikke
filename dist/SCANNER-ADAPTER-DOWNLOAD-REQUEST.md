@@ -99,9 +99,9 @@ Invoke-MikkeScannerMerge。
    [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.contentBase64)) |
      Select-Object -First 3
    → 1行目が「Issue Instance ID,Title,Severity,...」のヘッダになっていること
-3) relay 経由: POST http://127.0.0.1:18080/mikke/download body {"types":["vuln","ip"]}
+3) relay 経由: POST http://127.0.0.1:18120/mikke/download body {"types":["vuln","ip"]}
    → ok:true と items、relay に [download] vuln,ip -> N file(s)
-   続けて POST http://127.0.0.1:18080/mikke/merge body {"files":[...①の結果...]}
+   続けて POST http://127.0.0.1:18120/mikke/merge body {"files":[...①の結果...]}
    → ok:true と fileName/contentBase64、relay に [merge] N file(s) -> ....csv (M rows)
 ```
 

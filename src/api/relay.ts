@@ -1,7 +1,8 @@
 // PowerShell 中継サーバ (localhost) クライアント。
 // 役割: 大容量 CSV 解析 (/mikke/csv-parse) と 検査ツール API 中継 (/mikke/issue・雛形)。
 
-const DEFAULT_BASE = 'http://127.0.0.1:18080/mikke';
+// ★ Mikke に割り当てたポート (共通ガイド §14.2 の採番表: relay 18120 / CDP 19320)。
+const DEFAULT_BASE = 'http://127.0.0.1:18120/mikke';
 
 export function getRelayBase(): string {
   try {

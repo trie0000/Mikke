@@ -650,7 +650,7 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
   let siteUrl = '';
   let relayBase = '';
   try { siteUrl = localStorage.getItem('mikke.selectedSiteUrl') || ''; } catch { /* noop */ }
-  try { relayBase = localStorage.getItem('mikke.relay.base') || 'http://127.0.0.1:18080/mikke'; } catch { /* noop */ }
+  try { relayBase = localStorage.getItem('mikke.relay.base') || 'http://127.0.0.1:18120/mikke'; } catch { /* noop */ }
   const siteInput = el('input', { type: 'text', value: siteUrl, placeholder: 'https://<tenant>.sharepoint.com/sites/<site>' }) as HTMLInputElement;
   const relayInput = el('input', { type: 'text', value: relayBase }) as HTMLInputElement;
   const body = el('div', {}, [

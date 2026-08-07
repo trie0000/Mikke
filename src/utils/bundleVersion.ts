@@ -5,8 +5,10 @@
 // ローダ (build.js 生成) と同じ base 解決ロジックに合わせる。
 
 const DEV_SOURCE_KEY = 'mikke.dev.bundle-source';   // 'local' | (未設定=sharepoint)
-const DEV_LOCAL_BASE_KEY = 'mikke.dev.local-base';  // 例: http://127.0.0.1:18080/mikke
-export const DEFAULT_LOCAL_BASE = 'http://127.0.0.1:18080/mikke';
+const DEV_LOCAL_BASE_KEY = 'mikke.dev.local-base';  // 例: http://127.0.0.1:18120/mikke
+// ★ ポートはプロダクトごとに固定する (共通ガイド §14.2)。Mikke = relay 18120 / CDP 19320。
+//   共通既定の 18080 を使うと、同じ端末の別ツールに先着で取られる。
+export const DEFAULT_LOCAL_BASE = 'http://127.0.0.1:18120/mikke';
 const LIB_PATH = '/Shared%20Documents/Mikke';
 
 export type BundleSource = 'sharepoint' | 'local';

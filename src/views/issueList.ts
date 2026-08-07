@@ -604,7 +604,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     if (!devMock) {
       const h = await relayHealth();
       if (!h.ok) {
-        // ★ どこへ繋ぎに行ったかを出す。既定は 18080 なので、別ポートで起動していると
+        // ★ どこへ繋ぎに行ったかを出す。既定は 18120 なので、別ポートで起動していると
         //   「起動しているのに繋がらない」状態になり、URL が無いと切り分けられない。
         toast(rootEl,
           `中継サーバに接続できません (${getRelayBase()})。mikke-launch.bat を実行するか、`

@@ -21,7 +21,7 @@
 #
 # CDP 関連の設定 (mikke-relay.env / いずれも任意):
 #   MIKKE_CDP           : '0' で CDP を無効化し従来フロー固定 (既定は有効)
-#   MIKKE_CDP_PORT      : CDP のデバッグポート (既定 9339)
+#   MIKKE_CDP_PORT      : CDP のデバッグポート (既定 19320)
 #                         ★ 他の CDP を使うツールと重なると、そちらのブラウザに
 #                           注入してしまうので既定値をずらしてある。重なった場合も
 #                           ポートの持ち主を判定して空きポートに退避する。
@@ -37,8 +37,8 @@
 #
 # 設定 (従来どおり):
 #   MIKKE_SITE_URL  : SharePoint サイトの URL (未設定なら起動時に入力)
-#   MIKKE_RELAY_PORT: relay の listen ポート (既定 18080)
-param([int]$Port = 0)  # 0 = 未指定。-Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18080
+#   MIKKE_RELAY_PORT: relay の listen ポート (既定 18120)
+param([int]$Port = 0)  # 0 = 未指定。-Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18120
 
 $scriptDir = $PSScriptRoot
 $envFile = Join-Path $scriptDir 'mikke-relay.env'
@@ -47,7 +47,7 @@ $envFile = Join-Path $scriptDir 'mikke-relay.env'
 $siteUrl = $null
 $envPort = 0
 $cdpEnabled = $true
-$cdpPort = 9339   # 既定。他の CDP ツールと衝突しにくい値にしている
+$cdpPort = 19320  # 既定。共通ガイド §14.2 の採番 (CDP は 193xx 帯) に従う
 $edgePath = ''
 $edgeUserData = ''
 if (Test-Path -LiteralPath $envFile) {
@@ -68,8 +68,9 @@ if (Test-Path -LiteralPath $envFile) {
         }
     }
 }
-# ポート優先順位: -Port 引数 (>0) > .env(MIKKE_RELAY_PORT) > 既定 18080
-if ($Port -le 0) { if ($envPort -gt 0) { $Port = $envPort } else { $Port = 18080 } }
+# ポート優先順位: -Port 引数 (>0) > .env(MIKKE_RELAY_PORT) > 既定 18120
+# ★ ポートはプロダクトごとに固定 (共通ガイド §14.2)。Mikke = relay 18120 / CDP 19320。
+if ($Port -le 0) { if ($envPort -gt 0) { $Port = $envPort } else { $Port = 18120 } }
 
 if (-not $siteUrl) {
     $siteUrl = Read-Host 'Mikke を開く SharePoint サイト URL を入力してください (空 Enter でスキップ)'
@@ -256,20 +257,53 @@ function Test-CdpPortOwnedByUs {
     }
 }
 
+# 注入先のタブを選ぶ。
+# ★ 選び方の規約 (共通ガイド §14.1)
+#   Spira / Mikke / Tadori / Kanjo は同じ端末で同時に動く。'*sharepoint.com*' の
+#   ような部分一致や「候補が無ければ先頭のページ」に落とすと、**別ツールの Edge や
+#   別サイトのページに注入**してしまう。だから
+#     - サイト URL の **前方一致** でしか選ばない
+#     - 0 件なら中断する (先頭ページで代用しない)
+#     - 2 件以上でも中断して候補を出す (人が選ぶ)
+#   サインイン中はまだサイトに居ないので、Microsoft のサインイン画面だけは
+#   例外的に候補に入れる (タブは同一なので、認証後にサイトへ遷移する)。
+#   注入の直前に、そのタブが本当に目的のサイトに居るかをもう一度確かめる。
+function Test-CdpTargetUrl {
+    param([string]$Url, [string]$SitePrefix)
+    if (-not $Url) { return $false }
+    if ($Url.StartsWith($SitePrefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    # サインイン中のみ許可 (テナント選択・MFA・条件付きアクセス)
+    foreach ($p in @('https://login.microsoftonline.com/', 'https://login.microsoft.com/',
+                     'https://login.live.com/', 'https://device.login.microsoftonline.com/')) {
+        if ($Url.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Get-CdpTargetWs {
-    param([int]$CdpPort, [int]$TimeoutSec = 30)
+    param([int]$CdpPort, [string]$SitePrefix, [int]$TimeoutSec = 30)
     for ($i = 0; $i -lt ($TimeoutSec * 2); $i++) {
         try {
             # ループバックはプロキシを迂回させたいので Invoke-RestMethod を使う
             $targets = Invoke-RestMethod -Uri "http://127.0.0.1:$CdpPort/json" -TimeoutSec 2
-            $page = $targets |
-                Where-Object { $_.type -eq 'page' -and $_.webSocketDebuggerUrl } |
-                Sort-Object { if ($_.url -match 'sharepoint|login|/_forms/') { 0 } else { 1 } } |
-                Select-Object -First 1
-            if ($page) { return $page.webSocketDebuggerUrl }
+            $pages = @($targets | Where-Object {
+                $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and
+                (Test-CdpTargetUrl -Url $_.url -SitePrefix $SitePrefix)
+            })
+            if ($pages.Count -eq 1) {
+                Write-Host "注入先のタブ: $($pages[0].url)" -ForegroundColor DarkGray
+                return $pages[0].webSocketDebuggerUrl
+            }
+            if ($pages.Count -gt 1) {
+                Write-Host '注入先の候補が複数あります。1 つだけ残して実行し直してください:' -ForegroundColor Yellow
+                foreach ($pg in $pages) { Write-Host "  - $($pg.url)" -ForegroundColor Yellow }
+                return ''
+            }
         } catch { }
         Start-Sleep -Milliseconds 500
     }
+    # 0 件のまま時間切れ。ここで「とりあえず先頭」をやらない。
+    Write-Host "対象サイト ($SitePrefix) のタブが見つかりませんでした。" -ForegroundColor Yellow
     return ''
 }
 
@@ -344,7 +378,7 @@ if (-not $cdpEnabled) {
                 ) | Out-Null
             }
 
-            $wsUrl = Get-CdpTargetWs -CdpPort $cdpPort -TimeoutSec 30
+            $wsUrl = Get-CdpTargetWs -CdpPort $cdpPort -SitePrefix $webAbs -TimeoutSec 30
             if (-not $wsUrl) { throw 'CDP のページターゲットを取得できませんでした' }
 
             # ClientWebSocket を C# でコンパイルして CDP に接続する。
@@ -400,6 +434,20 @@ public class MikkeCdp {
             if (-not $authed) { throw 'サインインを検知できませんでした (タイムアウト)' }
 
             # ローダのベース解決を確定させる (モダンページで _spPageContextInfo が無い対策)。
+            # ★ 注入の直前に「今どのサイトに居るか」をページから読み直して照合する
+            #   (共通ガイド §14.1)。CDP ポートが別ツールと衝突していた場合、
+            #   ここで気付かないと **別サイトに対して書き込む**。
+            $hereJson = $cdp.Eval('location.href', $false)
+            $here = ''
+            try { $here = [string](($hereJson | ConvertFrom-Json).result.result.value) } catch { }
+            if (-not $here -or -not $here.StartsWith($webAbs, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw ("注入先のページが対象サイトではありません。中断します。`n" +
+                       "        期待: $webAbs`n" +
+                       "        実際: $here`n" +
+                       "        (CDP ポート $cdpPort が別ツールと衝突している可能性があります)")
+            }
+            Write-Host "注入先を確認: $here" -ForegroundColor DarkGray
+
             # ローダ自身も location.pathname から /sites/<x> を推定できるが、確実にしておく。
             $prelude = 'window._spPageContextInfo=Object.assign({},window._spPageContextInfo,{' +
                        'webServerRelativeUrl:"' + $webRel + '",webAbsoluteUrl:"' + $webAbs + '",' +
@@ -407,7 +455,7 @@ public class MikkeCdp {
             $cdp.Eval($prelude, $false) | Out-Null
 
             # ★ 中継サーバの接続先をブラウザに教える。
-            #   ブラウザ側の既定は 18080 固定なので、-Port や MIKKE_RELAY_PORT で
+            #   ブラウザ側の既定は 18120 固定なので、-Port や MIKKE_RELAY_PORT で
             #   別ポートにしていると「中継サーバが起動していません」になる。
             #   専用プロファイルは localStorage が空のことが多く、設定画面から
             #   入れ直す運用も現実的でないため、起動時にこちらから確定させる。
@@ -448,10 +496,13 @@ public class MikkeCdp {
                     throw ("mikke.bundle.js も mikke.loader.js も見つかりません: $scriptDir`n" +
                            '        配布物 (dist) を、このフォルダ (mikke-launch.bat と同じ場所) に置いてください。')
                 }
-                $js = Get-Content -LiteralPath $bundleFile -Raw -Encoding UTF8
+                # ★ Get-Content -Raw は使わない (共通ガイド §16)。5.1 は既定コードページ
+                #   (CP932) で読み、trail byte の 0x5C がバックスラッシュとして混入して
+                #   注入した JS が黙って壊れる。
+                $js = [System.IO.File]::ReadAllText($bundleFile, [System.Text.Encoding]::UTF8)
                 $srcLabel = "バンドル直挿し ($([math]::Round((Get-Item $bundleFile).Length / 1KB)) KB / 更新は launcher 再実行が必要)"
             } else {
-                $js = Get-Content -LiteralPath $loaderFile -Raw -Encoding UTF8
+                $js = [System.IO.File]::ReadAllText($loaderFile, [System.Text.Encoding]::UTF8)
                 $srcLabel = "ローダ (中継サーバ 127.0.0.1:$Port から毎回バンドルを取得)"
             }
             Write-Host "注入します: $srcLabel" -ForegroundColor Cyan

@@ -25,14 +25,14 @@
 #     -Encoding を明示し、出力 JSON は UTF-8 で書き出すこと (既存の内製ツール踏襲)。
 # ============================================================================
 param(
-    # 0 = 未指定。優先順位 = -Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18080。
+    # 0 = 未指定。優先順位 = -Port 引数 > .env(MIKKE_RELAY_PORT) > 既定 18120。
     [int]$Port = 0,
     [string]$EnvFile
 )
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.26'
+$MIKKE_RELAY_VERSION = '1.0.27'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -75,9 +75,11 @@ function Import-EnvFile {
 if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot 'mikke-relay.env' }
 Import-EnvFile -Path $EnvFile | Out-Null
 
-# ポート決定: -Port 引数 (>0) > .env/OS env(MIKKE_RELAY_PORT) > 既定 18080。
+# ポート決定: -Port 引数 (>0) > .env/OS env(MIKKE_RELAY_PORT) > 既定 18120。
+# ★ ポートはプロダクトごとに固定する (共通ガイド §14.2)。Mikke = relay 18120 / CDP 19320。
+#   共通既定の 18080 のままだと、同じ端末で動く別ツールに先着で取られる。
 if ($Port -le 0) {
-    $Port = 18080
+    $Port = 18120
     $envPort = [Environment]::GetEnvironmentVariable('MIKKE_RELAY_PORT')
     if ($envPort) { $p = 0; if ([int]::TryParse($envPort, [ref]$p) -and $p -gt 0) { $Port = $p } }
 }

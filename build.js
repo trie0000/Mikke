@@ -38,7 +38,7 @@ const loaderJs = (() => {
     `try{var m=location.pathname.match(/^(\\/(?:sites|teams)\\/[^/]+)/i);if(m)return m[1];}catch(e){}return '';}` +
     `function SP(){var r=REL();return r?r+${JSON.stringify(libPath)}:'';}` +
     `var sp=SP(),dev='';` +
-    `try{if(w.localStorage&&localStorage.getItem('mikke.dev.bundle-source')==='local')dev=(localStorage.getItem('mikke.dev.local-base')||'http://127.0.0.1:18080/mikke').replace(/\\/+$/,'');}catch(e){}` +
+    `try{if(w.localStorage&&localStorage.getItem('mikke.dev.bundle-source')==='local')dev=(localStorage.getItem('mikke.dev.local-base')||'http://127.0.0.1:18120/mikke').replace(/\\/+$/,'');}catch(e){}` +
     `var primary=dev||${overrideBase}||sp;var fb=(primary!==sp&&sp)?sp:'';var isLocal=!!dev;` +
     `if(!primary){alert('[Mikke] 起動できません: SharePoint サイト (/sites/<name>) 上で実行してください。');return;}` +
     `function fail(base,why){var msg='[Mikke] バンドル読込失敗: '+base+(why?' ('+why+')':'')+'\\nrelay 起動 / 配置 / CORS を確認してください。';if(isLocal){alert(msg);console.error(msg);}else{console.warn(msg);}}` +
