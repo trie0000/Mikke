@@ -129,6 +129,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     const desc = mode === 'fixed'
       ? '新規の脆弱性は追加しません。既存の検知中のステータスは据え置き、今回のデータで消えた検知系のみ「未検出(New)」に変更します。ステータス以外の項目は取得データで更新します。'
       : '新たに条件一致した脆弱性を追加し、既存のステータスも標準ルール（継続/再検知/未検出化）で更新します。';
+    // 個別レポートの取得可否 (既定 ON)。件数が多いと時間がかかるので外せるようにする。
+    const reportCheck = el('input', { type: 'checkbox', checked: 'checked' }) as HTMLInputElement;
     openModal(rootEl, {
       title: `一括更新（${label}）`,
       body: el('div', { style: 'line-height:1.8' }, [
@@ -136,14 +138,26 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           '検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得して「ダウンロードデータ」に保存し、',
           'それらを突合した ', el('b', {}, ['マージ CSV']), ' を生成して取り込みます。',
         ]),
-        el('p', { style: 'margin:0;color:var(--ink-2)' }, [desc]),
+        el('p', { style: 'margin:0 0 var(--s-4);color:var(--ink-2)' }, [desc]),
+        el('label', {
+          style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
+            + 'padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
+        }, [
+          reportCheck,
+          el('span', {}, [
+            el('div', {}, ['取り込んだ脆弱性の個別レポートも新しく取得する']),
+            el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [
+              `1 件ずつ検査ツールから取得し (${REFRESH_PARALLEL} 件並列)、SharePoint に保存して連携用リストへ添付します。件数が多いと時間がかかります。`,
+            ]),
+          ]),
+        ]),
       ]),
       primaryLabel: '取得して更新',
-      onPrimary: async () => { await runBulkUpdate(mode); },
+      onPrimary: async () => { await runBulkUpdate(mode, reportCheck.checked); },
     });
   }
 
-  async function runBulkUpdate(mode: ImportMode): Promise<void> {
+  async function runBulkUpdate(mode: ImportMode, withReports: boolean): Promise<void> {
     bulkBusy = true;
     try {
       // 1) 全レポート (脆弱性 + 資産各種) を取得 → SP 原本保存 → ダウンロード一覧に記録
@@ -166,9 +180,33 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       const { fail } = await getRepo().applyImportOps(plan.ops);
       await getRepo().saveSettings({ ...settings, lastCsvHeaders: parsed.headers }).catch(() => { /* noop */ });
       const s = plan.summary;
-      toast(rootEl,
-        `一括更新（${mode === 'fixed' ? '固定' : '追加'}）完了: 追加 ${s.added} / 更新 ${s.updated} / 未検出 ${s.undetected} / スキップ ${s.skipped}${fail ? ` / 失敗 ${fail}` : ''}`,
-        fail ? 'warn' : 'ok', 12000);
+      const parts = [
+        `一括更新（${mode === 'fixed' ? '固定' : '追加'}）完了: 追加 ${s.added} / 更新 ${s.updated}`
+        + ` / 未検出 ${s.undetected} / スキップ ${s.skipped}${fail ? ` / 失敗 ${fail}` : ''}`,
+      ];
+
+      // 個別レポート: 今回の取り込みで追加・更新された脆弱性だけを対象にする
+      // (未検出・スキップは新しいレポートが無いので取りに行かない)。
+      let repFail = 0;
+      if (withReports) {
+        const touched = new Set(plan.ops
+          .filter((o) => o.kind === 'add' || o.kind === 'update')
+          .map((o) => o.issueInstanceId));
+        const after = await getRepo().listIssues();
+        const targets = after.filter((i) => touched.has(i.issueInstanceId));
+        if (targets.length) {
+          toast(rootEl, `個別レポートを取得しています… ${targets.length} 件 (${REFRESH_PARALLEL} 件並列)`, 'default', 8000);
+          const r = await downloadReportsFor(targets);
+          repFail = r.fail;
+          if (r.skipped) parts.push('個別レポートはアダプタ未実装のためスキップ');
+          else {
+            parts.push(`レポート ${r.report} 件取得`);
+            if (r.noItem) parts.push(`うち ${r.noItem} 件は連携用リストに該当アイテムなし`);
+            if (r.fail) parts.push(`レポート ${r.fail} 件失敗 — ${r.firstErr}`);
+          }
+        }
+      }
+      toast(rootEl, parts.join(' / '), (fail || repFail) ? 'warn' : 'ok', 14000);
     } catch (e) {
       toast(rootEl, `一括更新に失敗しました: ${(e as Error).message}`, 'error', 10000);
     } finally {
@@ -279,6 +317,61 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       bulkBusy = false;
       await load();
     }
+  }
+
+  /**
+   * 指定した脆弱性の個別レポートを取得して保存し、連携用リストへ添付する。
+   *
+   * ★ 取得は relay の /mikke/issues (runspace プールで REFRESH_PARALLEL 件並列)。
+   *   同じ応答に脆弱性情報も入るが **ここでは使わない**。一括更新は取込計画側で
+   *   ステータスを決めており、こちらで上書きすると固定モードの意図が壊れるため。
+   * @returns 取得できた件数などの内訳
+   */
+  async function downloadReportsFor(targets: ManagedIssue[]): Promise<{
+    report: number; noItem: number; fail: number; skipped: boolean; firstErr: string;
+  }> {
+    const out = { report: 0, noItem: 0, fail: 0, skipped: false, firstErr: '' };
+    if (!targets.length) return out;
+    const runFolder = await issueReportFolder(new Date().toISOString());
+    const devMock = getRepoMode() === 'mock';
+
+    for (let i = 0; i < targets.length; i += REFRESH_PARALLEL) {
+      if (out.skipped) break;
+      const chunk = targets.slice(i, i + REFRESH_PARALLEL);
+      let results: RelayIssueBatchItem[] = [];
+      if (!devMock) {
+        try {
+          results = await relayGetIssues(chunk.map((x) => x.issueInstanceId), true);
+        } catch (e) {
+          if (isAdapterMissing(e)) { out.skipped = true; break; }
+          out.fail += chunk.length;
+          if (!out.firstErr) out.firstErr = (e as Error).message;
+          continue;
+        }
+      }
+      const byId = new Map(results.map((r) => [r.issueInstanceId, r]));
+      await mapLimit(chunk, REFRESH_PARALLEL, async (issue) => {
+        const res = byId.get(issue.issueInstanceId);
+        if (res?.reportSkipped) { out.skipped = true; return; }
+        if (res?.reportError) { out.fail++; if (!out.firstErr) out.firstErr = res.reportError; return; }
+        const rep = devMock ? await sampleIssueReport(issue)
+          : (res?.report ? { fileName: res.report.fileName, bytes: base64ToBytes(res.report.contentBase64) } : null);
+        if (!rep) return;
+        try {
+          const r = await storeIssueReport(issue, rep, runFolder);
+          await getRepo().updateIssue(issue.id, {
+            reportUrl: r.url, reportName: r.fileName, reportAt: r.fetchedAt,
+          });
+          out.report++;
+          if (r.attach === 'no-item') out.noItem++;
+          else if (r.attach === 'failed') { out.fail++; if (!out.firstErr) out.firstErr = r.attachError ?? ''; }
+        } catch (e) {
+          out.fail++;
+          if (!out.firstErr) out.firstErr = (e as Error).message;
+        }
+      });
+    }
+    return out;
   }
 
   function buildColumns(): DataColumn<ManagedIssue>[] {
