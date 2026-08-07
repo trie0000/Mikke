@@ -28,6 +28,31 @@ export interface VulnResponseFields {
   identifyEvidence: string;
 }
 
+/** VulnResponseFields のキー → 連携用リストの SP 列名 (内部名)。
+ *  ★ ここと sp/schema.ts の vulnResponseFieldSpecs() がズレると、SP に無い列を
+ *    送ることになり **1 件ごと 400 = 反映が全件失敗** する。突合は
+ *    test/vulnResponseSync.test.ts で検査している。 */
+export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
+  issueInstanceId: 'IssueInstanceId',
+  title: 'Title',
+  legacyMgmtNumber: 'LegacyMgmtNumber',
+  detectionStatus: 'DetectionStatus',
+  firstSeen: 'FirstSeen',
+  lastSeen: 'LastSeen',
+  assetIp: 'AssetIp',
+  assetFqdn: 'AssetFqdn',
+  assetType: 'AssetType',
+  businessCompany: 'BusinessCompany',
+  affiliateCompany: 'AffiliateCompany',
+  assetMgmtId: 'AssetMgmtId',
+  extConnAppId: 'ExtConnAppId',
+  relatedAssets: 'RelatedAssets',
+  identifyEvidence: 'IdentifyEvidence',
+};
+
+/** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
+export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
+
 /** 連携用リストの既存アイテム (Mikke が書く項目のみ)。 */
 export interface VulnResponseRow extends VulnResponseFields {
   id: number;
@@ -111,13 +136,21 @@ const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
  * 管理対象一覧と連携用リストを突合し、追加 / 更新 / 削除の計画を組み立てる。
  *
  * @param assetKeysOf 脆弱性から資産キーを取り出す関数 (設定の資産列に依存するため外から渡す)
+ * @param scope 指定すると、この Issue Instance ID だけを対象にする (選択分の反映)。
+ *   ★ 範囲外の既存アイテムは **一切触らない**。絞ったまま「管理対象に無い」判定を
+ *     するとリストのほとんどを消してしまうため、削除の走査も範囲内に限る。
  */
 export function buildVulnResponsePlan(
   issues: ManagedIssue[],
   assetsByKey: Map<string, ManagedAsset>,
   assetKeysOf: (issue: ManagedIssue) => string[],
   existing: VulnResponseRow[],
+  scope?: Set<string>,
 ): VulnResponsePlan {
+  if (scope) {
+    issues = issues.filter((i) => scope.has(text(i.issueInstanceId)));
+    existing = existing.filter((r) => scope.has(text(r.issueInstanceId)));
+  }
   const byId = new Map(existing.filter((r) => r.issueInstanceId).map((r) => [r.issueInstanceId, r]));
   const plan: VulnResponsePlan = { creates: [], updates: [], deletes: [], unchanged: 0 };
   const seen = new Set<string>();

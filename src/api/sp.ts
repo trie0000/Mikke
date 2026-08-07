@@ -17,6 +17,7 @@ import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
+import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS } from '../lib/vulnResponseSync';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -546,36 +547,54 @@ export class SpRepository implements Repository {
   }
 
   /** 連携用リストの項目 → SP の列。日付は空文字だと 400 になるので null で送る。 */
+  /** 書き込み用の行を組み立てる。列名の対応は vulnResponseSync.ts に一本化している
+   *  (ここと SP スキーマ宣言がズレると反映が全件 400 になるため)。 */
   private vulnResponseRow(f: Partial<VulnResponseFields>): Record<string, unknown> {
     const row: Record<string, unknown> = {};
-    if (f.issueInstanceId !== undefined) row.IssueInstanceId = f.issueInstanceId;
-    if (f.title !== undefined) row.Title = f.title;
-    if (f.legacyMgmtNumber !== undefined) row.LegacyMgmtNumber = f.legacyMgmtNumber;
-    if (f.detectionStatus !== undefined) row.DetectionStatus = f.detectionStatus;
-    if (f.firstSeen !== undefined) row.FirstSeen = f.firstSeen || null;
-    if (f.lastSeen !== undefined) row.LastSeen = f.lastSeen || null;
-    if (f.assetIp !== undefined) row.AssetIp = f.assetIp;
-    if (f.assetFqdn !== undefined) row.AssetFqdn = f.assetFqdn;
-    if (f.assetType !== undefined) row.AssetType = f.assetType;
-    if (f.businessCompany !== undefined) row.BusinessCompany = f.businessCompany;
-    if (f.affiliateCompany !== undefined) row.AffiliateCompany = f.affiliateCompany;
-    if (f.assetMgmtId !== undefined) row.AssetMgmtId = f.assetMgmtId;
-    if (f.extConnAppId !== undefined) row.ExtConnAppId = f.extConnAppId;
-    if (f.relatedAssets !== undefined) row.RelatedAssets = f.relatedAssets;
-    if (f.identifyEvidence !== undefined) row.IdentifyEvidence = f.identifyEvidence;
+    for (const [key, col] of Object.entries(VULNRESPONSE_COLUMN) as [keyof VulnResponseFields, string][]) {
+      const v = f[key];
+      if (v === undefined) continue;
+      // 日付は空文字だと SP が 400 を返すので null を送る。
+      row[col] = VULNRESPONSE_DATE_FIELDS.includes(key) ? (v || null) : v;
+    }
     return row;
+  }
+
+  /** 連携用リストに実在する列だけに絞る。
+   *  ★ SP は body に無い列が 1 つでもあると **その 1 件ごと 400** を返す。
+   *    Mikke に列を足した直後 (連携用リストを作り直していない環境) では、
+   *    全件が失敗して「連携リストへの更新でエラー」になっていた。
+   *    管理表と同じく、書く前に実在列と突き合わせて落とす。 */
+  private async vulnResponseRowExisting(f: Partial<VulnResponseFields>): Promise<Record<string, unknown>> {
+    const row = this.vulnResponseRow(f);
+    const existing = await this.getFieldNamesOf(LIST_VULNRESPONSE);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) if (existing.has(k)) out[k] = v;
+    return out;
+  }
+
+  /** 連携用リストに足りない列 (Mikke が書く項目のうち実在しないもの) を返す。 */
+  async findMissingVulnResponseColumns(): Promise<string[]> {
+    this.fieldNamesByList.delete(LIST_VULNRESPONSE);   // 最新の実在列で判定する
+    let existing: Set<string>;
+    try { existing = await this.getFieldNamesOf(LIST_VULNRESPONSE); }
+    catch { return []; }        // リスト自体が無い場合は呼び出し側の別導線に任せる
+    const want = Object.values(VULNRESPONSE_COLUMN);
+    return want.filter((k) => !existing.has(k));
   }
 
   async createVulnResponseItem(fields: VulnResponseFields): Promise<void> {
     const type = await this.listEntityType(LIST_VULNRESPONSE);
     await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`,
-      { __metadata: { type }, ...this.vulnResponseRow(fields) });
+      { __metadata: { type }, ...(await this.vulnResponseRowExisting(fields)) });
   }
 
   async updateVulnResponseItem(id: number, fields: Partial<VulnResponseFields>): Promise<void> {
     const type = await this.listEntityType(LIST_VULNRESPONSE);
+    const row = await this.vulnResponseRowExisting(fields);
+    if (!Object.keys(row).length) return;   // 書ける列が残らなければ何もしない
     await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items(${id})`,
-      { __metadata: { type }, ...this.vulnResponseRow(fields) },
+      { __metadata: { type }, ...row },
       { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
   }
 
@@ -605,6 +624,7 @@ export class SpRepository implements Repository {
     await this.applyFieldOrder(LIST_VULNRESPONSE, fields, rep);
     await this.applyFormFormatter(LIST_VULNRESPONSE, buildVulnResponseFormFormatter(), rep);
     await this.applyConditionalFormulas(LIST_VULNRESPONSE, fields, map, rep);
+    this.fieldNamesByList.delete(LIST_VULNRESPONSE);   // 列を作ったので実在列を引き直す
     // ★ URL は組み立てず、作成したリストから実際の値を引く (組み立てると 404 になり得る)。
     const listUrl = await this.listViewUrl(LIST_VULNRESPONSE);
     return rep.result(listUrl ?? `${this.webUrl}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`);
@@ -614,15 +634,30 @@ export class SpRepository implements Repository {
   // 列は全て固定 ASCII 名 (IssueInstanceId / ScanData 等) で Title=InternalName の
   // ため変換は不要。書込前に実在列と突合し、無い列だけ除外して行ごと 400 を防ぐ。
   private fieldNamesCache: Set<string> | null = null;
+  /** リストごとの実在列キャッシュ (管理表以外。連携用リスト等)。 */
+  private fieldNamesByList = new Map<string, Set<string>>();
 
   private async getFieldNames(): Promise<Set<string>> {
     if (this.fieldNamesCache) return this.fieldNamesCache;
+    this.fieldNamesCache = await this.fetchFieldNames(LIST_MANAGED);
+    return this.fieldNamesCache;
+  }
+
+  private async fetchFieldNames(listTitle: string): Promise<Set<string>> {
     const j = await this.spGet(
-      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/fields?$select=InternalName`,
+      `/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')/fields?$select=InternalName`,
     );
     const set = new Set<string>();
     for (const f of j.d.results as { InternalName: string }[]) set.add(f.InternalName);
-    this.fieldNamesCache = set;
+    return set;
+  }
+
+  /** 管理表以外のリストの実在列 (キャッシュあり)。 */
+  private async getFieldNamesOf(listTitle: string): Promise<Set<string>> {
+    const hit = this.fieldNamesByList.get(listTitle);
+    if (hit) return hit;
+    const set = await this.fetchFieldNames(listTitle);
+    this.fieldNamesByList.set(listTitle, set);
     return set;
   }
 

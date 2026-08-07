@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildVulnResponsePlan, toVulnResponseFields, isExcluded,
+  buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
+import { vulnResponseFieldSpecs } from '../src/api/sp/schema';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
@@ -136,5 +137,55 @@ describe('buildVulnResponsePlan: 追加 / 更新 / 削除の計画', () => {
     for (const forbidden of ['responseStatus', 'responder', 'dueDate', 'responseNote', 'remarks']) {
       expect(keys).not.toContain(forbidden);
     }
+  });
+});
+
+describe('buildVulnResponsePlan: 選択分だけの反映 (scope)', () => {
+  const A = issue({ id: 1, issueInstanceId: 'IID-1' });
+  const B = issue({ id: 2, issueInstanceId: 'IID-2', title: '別の脆弱性' });
+  const rowA = row({ id: 100, issueInstanceId: 'IID-1' });
+  const rowB = row({ id: 200, issueInstanceId: 'IID-2' });
+
+  it('範囲内だけを追加・更新する', () => {
+    const plan = buildVulnResponsePlan(
+      [A, B], ASSETS, keysOf(['web01.example.com']), [], new Set(['IID-1']));
+    expect(plan.creates.map((c) => c.issueInstanceId)).toEqual(['IID-1']);
+  });
+
+  it('★ 範囲外の既存アイテムは削除しない (絞ったまま全件突合するとリストが消える)', () => {
+    const plan = buildVulnResponsePlan(
+      [A], ASSETS, keysOf(['web01.example.com']), [rowA, rowB], new Set(['IID-1']));
+    expect(plan.deletes).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('範囲内が対象外なら、その 1 件だけ削除する', () => {
+    const plan = buildVulnResponsePlan(
+      [issue({ issueInstanceId: 'IID-1', mgmtStatus: '対象外' }), B],
+      ASSETS, keysOf(['web01.example.com']), [rowA, rowB], new Set(['IID-1']));
+    expect(plan.deletes).toEqual([{ id: 100, issueInstanceId: 'IID-1', reason: '対象外' }]);
+  });
+
+  it('scope 未指定なら従来どおり全件対象 (範囲外は削除される)', () => {
+    const plan = buildVulnResponsePlan([A], ASSETS, keysOf(['web01.example.com']), [rowA, rowB]);
+    expect(plan.deletes).toEqual([{ id: 200, issueInstanceId: 'IID-2', reason: '管理対象に無い' }]);
+  });
+});
+
+describe('★ Mikke が書く列は、連携用リストの構築で必ず作られること', () => {
+  // ズレていると SP は書込を 1 件ごと 400 で返し、反映が全件失敗する
+  // (「連携リストへの更新でエラー」の正体)。しかも構築し直しても直らない。
+  const declared = new Set(vulnResponseFieldSpecs().map((f) => f.name));
+
+  it('書き込み対象の列がすべてスキーマ宣言にある', () => {
+    const missing = Object.values(VULNRESPONSE_COLUMN).filter((c) => !declared.has(c));
+    expect(missing).toEqual([]);
+  });
+
+  it('VulnResponseFields の全キーに列名が割り当たっている', () => {
+    const fields = toVulnResponseFields(issue(), [], ASSETS);
+    const noColumn = Object.keys(fields).filter(
+      (k) => !(k in VULNRESPONSE_COLUMN) || !VULNRESPONSE_COLUMN[k as keyof typeof VULNRESPONSE_COLUMN]);
+    expect(noColumn).toEqual([]);
   });
 });

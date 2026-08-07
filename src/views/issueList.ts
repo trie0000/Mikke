@@ -285,10 +285,36 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
    * ★ 資産管理者が記入する欄 (対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考) には触らない。
    *   管理対象外にしたものは連携用リストから削除する (解除すれば次回また追加される)。
    */
-  async function pushToVulnResponse(): Promise<void> {
+  /**
+   * 管理対象の内容を連携用リストへ反映する。
+   * @param onlySelected true なら選択中の脆弱性だけを対象にする。
+   *   ★ 範囲外の既存アイテムには触らない (絞ったまま全件突合すると、選択していない
+   *     アイテムが「管理対象に無い」と判定されてリストが消える)。
+   */
+  async function pushToVulnResponse(onlySelected = false): Promise<void> {
     if (bulkBusy) return;
+    const targets = onlySelected ? cache.filter((i) => selected.has(i.id)) : cache;
+    if (onlySelected && !targets.length) {
+      toast(rootEl, '脆弱性が選択されていません。', 'warn');
+      return;
+    }
+    const scope = onlySelected
+      ? new Set(targets.map((i) => (i.issueInstanceId ?? '').trim()).filter(Boolean))
+      : undefined;
     bulkBusy = true;
+    updateSubbar();
     try {
+      // ★ 列が 1 つでも足りないと SP は書込を 400 で返し、全件失敗する。
+      //   何が足りないのか・どう直すのかを先に出す (原因が分からないまま
+      //   「エラーになる」だけになっていた)。
+      const missing = await getRepo().findMissingVulnResponseColumns().catch(() => [] as string[]);
+      if (missing.length) {
+        toast(rootEl,
+          `連携用リストに列が足りません (${missing.join(', ')})。`
+          + '設定 → 連携用リスト の「連携用リストを構築」を実行してから、もう一度反映してください。',
+          'error', 0);
+        return;
+      }
       const [existing, assets] = await Promise.all([
         getRepo().listVulnResponseRows(),
         getRepo().listAssets().catch(() => []),
@@ -302,13 +328,14 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         }
         return [...set];
       };
-      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing);
+      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing, scope);
+      const label = onlySelected ? `選択 ${targets.length} 件の反映` : '連携リストへの反映';
       const total = plan.creates.length + plan.updates.length + plan.deletes.length;
       if (!total) {
-        toast(rootEl, `連携リストへの反映: 変更はありません（一致 ${plan.unchanged} 件）。`, 'ok', 6000);
+        toast(rootEl, `${label}: 変更はありません（一致 ${plan.unchanged} 件）。`, 'ok', 6000);
         return;
       }
-      toast(rootEl, `連携リストへ反映しています… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
+      toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
 
       let ok = 0, fail = 0, firstErr = '';
       const run = async (fn: () => Promise<void>): Promise<void> => {
@@ -321,7 +348,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(() => getRepo().updateVulnResponseItem(u.id, u.fields)));
 
       toast(rootEl,
-        `連携リストへ反映しました: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
+        `${label}: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
         + ` / 変更なし ${plan.unchanged}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
         fail ? 'error' : 'ok', fail ? 12000 : 8000);
       void ok;
@@ -481,10 +508,19 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       onclick: () => void downloadSelectedReports(),
       html: icon('download') + '<span>レポートをZIP取得</span>',
     }) as HTMLButtonElement;
+    const pushSelBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary',
+      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+      title: '選択中の脆弱性だけを連携用リストへ反映します（選択していないアイテムには触れません）',
+      ...(bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => { void pushToVulnResponse(true); },
+      html: icon('upload') + '<span>選択分を連携リストへ</span>',
+    }) as HTMLButtonElement;
     subbar.append(
       el('span', { class: 'mikke-subbar-count', style: 'color:var(--accent-strong);font-weight:600' }, [`${sel} 件選択`]),
       refreshBtn,
       zipBtn,
+      pushSelBtn,
       el('button', {
         class: 'mikke-btn mikke-btn--danger', style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
         ...(bulkBusy ? { disabled: 'disabled' } : {}), onclick: () => bulkExclude(),
@@ -706,10 +742,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     ]);
     const pushBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
-      title: '管理対象の内容を連携用リストへ反映します（資産管理者の記入欄には触れません。管理対象外は削除されます）',
+      title: '管理対象すべての内容を連携用リストへ反映します（資産管理者の記入欄には触れません。管理対象外・管理対象から消えたものは削除されます）',
       ...(bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => { void pushToVulnResponse(); },
-      html: icon('upload') + '<span>連携リストへ反映</span>',
+      html: icon('upload') + '<span>連携リストへ反映(全件)</span>',
     });
     const syncBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',

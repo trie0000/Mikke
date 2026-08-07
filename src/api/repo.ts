@@ -62,6 +62,9 @@ export interface Repository {
   docFileHref(serverRelativeUrl: string): Promise<string>;
   /** 連携用リストの既存アイテム (Mikke が書き込む項目のみ)。反映の差分計算に使う。 */
   listVulnResponseRows(): Promise<VulnResponseRow[]>;
+  /** 連携用リストに足りない列 (Mikke が書く項目のうち実在しないもの)。
+   *  1 列でも欠けると SP は書込を 400 で返すので、反映の前に確認する。 */
+  findMissingVulnResponseColumns(): Promise<string[]>;
   /** 連携用リストにアイテムを追加する。 */
   createVulnResponseItem(fields: VulnResponseFields): Promise<void>;
   /** 連携用リストのアイテムを更新する (Mikke が持つ項目だけ)。 */

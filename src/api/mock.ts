@@ -185,6 +185,8 @@ export class MockRepository implements Repository {
   async listVulnResponseRows(): Promise<VulnResponseRow[]> {
     return load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
   }
+  async findMissingVulnResponseColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
+
   async createVulnResponseItem(fields: VulnResponseFields): Promise<void> {
     const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
     rows.push({ ...fields, id: rows.reduce((m, r) => Math.max(m, r.id), 0) + 1 });
