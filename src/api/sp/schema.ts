@@ -1,5 +1,6 @@
 // SharePoint REST: スキーマ宣言 / FieldSpec → SP REST 型変換。
 // SpRepository.ensureLists から呼ばれる。
+import { MGMT_STATUSES } from '../../types';
 
 export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User';
 
@@ -101,7 +102,7 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'DetectionStatus', type: 'Choice', indexed: true,
       choices: ['新規', '継続', '再検知', '未検出(New)', '未検出'] },
     { name: 'MgmtStatus', type: 'Choice', indexed: true,
-      choices: ['未通知', '通知', '未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外'] },
+      choices: [...MGMT_STATUSES] },
     { name: 'IsOutOfScope', type: 'Boolean', indexed: true },
     { name: 'OutOfScopeReason', type: 'Note' },
     { name: 'Assignee', type: 'Text' },
@@ -211,7 +212,10 @@ export function downloadFieldSpecs(): FieldSpec[] {
  *   - 本体には対応状況の入力欄だけを残す。
  *   - 例外・対象外の理由は、対応状況が「リスク受容 / 対象外 / 過検出」のときだけ出す。
  */
-export const RESPONSE_STATUS_CHOICES = ['未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外'] as const;
+/** 連携用リストの「対応状況」の選択肢。
+ *  ★ Mikke の対応ステータスと同じ値にする (別々に並べると片方だけ直して
+ *    取り込みが黙って落ちる)。値の対応表は lib/responseSync.ts。 */
+export const RESPONSE_STATUS_CHOICES: readonly string[] = MGMT_STATUSES;
 
 /** 例外理由を表示する対応状況。 */
 export const EXCEPTION_STATUSES: readonly string[] = ['リスク受容', '過検出', '対象外'];

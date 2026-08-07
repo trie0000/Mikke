@@ -13,11 +13,11 @@ export const DETECTION_STATUSES: DetectionStatus[] = [
   '新規', '継続', '再検知', '未検出(New)', '未検出',
 ];
 
-/** 対応ステータス (人が手動設定 / 対応進捗軸)。 */
+/** 対応ステータス (対応の進捗軸)。連携用リストの「対応状況」と同じ 6 値。
+ *  ★ 「通知したかどうか」はこの軸では持たない。連携用リストとの比較で出す
+ *    「通知」列 (未通知 / 差分あり / 同期済み) が担当する (lib/notifyStatus.ts)。 */
 export type MgmtStatus =
-  | '未通知'      // 管理対象化したが未通知 (初期値)
-  | '通知'        // 関係者に通知済み
-  | '未着手'      // 連携用リストで資産管理者が「未着手」を選んだ状態
+  | '未着手'      // 着手前 (初期値)
   | '対応中'      // 修正・対処を進めている
   | '対応済み'    // 対処完了
   | 'リスク受容'  // 対処せずリスクを受容
@@ -25,8 +25,20 @@ export type MgmtStatus =
   | '対象外';     // 管理対象から外す
 
 export const MGMT_STATUSES: MgmtStatus[] = [
-  '未通知', '通知', '未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外',
+  '未着手', '対応中', '対応済み', 'リスク受容', '過検出', '対象外',
 ];
+
+/** 対応ステータスの既定値 (取込時・値が読めないとき)。 */
+export const DEFAULT_MGMT_STATUS: MgmtStatus = '未着手';
+
+/** 旧値 ('未通知' / '通知') を現行の選択肢に寄せる。
+ *  ★ 通知の有無は「通知」列に移したので、旧値はどちらも「未着手」に畳む。
+ *    SP に残っている既存データを読んだときに落ちないようにするための互換処理。 */
+export function normalizeMgmtStatus(v: unknown): MgmtStatus {
+  const s = String(v ?? '').trim();
+  if ((MGMT_STATUSES as string[]).includes(s)) return s as MgmtStatus;
+  return DEFAULT_MGMT_STATUS;   // '未通知' / '通知' / 空 / 未知の値
+}
 
 /** 取込経緯。 */
 export type AddedReason = '条件一致' | '個別指定';

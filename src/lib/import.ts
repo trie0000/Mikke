@@ -1,6 +1,7 @@
 // CSV 取込エンジン (差分判定)。クライアント / 中継サーバ両用の純粋関数。
 // 機能設計書 §2 (F1) / §9 (差分マトリクス) に準拠。
 import type { ManagedIssue, MikkeSettings, AddedReason } from '../types';
+import { DEFAULT_MGMT_STATUS } from '../types';
 import { evalConditions } from './conditions';
 import { nextDetectionWhenPresent, nextDetectionWhenAbsent, fixedNextDetectionWhenAbsent } from './detection';
 
@@ -125,7 +126,7 @@ export function buildImportPlan(
         title: sf.title ?? '',
         issueInstanceId: iid,
         detectionStatus: '新規',
-        mgmtStatus: '未通知',
+        mgmtStatus: DEFAULT_MGMT_STATUS,
         isOutOfScope: false,
         severity: sf.severity,
         scannerStatus: sf.scannerStatus,

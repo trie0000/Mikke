@@ -40,7 +40,7 @@ const normScanCol = (c: string): string =>
 
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
-  '未通知': 7, '通知': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
+  '未着手': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
 };
 
 export function renderIssueList(rootEl: HTMLElement): HTMLElement {

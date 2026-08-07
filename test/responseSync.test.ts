@@ -7,7 +7,7 @@ const NOW = '2026-08-07T03:00:00.000Z';
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
   return {
     id: 1, title: 'TLS 1.0 が有効', issueInstanceId: 'IID-1',
-    detectionStatus: '継続', mgmtStatus: '未通知', isOutOfScope: false,
+    detectionStatus: '継続', mgmtStatus: '未着手', isOutOfScope: false,
     scanFields: {}, ...over,
   } as ManagedIssue;
 }
@@ -94,9 +94,9 @@ describe('buildResponseSyncPlan: 連携用リスト → 管理対象への取り
 
   it('更新履歴用の変更内容を項目名つきで返す', () => {
     const plan = buildResponseSyncPlan(
-      [issue({ mgmtStatus: '未通知' })], [res({ responseStatus: '対応済み' })], NOW);
+      [issue({ mgmtStatus: '未着手' })], [res({ responseStatus: '対応済み' })], NOW);
     expect(plan.patches[0]!.changes).toEqual([
-      { field: '対応ステータス', before: '未通知', after: '対応済み' },
+      { field: '対応ステータス', before: '未着手', after: '対応済み' },
     ]);
   });
 

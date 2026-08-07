@@ -64,7 +64,7 @@ describe('管理系 ID の持ち場所', () => {
 
 describe('更新履歴: 新しい ID の変更も残る', () => {
   const base = { id: 1, title: 't', issueInstanceId: 'IID-1', detectionStatus: '新規',
-    mgmtStatus: '未通知', isOutOfScope: false, scanFields: {} } as unknown as ManagedIssue;
+    mgmtStatus: '未着手', isOutOfScope: false, scanFields: {} } as unknown as ManagedIssue;
 
   it('外部接続申請ID と 旧管理番号 の変更が記録される', () => {
     const changes = diffManagedIssue(base, { extConnAppId: 'EXT-1', legacyMgmtNumber: 'AAA-2606-01' });

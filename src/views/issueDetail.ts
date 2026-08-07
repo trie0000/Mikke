@@ -150,7 +150,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['ID', `#${i.id}`],
         ['Issue Instance ID', i.issueInstanceId],
         ['タイトル', i.title],
-        // 深刻度は管理対象一覧・概要ともに出さない (検査ツール詳細タブでは元値を見られる)。
+        // 深刻度は Mikke の項目としては表示しない (CSV に Severity 列があれば
+        // 検査ツール詳細タブに原本のまま並ぶ)。
         ['検知ステータス', null, detectionBadge(i.detectionStatus)],
         // 一覧と同じ 2 項目に分ける: 対応 = Mikke 側の対応状況 / 通知 = 連携用リストとの同期状態。
         ['対応', null, mgmtBadge(i.mgmtStatus)],
@@ -163,7 +164,6 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     } else if (activeTab === 'scanner') {
       const rows: [string, string][] = [
         ['検査ツールステータス', i.scannerStatus || '—'],
-        ['深刻度', i.severity || '—'],
         ['初回検出', fmtDate(i.firstSeen) || '—'],
         ['最終検出', fmtDate(i.lastSeen) || '—'],
         ['未検出になった日', fmtDate(i.firstUndetectedAt) || '—'],

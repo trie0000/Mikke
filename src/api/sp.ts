@@ -2,7 +2,8 @@
 // 役割: contextinfo(digest) / list CRUD / ensureLists(ensureFields) /
 //       $batch 一括書き込み。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, MgmtStatus, AddedReason, DownloadRecord, DownloadType, SetupStep, SetupResult } from '../types';
+import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DetectionStatus, AddedReason, DownloadRecord, DownloadType, SetupStep, SetupResult } from '../types';
+import { normalizeMgmtStatus } from '../types';
 import type { ImportOp } from '../lib/import';
 import { packScanData, unpackScanData } from '../lib/scanName';
 import {
@@ -217,6 +218,10 @@ export class SpRepository implements Repository {
       const cur = have.get(spec.name);
       if (cur && cur === spFieldTypeString(spec.type)) {
         if (spec.indexed) await this.tryIndex(listPath, spec.name);
+        // ★ 選択肢は「列が既にある = 何もしない」だと永久に古いまま残る。
+        //   コード側で選択肢を変えても SP のドロップダウンは旧値のままになり、
+        //   新しい値を書くと「候補にない」で弾かれる。ここで実値と突き合わせて直す。
+        if (spec.type === 'Choice') await this.syncChoices(title, spec, rep);
         rep?.record('列', spec.name, 'skipped', '既に存在する');
         continue;
       }
@@ -633,6 +638,28 @@ export class SpRepository implements Repository {
       else dropped.add(k);
     }
     return out;
+  }
+
+  /** 既存の Choice 列の選択肢をスキーマ宣言に合わせる (順序・値とも)。
+   *  ★ 既にその値が入っているアイテムは SP 側で保持される (選択肢から外しても消えない)。
+   *    読み出し側で現行値に畳む必要がある (types.ts の normalizeMgmtStatus)。 */
+  private async syncChoices(listTitle: string, spec: FieldSpec, rep?: StepReporter): Promise<void> {
+    const want = spec.choices ?? [];
+    if (!want.length) return;
+    try {
+      const path = this.fieldPath(listTitle, spec.name);
+      const f = await this.spGet(`${path}?$select=Choices`);
+      const have: string[] = f?.d?.Choices?.results ?? [];
+      if (have.length === want.length && have.every((v, i) => v === want[i])) return;
+      await this.spPost(path,
+        { __metadata: { type: 'SP.FieldChoice' }, Choices: { results: want } },
+        { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
+      rep?.record('選択肢', spec.name, 'updated', `${have.join('/')} → ${want.join('/')}`);
+    } catch (e) {
+      // 選択肢の更新に失敗しても列自体は使えるので、取込全体は止めない。
+      console.warn(`[mikke] syncChoices ${spec.name} failed:`, e);
+      rep?.record('選択肢', spec.name, 'failed', (e as Error).message);
+    }
   }
 
   private async tryIndex(listPath: string, fieldName: string): Promise<void> {
@@ -1239,7 +1266,8 @@ export class SpRepository implements Repository {
       title: row.Title ?? '',
       issueInstanceId: row.IssueInstanceId ?? '',
       detectionStatus: (row.DetectionStatus ?? '新規') as DetectionStatus,
-      mgmtStatus: (row.MgmtStatus ?? '未通知') as MgmtStatus,
+      // 旧値 ('未通知' / '通知') は '未着手' に畳む (選択肢から外したため)。
+      mgmtStatus: normalizeMgmtStatus(row.MgmtStatus),
       isOutOfScope: !!row.IsOutOfScope,
       outOfScopeReason: row.OutOfScopeReason ?? undefined,
       assignee: row.Assignee ?? undefined,

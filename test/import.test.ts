@@ -42,10 +42,10 @@ describe('import: 初回取込 (空 → 5月)', () => {
   it('条件外はスキップ', () => {
     expect(plan.summary.skipped).toBe(may.rows.length - 4);
   });
-  it('追加分は検知=新規 / 対応=未通知', () => {
+  it('追加分は検知=新規 / 対応=未着手', () => {
     const add = plan.ops.filter((o) => o.kind === 'add');
     expect(add.every((o) => o.create!.detectionStatus === '新規')).toBe(true);
-    expect(add.every((o) => o.create!.mgmtStatus === '未通知')).toBe(true);
+    expect(add.every((o) => o.create!.mgmtStatus === '未着手')).toBe(true);
   });
   it('個別指定は AddedReason=個別指定', () => {
     const indiv = plan.ops.find((o) => o.issueInstanceId === 'IID-1001');

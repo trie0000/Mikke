@@ -2,6 +2,7 @@
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
 import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
+import { normalizeMgmtStatus } from '../types';
 import type { ImportOp } from '../lib/import';
 import { vulnResponseFieldSpecs } from './sp/schema';
 import type { VulnResponseItem } from '../lib/responseSync';
@@ -38,7 +39,7 @@ function seedIssues(): ManagedIssue[] {
     },
     {
       id: 2, title: '管理画面が外部公開', issueInstanceId: 'iid-0002',
-      detectionStatus: '新規', mgmtStatus: '未通知', isOutOfScope: false,
+      detectionStatus: '新規', mgmtStatus: '未着手', isOutOfScope: false,
       severity: 'Critical', scannerStatus: 'open',
       firstSeen: now, lastSeen: now, lastSyncedAt: now, addedReason: '個別指定',
       scanFields: { 'Scan_Asset': 'admin.example.com', 'Scan_CVE': '' },
@@ -78,13 +79,18 @@ export class MockRepository implements Repository {
 
   async ensureLists(): Promise<void> { /* mock: no-op */ }
 
+  /** 保存済みデータの旧値を現行の選択肢に寄せる (SP 側と同じ扱いにする)。 */
+  private normalize(i: ManagedIssue): ManagedIssue {
+    return { ...i, mgmtStatus: normalizeMgmtStatus(i.mgmtStatus) };
+  }
+
   async listIssues(): Promise<ManagedIssue[]> {
-    return this.issues.map((i) => ({ ...i }));
+    return this.issues.map((i) => this.normalize(i));
   }
 
   async getIssue(id: number): Promise<ManagedIssue | null> {
     const found = this.issues.find((i) => i.id === id);
-    return found ? { ...found } : null;
+    return found ? this.normalize(found) : null;
   }
 
   async updateIssue(id: number, patch: Partial<ManagedIssue>): Promise<void> {

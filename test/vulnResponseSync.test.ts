@@ -8,7 +8,7 @@ import type { ManagedIssue, ManagedAsset } from '../src/types';
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
   return {
     id: 1, title: 'TLS 1.0 が有効', issueInstanceId: 'IID-1',
-    detectionStatus: '継続', mgmtStatus: '未通知', isOutOfScope: false,
+    detectionStatus: '継続', mgmtStatus: '未着手', isOutOfScope: false,
     firstSeen: '2026-05-01T00:00:00Z', lastSeen: '2026-07-30T00:00:00Z',
     scanFields: {}, ...over,
   } as ManagedIssue;

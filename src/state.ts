@@ -6,7 +6,6 @@ interface Filter {
   // 複数選択可 = 配列。空配列 = フィルタ無効。配列内いずれか一致 (OR) でヒット。
   detection: string[];   // DetectionStatus
   mgmt: string[];        // MgmtStatus
-  severity: string[];
   assignee: string[];
   query: string;
   /** 対象外・過検出・未検出をデフォルトで隠す。トグルで表示。 */
@@ -18,7 +17,7 @@ interface State {
   selectedIssueId: number | null;
   openIssueIds: number[]; // 詳細タブで開いている ID
   filter: Filter;
-  sortBy: 'id' | 'title' | 'detection' | 'mgmt' | 'severity' | 'assignee' | 'due' | 'synced';
+  sortBy: 'id' | 'title' | 'detection' | 'mgmt' | 'assignee' | 'due' | 'synced';
   sortDir: 'asc' | 'desc';
   issueCount: number;
   /** 現在ログインしているユーザー。 */
@@ -40,7 +39,7 @@ type Listener = () => void;
 const FILTER_KEY = 'mikke.issueFilter';
 function loadPersistedFilter(): Filter {
   const base: Filter = {
-    detection: [], mgmt: [], severity: [], assignee: [], query: '', showHidden: false,
+    detection: [], mgmt: [], assignee: [], query: '', showHidden: false,
   };
   try {
     const raw = localStorage.getItem(FILTER_KEY);
@@ -50,7 +49,7 @@ function loadPersistedFilter(): Filter {
     const str = (v: unknown): string => typeof v === 'string' ? v : '';
     return {
       detection: arr(j.detection), mgmt: arr(j.mgmt),
-      severity: arr(j.severity), assignee: arr(j.assignee),
+      assignee: arr(j.assignee),
       query: str(j.query), showHidden: j.showHidden === true,
     };
   } catch { return base; }
