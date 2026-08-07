@@ -7,6 +7,7 @@ import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, notifyBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
+import { splitAssetCell, DEFAULT_ASSET_COLUMN } from '../lib/assets';
 import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
@@ -38,6 +39,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let cache: ManagedIssue[] = [];
   /** 連携用リストの Issue Instance ID → 最終更新日時。通知ステータスの判定に使う。 */
   let vulnResponseUpdated = new Map<string, string>();
+  /** 資産キー → 資産管理ID (資産リストの管理番号)。脆弱性から引くための対応表。 */
+  let assetMgmtIdByKey = new Map<string, string>();
+  /** 資産を取り出す列 (設定。例: FQDN 列 + IP 列)。 */
+  let assetColumns: string[] = [DEFAULT_ASSET_COLUMN];
   let lastFiltered: ManagedIssue[] = [];
   const selected = new Set<number>();
   let bulkBusy = false;
@@ -61,19 +66,40 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const notifyOf = (i: ManagedIssue): NotifyStatus =>
     notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId));
 
+  /** その脆弱性に紐づく資産の「資産管理ID」。複数資産に跨る場合は重複を除いて並べる。
+   *  ★ 資産管理ID は資産リスト側が持つ値なので、脆弱性からは資産キー経由で引く。 */
+  const assetMgmtIdOf = (i: ManagedIssue): string => {
+    const ids = new Set<string>();
+    for (const col of assetColumns) {
+      const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
+      for (const k of splitAssetCell(resolveScanValue(i.scanFields, key, csvHeaders) ?? '')) {
+        const id = assetMgmtIdByKey.get(k);
+        if (id) ids.add(id);
+      }
+    }
+    return [...ids].join(' | ');
+  };
+
   void load();
 
   async function load(): Promise<void> {
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
-      const [all, settings, notified] = await Promise.all([
+      const [all, settings, notified, assets] = await Promise.all([
         getRepo().listIssues(),
         getRepo().getSettings(),
         // 連携用リストが未作成でも一覧は出す (その場合は全件「未通知」)。
         getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>()),
+        // 資産管理ID を引くため。取れなくても一覧は出す。
+        getRepo().listAssets().catch(() => []),
       ]);
       vulnResponseUpdated = notified;
+      assetColumns = (settings.assetColumns && settings.assetColumns.length)
+        ? settings.assetColumns
+        : (settings.assetColumn ? [settings.assetColumn] : [DEFAULT_ASSET_COLUMN]);
+      assetMgmtIdByKey = new Map(
+        assets.filter((a) => a.mgmtNumber).map((a) => [a.assetKey, a.mgmtNumber as string]));
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
       csvHeaders = settings.lastCsvHeaders ?? [];
       cache = all;
@@ -157,6 +183,14 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         text: (i) => notifyOf(i),
         sortValue: (i) => NOTIFY_ORDER[notifyOf(i)],
         render: (i) => notifyBadge(notifyOf(i)) },
+      // ── 管理系 ID ──
+      //   脆弱性ID (検査ツール) / 資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
+      //   移行期間中だけ残す旧管理番号。
+      { id: 'iid', label: '脆弱性ID', width: 140, text: (i) => i.issueInstanceId },
+      { id: 'assetMgmtId', label: '資産管理ID', width: 130, text: (i) => assetMgmtIdOf(i) },
+      { id: 'extConnAppId', label: '外部接続申請ID', width: 140, text: (i) => i.extConnAppId ?? '' },
+      { id: 'legacyMgmtNumber', label: '旧管理番号', width: 140, text: (i) => i.legacyMgmtNumber ?? '',
+        cellStyle: 'color:var(--ink-3)' },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
       // 「情報更新」で取得した個別レポート (zip)。行クリック (詳細を開く) と競合しないよう

@@ -19,6 +19,12 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
 
   const oosReason = el('textarea', { placeholder: '対象外の理由' }, [issue.outOfScopeReason ?? '']) as HTMLTextAreaElement;
   const assignee = el('input', { type: 'text', value: issue.assignee ?? '' }) as HTMLInputElement;
+  const extConnAppId = el('input', {
+    type: 'text', value: issue.extConnAppId ?? '', placeholder: '例: EXT-2026-045',
+  }) as HTMLInputElement;
+  const legacyMgmtNumber = el('input', {
+    type: 'text', value: issue.legacyMgmtNumber ?? '', placeholder: '例: 事業会社名-2606-01',
+  }) as HTMLInputElement;
   const due = el('input', { type: 'date', value: (issue.dueDate ?? '').slice(0, 10) }) as HTMLInputElement;
   const note = el('textarea', { style: 'min-height:120px' }, [issue.mgmtNote ?? '']) as HTMLTextAreaElement;
 
@@ -45,6 +51,9 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
       ]),
     ]),
     field('対象外の理由', oosReason),
+    field('外部接続申請ID', extConnAppId),
+    // 移行期間中だけの参考情報。将来この列ごと廃止する。
+    field('旧管理番号 (Excel 運用時の暫定 ID。移行期間中のみ)', legacyMgmtNumber),
     field('担当者', assignee),
     field('対応期限', due),
     field('メモ', note),
@@ -62,6 +71,8 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         isOutOfScope: isOos,
         outOfScopeReason: isOos ? oosReason.value.trim() : '',
         assignee: assignee.value.trim(),
+        extConnAppId: extConnAppId.value.trim(),
+        legacyMgmtNumber: legacyMgmtNumber.value.trim(),
         dueDate: due.value ? new Date(due.value).toISOString() : '',
         mgmtNote: note.value,
       };

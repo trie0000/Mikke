@@ -1135,6 +1135,8 @@ export class SpRepository implements Repository {
       isOutOfScope: !!row.IsOutOfScope,
       outOfScopeReason: row.OutOfScopeReason ?? undefined,
       assignee: row.Assignee ?? undefined,
+      extConnAppId: row.ExtConnAppId ?? undefined,
+      legacyMgmtNumber: row.LegacyMgmtNumber ?? undefined,
       dueDate: row.DueDate ?? undefined,
       mgmtNote: row.MgmtNote ?? undefined,
       scannerStatus: row.ScannerStatus ?? undefined,
@@ -1162,6 +1164,8 @@ export class SpRepository implements Repository {
     if (p.isOutOfScope !== undefined) row.IsOutOfScope = p.isOutOfScope;
     if (p.outOfScopeReason !== undefined) row.OutOfScopeReason = p.outOfScopeReason;
     if (p.assignee !== undefined) row.Assignee = p.assignee;
+    if (p.extConnAppId !== undefined) row.ExtConnAppId = p.extConnAppId;
+    if (p.legacyMgmtNumber !== undefined) row.LegacyMgmtNumber = p.legacyMgmtNumber;
     // DateTime 列は空文字 ('') だと SP が HTTP 400。クリアは null で送る。
     if (p.dueDate !== undefined) row.DueDate = p.dueDate || null;
     if (p.mgmtNote !== undefined) row.MgmtNote = p.mgmtNote;

@@ -52,6 +52,12 @@ export interface ManagedIssue {
   dueDate?: string;
   /** 対応メモ。 */
   mgmtNote?: string;
+  /** 外部接続申請ID (利用者側の申請番号。人が入力)。
+   *  管理系 ID の 1 つ。Issue Instance ID / 資産管理ID と並ぶ。 */
+  extConnAppId?: string;
+  /** 旧管理番号 (Excel 運用時代の「事業会社名-YYMM-XX」)。
+   *  ★ 将来廃止する暫定 ID。移行期間中だけ参考情報として持つ。 */
+  legacyMgmtNumber?: string;
   /** 検査ツール側ステータス (CSV/API 由来、読取専用)。 */
   scannerStatus?: string;
   /** 深刻度 (CSV/API 由来)。 */

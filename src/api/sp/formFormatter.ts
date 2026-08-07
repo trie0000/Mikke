@@ -189,6 +189,7 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
             [
               item('資産管理ID', textValue('[$AssetMgmtId]')),
               item('外部接続申請ID', textValue('[$ExtConnAppId]')),
+              item('旧管理番号', textValue('[$LegacyMgmtNumber]')),
               item('関連資産', textValue('[$RelatedAssets]')),
               item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
             ],

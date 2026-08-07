@@ -105,6 +105,12 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'IsOutOfScope', type: 'Boolean', indexed: true },
     { name: 'OutOfScopeReason', type: 'Note' },
     { name: 'Assignee', type: 'Text' },
+    // 管理系 ID。IssueInstanceId (検査ツール) / 資産管理ID (資産リスト側の MgmtNumber) と
+    // 並ぶ 3 種類目。連携用リストにも同じ値を渡す。
+    { name: 'ExtConnAppId', type: 'Text', indexed: true },
+    // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
+    //   移行期間中は参考情報として管理リスト・連携用リストの双方で見せる。
+    { name: 'LegacyMgmtNumber', type: 'Text', indexed: true },
     { name: 'DueDate', type: 'DateTime' },
     { name: 'MgmtNote', type: 'NoteRich' },
     { name: 'ScannerStatus', type: 'Text' },
@@ -238,6 +244,9 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('AffiliateCompany', '管理会社'),
     pushed('AssetMgmtId', '資産管理ID', { indexed: true }),
     pushed('ExtConnAppId', '外部接続申請ID'),
+    // ★ Excel 運用時代の暫定 ID (事業会社名-YYMM-XX)。将来廃止するが、移行期間中は
+    //   資産管理者にも見えるようにここへも渡す。
+    pushed('LegacyMgmtNumber', '旧管理番号'),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
     pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),
 
