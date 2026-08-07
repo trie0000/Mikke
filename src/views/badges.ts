@@ -1,6 +1,7 @@
 // ステータス / 深刻度のバッジ生成。UI 設計書 §2 の色割当に準拠。
 import { el } from '../utils/dom';
 import type { DetectionStatus, MgmtStatus } from '../types';
+import type { NotifyStatus } from '../lib/notifyStatus';
 
 function detectionVariant(s: DetectionStatus): string {
   switch (s) {
@@ -40,3 +41,9 @@ function badge(text: string, variant: string): HTMLElement {
 export function detectionBadge(s: DetectionStatus): HTMLElement { return badge(s, detectionVariant(s)); }
 export function mgmtBadge(s: MgmtStatus): HTMLElement { return badge(s, mgmtVariant(s)); }
 export function severityBadge(sev?: string): HTMLElement { return badge(sev || '—', severityVariant(sev)); }
+
+/** 通知ステータス (連携用リストとの比較結果)。手当てが要るものほど強い色にする。 */
+export function notifyBadge(s: NotifyStatus): HTMLElement {
+  const v = s === '未通知' ? 'danger' : s === '差分あり' ? 'warn' : 'ok';
+  return badge(s, v);
+}

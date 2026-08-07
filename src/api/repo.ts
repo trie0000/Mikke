@@ -58,6 +58,10 @@ export interface Repository {
   deleteDocFile(serverRelativeUrl: string): Promise<void>;
   /** 保存済みファイルをブラウザで開く/保存するための href を返す (SP=絶対URL / mock=data URL)。 */
   docFileHref(serverRelativeUrl: string): Promise<string>;
+  /** 連携用リストの「Issue Instance ID → 最終更新日時(ISO)」。
+   *  一覧の通知ステータス (未通知 / 差分あり / 同期済み) の判定に使う。
+   *  リストが未作成なら空の Map。 */
+  vulnResponseUpdatedAt(): Promise<Map<string, string>>;
   /** 連携用リストを開く URL (既定ビュー)。まだ無ければ null。
    *  ★ リストの URL は Title から機械的に組めない (作成時の名前が残る / 改名しても
    *    URL は変わらない) ので、必ず SharePoint から実際の URL を取得する。 */

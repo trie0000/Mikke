@@ -5,7 +5,7 @@ import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
 import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
-import { detectionBadge, mgmtBadge, severityBadge } from './badges';
+import { detectionBadge, mgmtBadge, notifyBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
 import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
@@ -14,13 +14,13 @@ import { DataTable, type DataColumn } from './dataTable';
 import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES, mapLimit, base64ToBytes } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
 import { storeIssueReport, sampleIssueReport, issueReportFolder, isAdapterMissing } from '../lib/issueReport';
+import { notifyStatusOf, NOTIFY_ORDER, type NotifyStatus } from '../lib/notifyStatus';
 import type { ManagedIssue } from '../types';
 
 /** 情報更新の並列数。relay 側 (/mikke/issues の runspace プール) と同じ値にする。
  *  ここを増やすなら relay の $MIKKE_ISSUES_MAX_PARALLEL も合わせること。 */
 const REFRESH_PARALLEL = 5;
 
-const SEVERITY_ORDER: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
   '未通知': 7, '通知': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
@@ -36,6 +36,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let scanCols: string[] = [];
   let csvHeaders: string[] = [];
   let cache: ManagedIssue[] = [];
+  /** 連携用リストの Issue Instance ID → 最終更新日時。通知ステータスの判定に使う。 */
+  let vulnResponseUpdated = new Map<string, string>();
   let lastFiltered: ManagedIssue[] = [];
   const selected = new Set<number>();
   let bulkBusy = false;
@@ -56,13 +58,22 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     emptyText: '該当する管理対象がありません。',
   });
 
+  const notifyOf = (i: ManagedIssue): NotifyStatus =>
+    notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId));
+
   void load();
 
   async function load(): Promise<void> {
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
-      const [all, settings] = await Promise.all([getRepo().listIssues(), getRepo().getSettings()]);
+      const [all, settings, notified] = await Promise.all([
+        getRepo().listIssues(),
+        getRepo().getSettings(),
+        // 連携用リストが未作成でも一覧は出す (その場合は全件「未通知」)。
+        getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>()),
+      ]);
+      vulnResponseUpdated = notified;
       scanCols = settings.managedColumns.map((c) => (c.startsWith('Scan_') ? c : `Scan_${c}`));
       csvHeaders = settings.lastCsvHeaders ?? [];
       cache = all;
@@ -141,8 +152,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         sortValue: (i) => DETECTION_ORDER[i.detectionStatus] ?? 0, render: (i) => detectionBadge(i.detectionStatus) },
       { id: 'mgmt', label: '対応', width: 96, text: (i) => i.mgmtStatus,
         sortValue: (i) => MGMT_ORDER[i.mgmtStatus] ?? 0, render: (i) => mgmtBadge(i.mgmtStatus) },
-      { id: 'severity', label: '深刻度', width: 92, text: (i) => i.severity ?? '',
-        sortValue: (i) => SEVERITY_ORDER[(i.severity ?? '').toLowerCase()] ?? -1, render: (i) => severityBadge(i.severity) },
+      // 連携用リストと比べた通知の状態。判定は notifyStatus.ts (更新時刻の比較)。
+      { id: 'notify', label: '通知', width: 100,
+        text: (i) => notifyOf(i),
+        sortValue: (i) => NOTIFY_ORDER[notifyOf(i)],
+        render: (i) => notifyBadge(notifyOf(i)) },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
       // 「情報更新」で取得した個別レポート (zip)。行クリック (詳細を開く) と競合しないよう

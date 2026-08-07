@@ -452,6 +452,25 @@ export class SpRepository implements Repository {
     } catch { return null; }   // 未作成 (404) もここに来る
   }
 
+  /** 連携用リストの各アイテムの最終更新日時 (IssueInstanceId → Modified)。
+   *  ★ 連携用リストが未作成 / 権限が無い場合は空 Map を返す (画面を止めない)。 */
+  async vulnResponseUpdatedAt(): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
+      + '?$select=IssueInstanceId,Modified&$top=5000';
+    try {
+      while (url) {
+        const j: any = await this.spGet(url);
+        for (const row of j.d.results as { IssueInstanceId?: string; Modified?: string }[]) {
+          if (row.IssueInstanceId) out.set(row.IssueInstanceId, row.Modified ?? '');
+        }
+        url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+      }
+    } catch { return out; }   // 未作成 (404) 等はここに来る
+    return out;
+  }
+
   async vulnResponseListUrl(): Promise<string | null> {
     return this.listViewUrl(LIST_VULNRESPONSE);
   }
@@ -1128,6 +1147,8 @@ export class SpRepository implements Repository {
       reportUrl: row.ReportUrl ?? undefined,
       reportName: row.ReportName ?? undefined,
       reportAt: row.ReportAt ?? undefined,
+      // SP の組み込み列。連携用リストとの新旧比較に使う (書き込みはしない)。
+      updatedAt: row.Modified ?? undefined,
       scanFields,
     };
   }

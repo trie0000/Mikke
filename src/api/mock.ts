@@ -172,6 +172,11 @@ export class MockRepository implements Repository {
     return store[serverRelativeUrl] ?? '';
   }
 
+  /** モックには連携用リストの実体が無いので、全件「未通知」になる。 */
+  async vulnResponseUpdatedAt(): Promise<Map<string, string>> {
+    return new Map();
+  }
+
   /** モックには連携用リストの実体が無いので、開く URL も無い (未作成扱い)。 */
   async vulnResponseListUrl(): Promise<string | null> {
     return null;

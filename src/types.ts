@@ -72,6 +72,8 @@ export interface ManagedIssue {
   reportName?: string;
   /** 個別レポートの取得日時 (ISO)。 */
   reportAt?: string;
+  /** SharePoint 上の最終更新日時 (ISO)。連携用リストとの差分判定に使う。 */
+  updatedAt?: string;
   /** 動的列 (F6 でチェックした検査ツール CSV 列。キー = Scan_<列名>)。 */
   scanFields: Record<string, string>;
 }
