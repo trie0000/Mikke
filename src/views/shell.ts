@@ -82,7 +82,10 @@ function startBundleUpdatePolling(root: HTMLElement): void {
     if (stableBuildId(latest) === getAckVersion()) return;
     notified = true;
     setState({ bundleUpdateAvailable: latest }); // 右上アイコンが強調される
-    toast(root, '新しいバージョンがあります。右上の更新アイコンで最新版に更新できます。更新後、設定 → 更新履歴 で変更内容を確認できます。', 'warn', 0);
+    toast(root, isCdpLaunch()
+      ? '新しいバージョンがあります。mikke-launch.bat を実行し直すと最新版になります。更新後、設定 → 更新履歴 で変更内容を確認できます。'
+      : '新しいバージョンがあります。右上の更新アイコンで最新版に更新できます。更新後、設定 → 更新履歴 で変更内容を確認できます。',
+      'warn', 0);
   };
   // 起動 5 秒後に初回、以降 60 秒ごと (キャッシュ温存と検知性のバランス)。
   window.setTimeout(() => { void check(); }, 5000);
@@ -121,12 +124,26 @@ function checkRelayUpdateOnStartup(root: HTMLElement): void {
   }, 6500);
 }
 
+/** ワンクリック起動 (mikke-launch.bat / CDP) で立ち上がったか。launcher が立てる。 */
+function isCdpLaunch(): boolean {
+  try { return localStorage.getItem('mikke.launch.mode') === 'cdp'; } catch { return false; }
+}
+
 /** 更新アイコンクリック時: 更新があれば再読込、無ければ手動チェック。
- *  ※ ブックマークレットは再読込でホストページが消える (オーバーレイも消える)。
- *    ローダ版は再読込後にブックマークを再クリックすると最新 bundle を取得する。 */
+ *
+ * ★ ワンクリック起動では **再読込しない**。
+ *   この起動方法はローカルの mikke.bundle.js を CDP で直接注入しているので、
+ *   ページを再読込しても新しい版にはならず、Mikke の画面が消えるだけになる
+ *   (「更新したら画面が出なくなった」の原因)。最新版にするには launcher を
+ *   実行し直す = 新しいバンドルが注入される、が正しい手順。 */
 async function onSync(root: HTMLElement): Promise<void> {
   const latest = getState().bundleUpdateAvailable;
   if (latest) {
+    if (isCdpLaunch()) {
+      toast(root, '最新版にするには mikke-launch.bat を実行し直してください。'
+        + 'ワンクリック起動では、ページを再読込しても新しい版にはなりません。', 'warn', 12000);
+      return;
+    }
     // この版は「更新を試みた」と記録 → 再読込後も同じ版なら再通知しない。
     setAckVersion(stableBuildId(latest));
     toast(root, 'ページを再読込します。Mikke が消えたらブックマークの「Mikke」を再クリックして最新版を読み込んでください。', 'ok', 5000);

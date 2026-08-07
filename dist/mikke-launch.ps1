@@ -381,6 +381,7 @@ public class MikkeCdp {
 
             $cdp = New-Object MikkeCdp
             $cdp.Connect($wsUrl)
+            $autoBootRegistered = $false
 
             # 認証待ち (awaitPromise + retry。ログイン中は Failed to fetch → 握って継続)。
             # JS は $ を含むので PS の単一引用符文字列で組み立てる ($select が展開されないように)。
@@ -412,6 +413,12 @@ public class MikkeCdp {
             #   入れ直す運用も現実的でないため、起動時にこちらから確定させる。
             $relayJs = 'try{localStorage.setItem("mikke.relay.base","http://127.0.0.1:' + $Port + '/mikke");}catch(e){};true'
             try { $cdp.Eval($relayJs, $false) | Out-Null } catch { }
+
+            # ★ 起動方法をブラウザ側に伝える。ワンクリック起動ではバンドルをローカルから
+            #   直接注入しているので、ページを再読込しても新しい版にはならない
+            #   (むしろ画面が消える)。更新の案内を「再読込」ではなく
+            #   「mikke-launch.bat を実行し直す」に切り替えるための目印。
+            try { $cdp.Eval('try{localStorage.setItem("mikke.launch.mode","cdp");}catch(e){};true', $false) | Out-Null } catch { }
 
             # ★ バンドル注入 (既定)
             #   CDP が繋がっているので、ローカルの mikke.bundle.js をそのまま
@@ -495,9 +502,57 @@ public class MikkeCdp {
                        "mikke.bundle.js / version.txt が置かれていません。")
             }
 
+            # ★ 再読込しても Mikke が戻るようにする。
+            #   Runtime.evaluate は「今開いている document」にしか効かないので、
+            #   ページを再読込すると Mikke は消える。CDP 起動にはブックマークレットが
+            #   無いため、消えたら mikke-launch.bat を実行し直すしか戻す手段が無かった
+            #   (バンドル更新は再読込するので、更新のたびに画面が真っ白になる)。
+            #   Page.addScriptToEvaluateOnNewDocument に登録しておくと、以降その
+            #   タブで開く document すべてに自動で流し込まれる。CDP 接続を切った後
+            #   (= launcher 終了後) も有効なことは実測で確認済み。
+            #   ガード: iframe には入れない / SharePoint 以外のサイトでは何もしない /
+            #          同一 document で二重起動しない。
+            try {
+                $origin = ([Uri]$webAbs).GetLeftPart([System.UriPartial]::Authority)
+                $boot = '(function(){' +
+                        'if(window.top!==window.self)return;' +
+                        'if(location.origin!==' + [MikkeCdp]::JsonStr($origin) + ')return;' +
+                        'if(window.__mikkeAutoBoot)return;window.__mikkeAutoBoot=true;' +
+                        'function go(){try{' + $js + '}catch(e){console.error("[mikke] 自動起動に失敗:",e);}}' +
+                        'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",go);else go();' +
+                        '})();'
+                $cdp.Send('Page.enable', '{}') | Out-Null
+                $reg = $cdp.Send('Page.addScriptToEvaluateOnNewDocument',
+                                 '{"source":' + [MikkeCdp]::JsonStr($boot) + '}')
+                if ($reg -match '"identifier"') {
+                    $autoBootRegistered = $true
+                    Write-Host '再読込しても Mikke が自動で復帰するようにしました。' -ForegroundColor DarkGray
+                } else {
+                    Write-Host '注意: 再読込時の自動復帰を登録できませんでした (画面が消えたら mikke-launch.bat を再実行してください)。' -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "注意: 再読込時の自動復帰を登録できませんでした: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+
             Write-Host ''
             Write-Host 'Mikke を起動しました (ブックマークレット不要)。このウィンドウのブラウザをそのままお使いください。' -ForegroundColor Green
             $cdpDone = $true
+
+            # ★ 再読込に備えて常駐する。
+            #   Page.addScriptToEvaluateOnNewDocument の登録が有効なのは
+            #   **CDP 接続が生きている間だけ** (切断すると Chromium が破棄する。実測で確認)。
+            #   接続を保っている間は、F5 でもバンドル更新の再読込でも Mikke が自動で戻る。
+            #   このウィンドウを閉じても Mikke 自体は動き続ける (自動復帰だけ止まる)。
+            if ($autoBootRegistered) {
+                Write-Host 'このウィンドウは開いたままにしてください。閉じると「再読込したら Mikke が戻る」機能だけが止まります (Mikke 自体は動き続けます)。' -ForegroundColor DarkGray
+                while ($true) {
+                    Start-Sleep -Seconds 5
+                    $alive = $false
+                    try { if ($cdp.Eval('1', $false)) { $alive = $true } } catch { $alive = $false }
+                    if (-not $alive) { break }
+                }
+                Write-Host 'ブラウザが閉じられたため終了します。' -ForegroundColor DarkGray
+            }
         } catch {
             Write-Host "CDP 起動に失敗しました: $($_.Exception.Message)" -ForegroundColor Yellow
             Write-Host '従来フロー (ブックマークレット) に切り替えます。' -ForegroundColor Yellow

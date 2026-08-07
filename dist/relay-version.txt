@@ -1,6 +1,6 @@
 {
-  "version": "1.0.22",
-  "buildTime": "2026-08-07T15:10:13+09:00",
+  "version": "1.0.23",
+  "buildTime": "2026-08-07T15:37:11+09:00",
   "files": [
     "mikke-relay.ps1",
     "mikke-launch.ps1",

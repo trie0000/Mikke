@@ -32,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.22'
+$MIKKE_RELAY_VERSION = '1.0.23'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -832,6 +832,7 @@ function Invoke-RelaySelfUpdate {
 REM mikke-updater.bat (自動生成 - mikke-relay.ps1 self-update が出力)
 setlocal
 set RELAY_PID=%1
+set RELAY_PORT=$Port
 set SCRIPT_DIR=%~dp0
 set MANAGED=$managedListBat
 echo [updater] relay PID %RELAY_PID% の終了を待機中...
@@ -845,7 +846,7 @@ if %TRIES% GEQ 8 ( taskkill /F /PID %RELAY_PID% >nul 2>&1 & goto :killport )
 timeout /t 1 /nobreak >nul
 goto :wait
 :killport
-powershell -NoProfile -Command "& { try { (Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique | ForEach-Object { Stop-Process -Id ``$_ -Force -ErrorAction SilentlyContinue } } catch { } }" >nul 2>&1
+powershell -NoProfile -Command "& { try { (Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique | ForEach-Object { Stop-Process -Id `$_ -Force -ErrorAction SilentlyContinue } } catch { } }" >nul 2>&1
 echo [updater] ファイル置換中...
 for %%F in (%MANAGED%) do (
     if exist "%SCRIPT_DIR%%%F.new" (
@@ -854,8 +855,8 @@ for %%F in (%MANAGED%) do (
         echo   updated: %%F
     )
 )
-echo [updater] relay を再起動中...
-start "" /D "%SCRIPT_DIR%" "%SCRIPT_DIR%mikke-relay.bat"
+echo [updater] relay を再起動中 (port %RELAY_PORT%)...
+start "" /D "%SCRIPT_DIR%" "%SCRIPT_DIR%mikke-relay.bat" -Port %RELAY_PORT%
 timeout /t 1 /nobreak >nul
 exit /b 0
 "@
