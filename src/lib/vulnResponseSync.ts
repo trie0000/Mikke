@@ -53,6 +53,43 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
 export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
 
+/** 列の種類。sp/schema.ts の vulnResponseFieldSpecs() と一致させること
+ *  (ズレは test/vulnResponseSync.test.ts で検査)。 */
+export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note' | 'date'> = {
+  issueInstanceId: 'text', title: 'text', legacyMgmtNumber: 'text', detectionStatus: 'text',
+  firstSeen: 'date', lastSeen: 'date',
+  assetIp: 'text', assetFqdn: 'text', assetType: 'text',
+  businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text', extConnAppId: 'text',
+  relatedAssets: 'note', identifyEvidence: 'note',
+};
+
+/** SharePoint の単一行テキスト列の既定上限。 */
+export const TEXT_MAX_LENGTH = 255;
+
+/**
+ * 単一行テキスト列に入る形に整える。
+ *
+ * ★ これをやらないと SharePoint は作成/更新を **HTTP 500** で拒否する:
+ *     「テキストの値が正しくありません。テキストのフィールドに正しくない値が
+ *       含まれています。値を確認し、再度行ってください。」
+ *   超過はよくある。資産が多い脆弱性の FQDN 一覧 (' | ' 連結) や、
+ *   検査ツールが付ける長いタイトルが 255 文字を軽く超える。
+ *   改行・制御文字も単一行テキストには入れられないので空白に潰す。
+ *
+ * ★ 切り詰めは **反映前の値の組み立て時に** 行う。書込直前で切ると、
+ *   SharePoint に入った値と Mikke が計算した値が食い違い、毎回「差分あり」と
+ *   判定されて延々と更新し続ける。
+ */
+export function fitSingleLine(v: string): string {
+  const s = v.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (s.length <= TEXT_MAX_LENGTH) return s;
+  let cut = TEXT_MAX_LENGTH - 1;
+  // サロゲートペアの途中で切らない (絵文字等が壊れた文字になるのを防ぐ)。
+  const c = s.charCodeAt(cut - 1);
+  if (c >= 0xd800 && c <= 0xdbff) cut -= 1;
+  return `${s.slice(0, cut)}…`;
+}
+
 /** 連携用リストの既存アイテム (Mikke が書く項目のみ)。 */
 export interface VulnResponseRow extends VulnResponseFields {
   id: number;
@@ -110,7 +147,7 @@ export function toVulnResponseFields(
   const primary = fqdns[0] ?? ips[0] ?? '';
   const related = assetKeys.filter((k) => k !== primary);
 
-  return {
+  const raw: VulnResponseFields = {
     issueInstanceId: text(issue.issueInstanceId),
     title: text(issue.title),
     legacyMgmtNumber: text(issue.legacyMgmtNumber),
@@ -127,6 +164,23 @@ export function toVulnResponseFields(
     relatedAssets: related.join(' | '),
     identifyEvidence: pick((a) => a.identifyEvidence),
   };
+  // 単一行テキスト列は 255 文字・改行なしに収める (超えると SP が 500 を返す)。
+  const out = { ...raw };
+  for (const k of Object.keys(out) as (keyof VulnResponseFields)[]) {
+    if (VULNRESPONSE_KIND[k] === 'text') out[k] = fitSingleLine(out[k]);
+  }
+  return out;
+}
+
+/** 単一行テキスト列に収まらない項目を洗い出す (原因を利用者に見せるため)。 */
+export function overlongTextFields(f: VulnResponseFields): { field: keyof VulnResponseFields; length: number }[] {
+  const out: { field: keyof VulnResponseFields; length: number }[] = [];
+  for (const k of Object.keys(f) as (keyof VulnResponseFields)[]) {
+    if (VULNRESPONSE_KIND[k] !== 'text') continue;
+    const v = String(f[k] ?? '');
+    if (v.length > TEXT_MAX_LENGTH) out.push({ field: k, length: v.length });
+  }
+  return out;
 }
 
 /** 日付として比べる項目 (他は文字列として比べる)。 */

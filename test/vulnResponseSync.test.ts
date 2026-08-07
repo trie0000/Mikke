@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
+  VULNRESPONSE_KIND, overlongTextFields,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs } from '../src/api/sp/schema';
@@ -187,5 +188,55 @@ describe('★ Mikke が書く列は、連携用リストの構築で必ず作ら
     const noColumn = Object.keys(fields).filter(
       (k) => !(k in VULNRESPONSE_COLUMN) || !VULNRESPONSE_COLUMN[k as keyof typeof VULNRESPONSE_COLUMN]);
     expect(noColumn).toEqual([]);
+  });
+});
+
+describe('単一行テキスト列に収める (SP は 255 文字超 / 改行を 500 で拒否)', () => {
+  const many = Array.from({ length: 40 }, (_, i) => `host${i}.example.com`);
+
+  it('255 文字を超える資産一覧は切り詰める', () => {
+    const f = toVulnResponseFields(issue(), many, ASSETS);
+    expect(f.assetFqdn.length).toBeLessThanOrEqual(255);
+    expect(f.assetFqdn.endsWith('…')).toBe(true);
+  });
+
+  it('改行・制御文字は空白に潰す (単一行テキストに入れられない)', () => {
+    const f = toVulnResponseFields(issue({ title: 'TLS 1.0\r\nが有効\tです' }), [], ASSETS);
+    expect(f.title).toBe('TLS 1.0 が有効 です');
+  });
+
+  it('複数行テキストの列は切り詰めない (関連資産・特定根拠)', () => {
+    const f = toVulnResponseFields(issue(), many, ASSETS);
+    expect(f.relatedAssets.length).toBeGreaterThan(255);
+  });
+
+  it('★ 切り詰めた値で比較するので、毎回「差分あり」にならない', () => {
+    // 書込直前で切ると SP 側の値と食い違い、延々と更新し続けることになる。
+    const first = toVulnResponseFields(issue(), many, ASSETS);
+    const stored: VulnResponseRow = { id: 1, ...first };
+    const plan = buildVulnResponsePlan([issue()], ASSETS, () => many, [stored]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('overlongTextFields は収まらない項目を名指しできる', () => {
+    const f = { ...toVulnResponseFields(issue(), [], ASSETS), assetFqdn: 'x'.repeat(300) };
+    expect(overlongTextFields(f)).toEqual([{ field: 'assetFqdn', length: 300 }]);
+  });
+});
+
+describe('★ 列の種類の宣言がスキーマと一致していること', () => {
+  it('text / note / date の割り当てが vulnResponseFieldSpecs と同じ', () => {
+    // ズレると「Note のつもりで切り詰めない → 500」または
+    // 「Text なのに切り詰めない → 500」になる。
+    const specKind: Record<string, string> = {};
+    for (const f of vulnResponseFieldSpecs()) {
+      specKind[f.name] = f.type === 'Note' || f.type === 'NoteRich' ? 'note'
+        : f.type === 'DateTime' ? 'date' : 'text';
+    }
+    const mismatch = (Object.keys(VULNRESPONSE_KIND) as (keyof typeof VULNRESPONSE_KIND)[])
+      .map((k) => ({ field: k, ours: VULNRESPONSE_KIND[k], spec: specKind[VULNRESPONSE_COLUMN[k]] }))
+      .filter((x) => x.ours !== x.spec);
+    expect(mismatch).toEqual([]);
   });
 });

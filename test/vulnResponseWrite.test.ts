@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fitSingleLine } from '../src/lib/vulnResponseSync';
 
 // 連携用リストへの書込を、SharePoint と同じ振る舞いのスタブに対して検証する。
 //
@@ -8,6 +9,13 @@ import type { AddressInfo } from 'node:net';
 //   SharePoint は body にリストへ無い列が 1 つでも入っていると **その 1 件ごと 400**
 //   を返す。Mikke 側に列を足したあと連携用リストを構築し直していない環境では、
 //   追加も更新も全件失敗し「連携リストへの更新でエラーになる」状態になっていた。
+
+/** 単一行テキスト列 (SharePoint 既定 255 文字・改行不可)。 */
+const TEXT_COLUMNS = new Set([
+  'Title', 'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus',
+  'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
+  'AssetMgmtId', 'ExtConnAppId',
+]);
 
 /** 旧レイアウトのまま = 最近足した LegacyMgmtNumber / ExtConnAppId が無い連携用リスト。 */
 const COLUMNS = new Set([
@@ -50,6 +58,13 @@ function startStub(): Promise<void> {
           // 本物と同じ形のエラー
           return json({ error: { message: { value:
             `The property '${unknown[0]}' does not exist on type 'SP.Data.MikkeVulnResponseListItem'.` } } }, 400);
+        }
+        // ★ 単一行テキストに 255 文字超 / 改行 が入ると本物は 500 を返す。
+        const badText = cols.filter((k) => TEXT_COLUMNS.has(k)
+          && typeof b[k] === 'string' && (String(b[k]).length > 255 || /[\r\n]/.test(String(b[k]))));
+        if (badText.length) {
+          return json({ error: { message: { value:
+            'テキストの値が正しくありません。テキストのフィールドに正しくない値が含まれています。値を確認し、再度行ってください。' } } }, 500);
         }
         return json({ d: { Id: 1 } }, 201);
       }
@@ -122,5 +137,41 @@ describe('連携用リストへの書込: リストに無い列を送らない',
     await expect(repo.updateVulnResponseItem(1, { detectionStatus: '再検知', extConnAppId: 'EXT-9' }))
       .resolves.toBeUndefined();
     expect(posted.at(-1)!.columns).toEqual(['DetectionStatus']);
+  });
+});
+
+describe('連携用リストへの書込: 単一行テキストに収まらない値', () => {
+  // ★ 実機で出たエラー:
+  //   HTTP 500 - テキストの値が正しくありません。テキストのフィールドに
+  //   正しくない値が含まれています。値を確認し、再度行ってください。
+  //   列が揃っていても、単一行テキスト列 (既定 255 文字・改行不可) に
+  //   収まらない値を送ると SharePoint は保存時に 500 で拒否する。
+  const LONG_FQDN = Array.from({ length: 40 }, (_, i) => `host${i}.example.com`).join(' | ');
+
+  it('★ 255 文字超をそのまま送ると 500 になる (実機のエラーの正体)', async () => {
+    expect(LONG_FQDN.length).toBeGreaterThan(255);
+    await expect(repo.spPost(
+      `/_api/web/lists/getbytitle('MikkeVulnResponse')/items`,
+      { __metadata: { type: 'SP.Data.MikkeVulnResponseListItem' },
+        IssueInstanceId: 'IID-L', Title: 'x', AssetFqdn: LONG_FQDN },
+    )).rejects.toThrow(/500/);
+  });
+
+  it('改行入りをそのまま送っても 500 になる', async () => {
+    await expect(repo.spPost(
+      `/_api/web/lists/getbytitle('MikkeVulnResponse')/items`,
+      { __metadata: { type: 'SP.Data.MikkeVulnResponseListItem' },
+        IssueInstanceId: 'IID-N', Title: 'a\nb' },
+    )).rejects.toThrow(/500/);
+  });
+
+  it('toVulnResponseFields を通した値なら通る', async () => {
+    const f = { ...FIELDS, assetFqdn: LONG_FQDN, title: 'a\nb' };
+    const fitted = {
+      ...f,
+      assetFqdn: fitSingleLine(f.assetFqdn),
+      title: fitSingleLine(f.title),
+    };
+    await expect(repo.createVulnResponseItem(fitted)).resolves.toBeUndefined();
   });
 });

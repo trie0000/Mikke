@@ -338,14 +338,24 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
 
       let ok = 0, fail = 0, firstErr = '';
-      const run = async (fn: () => Promise<void>): Promise<void> => {
-        try { await fn(); ok++; } catch (e) { fail++; if (!firstErr) firstErr = (e as Error).message; }
+      // ★ 失敗はどの脆弱性かが分からないと追えない。Issue Instance ID を添える。
+      const run = async (iid: string, fn: () => Promise<void>, fields?: object): Promise<void> => {
+        try { await fn(); ok++; } catch (e) {
+          fail++;
+          if (!firstErr) firstErr = `${iid}: ${(e as Error).message}`;
+          // ★ SharePoint の値エラー (500 テキストの値が正しくありません 等) は
+          //   どの項目が原因か応答に出ない。F12 で追えるよう項目長を残す。
+          if (fields) {
+            console.warn(`[mikke/vuln-response] ${iid} の書込に失敗:`, (e as Error).message,
+              Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, `${String(v ?? '').length}文字`])));
+          }
+        }
       };
       // 削除 → 追加 → 更新 の順。先に消しておくと、対象外を解除した直後の
       // 追加と取り違えにくい。
-      await mapLimit(plan.deletes, REFRESH_PARALLEL, (d) => run(() => getRepo().deleteVulnResponseItem(d.id)));
-      await mapLimit(plan.creates, REFRESH_PARALLEL, (c) => run(() => getRepo().createVulnResponseItem(c)));
-      await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(() => getRepo().updateVulnResponseItem(u.id, u.fields)));
+      await mapLimit(plan.deletes, REFRESH_PARALLEL, (d) => run(d.issueInstanceId, () => getRepo().deleteVulnResponseItem(d.id)));
+      await mapLimit(plan.creates, REFRESH_PARALLEL, (c) => run(c.issueInstanceId, () => getRepo().createVulnResponseItem(c), c));
+      await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(u.issueInstanceId, () => getRepo().updateVulnResponseItem(u.id, u.fields), u.fields));
 
       toast(rootEl,
         `${label}: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
