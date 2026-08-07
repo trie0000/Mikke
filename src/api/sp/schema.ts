@@ -105,7 +105,7 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'IsOutOfScope', type: 'Boolean', indexed: true },
     { name: 'OutOfScopeReason', type: 'Note' },
     { name: 'Assignee', type: 'Text' },
-    // 管理系 ID。IssueInstanceId (検査ツール) / 資産管理ID (資産リスト側の MgmtNumber) と
+    // 管理系 ID。IssueInstanceId (検査ツール) / Web資産管理ID (資産リスト側の MgmtNumber) と
     // 並ぶ 3 種類目。連携用リストにも同じ値を渡す。
     { name: 'ExtConnAppId', type: 'Text', indexed: true },
     // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
@@ -244,7 +244,7 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('AssetType', '資産タイプ'),
     pushed('BusinessCompany', '事業会社'),
     pushed('AffiliateCompany', '管理会社'),
-    pushed('AssetMgmtId', '資産管理ID', { indexed: true }),
+    pushed('AssetMgmtId', 'Web資産管理ID', { indexed: true }),
     pushed('ExtConnAppId', '外部接続申請ID'),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
     pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),

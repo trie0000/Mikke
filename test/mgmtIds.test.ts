@@ -6,7 +6,7 @@ import type { ManagedIssue } from '../src/types';
 
 // 管理系 ID は 3 種類 + 移行期間中だけの暫定 ID。
 //   1. Issue Instance ID … 検査ツールが付ける
-//   2. 資産管理ID        … 利用者側の Web 資産管理ツールの ID (資産リストの MgmtNumber)
+//   2. Web資産管理ID        … 利用者側の Web 資産管理ツールの ID (資産リストの MgmtNumber)
 //   3. 外部接続申請ID    … 利用者側の申請番号 (管理対象が持つ)
 //   +  旧管理番号        … Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止。
 describe('管理系 ID の持ち場所', () => {
@@ -20,7 +20,7 @@ describe('管理系 ID の持ち場所', () => {
     expect(vulnNames).toContain('IssueInstanceId');
   });
 
-  it('資産管理ID の実体は資産リストが持つ (管理対象には持たせない)', () => {
+  it('Web資産管理ID の実体は資産リストが持つ (管理対象には持たせない)', () => {
     expect(assets).toContain('MgmtNumber');
     expect(managed).not.toContain('AssetMgmtId');
     // 連携用リストへは資産から引いて渡すので、受け皿だけある

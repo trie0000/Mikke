@@ -39,7 +39,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let cache: ManagedIssue[] = [];
   /** 連携用リストの Issue Instance ID → 最終更新日時。通知ステータスの判定に使う。 */
   let vulnResponseUpdated = new Map<string, string>();
-  /** 資産キー → 資産管理ID (資産リストの管理番号)。脆弱性から引くための対応表。 */
+  /** 資産キー → Web資産管理ID (資産リストの管理番号)。脆弱性から引くための対応表。 */
   let assetMgmtIdByKey = new Map<string, string>();
   /** 資産を取り出す列 (設定。例: FQDN 列 + IP 列)。 */
   let assetColumns: string[] = [DEFAULT_ASSET_COLUMN];
@@ -66,8 +66,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const notifyOf = (i: ManagedIssue): NotifyStatus =>
     notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId));
 
-  /** その脆弱性に紐づく資産の「資産管理ID」。複数資産に跨る場合は重複を除いて並べる。
-   *  ★ 資産管理ID は資産リスト側が持つ値なので、脆弱性からは資産キー経由で引く。 */
+  /** その脆弱性に紐づく資産の「Web資産管理ID」。複数資産に跨る場合は重複を除いて並べる。
+   *  ★ Web資産管理ID は資産リスト側が持つ値なので、脆弱性からは資産キー経由で引く。 */
   const assetMgmtIdOf = (i: ManagedIssue): string => {
     const ids = new Set<string>();
     for (const col of assetColumns) {
@@ -91,7 +91,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         getRepo().getSettings(),
         // 連携用リストが未作成でも一覧は出す (その場合は全件「未通知」)。
         getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>()),
-        // 資産管理ID を引くため。取れなくても一覧は出す。
+        // Web資産管理ID を引くため。取れなくても一覧は出す。
         getRepo().listAssets().catch(() => []),
       ]);
       vulnResponseUpdated = notified;
@@ -184,10 +184,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         sortValue: (i) => NOTIFY_ORDER[notifyOf(i)],
         render: (i) => notifyBadge(notifyOf(i)) },
       // ── 管理系 ID ──
-      //   脆弱性ID (検査ツール) / 資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
+      //   脆弱性ID (検査ツール) / Web資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
       //   移行期間中だけ残す旧管理番号。
       { id: 'iid', label: '脆弱性ID', width: 140, text: (i) => i.issueInstanceId },
-      { id: 'assetMgmtId', label: '資産管理ID', width: 130, text: (i) => assetMgmtIdOf(i) },
+      { id: 'assetMgmtId', label: 'Web資産管理ID', width: 150, text: (i) => assetMgmtIdOf(i) },
       { id: 'extConnAppId', label: '外部接続申請ID', width: 140, text: (i) => i.extConnAppId ?? '' },
       { id: 'legacyMgmtNumber', label: '旧管理番号', width: 140, text: (i) => i.legacyMgmtNumber ?? '',
         cellStyle: 'color:var(--ink-3)' },

@@ -53,7 +53,7 @@ export interface ManagedIssue {
   /** 対応メモ。 */
   mgmtNote?: string;
   /** 外部接続申請ID (利用者側の申請番号。人が入力)。
-   *  管理系 ID の 1 つ。Issue Instance ID / 資産管理ID と並ぶ。 */
+   *  管理系 ID の 1 つ。Issue Instance ID / Web資産管理ID と並ぶ。 */
   extConnAppId?: string;
   /** 旧管理番号 (Excel 運用時代の「事業会社名-YYMM-XX」)。
    *  ★ 将来廃止する暫定 ID。移行期間中だけ参考情報として持つ。 */
