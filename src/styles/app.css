@@ -381,6 +381,31 @@
 #mikke-root .mikke-dropzone-hint { font-size: var(--fs-sm); color: var(--ink-4); }
 
 /* ---------- 全文表示トグル (折り返し) ---------- */
+/* OFF: 1 行に切り詰めて行の高さを揃える。
+   ★ 揃えないと長い値のある行だけ伸びて読みにくく、仮想スクロールの位置計算
+     (1 行 = 固定高さ前提) もずれる。全文は「全文表示」ON か詳細画面で見る。
+   ★ max-width:0 は table セルで text-overflow を効かせるための定石
+     (th の width 指定が実効値になる)。 */
+#mikke-root .mikke-table:not(.mikke-wrap) td {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0;
+}
+/* 中身が縦に伸びる要素 (リッチテキストのプレビュー等) も 1 行に収める。 */
+#mikke-root .mikke-table:not(.mikke-wrap) td > div {
+  max-height: 1.6em; overflow: hidden;
+}
+#mikke-root .mikke-table:not(.mikke-wrap) .mikke-cell-rich {
+  white-space: nowrap; text-overflow: ellipsis;
+}
+/* ★ リッチテキストは <p> 等のブロックを含むため、そのままだと 2 行目以降が
+   行の高さで切れて「文字の途中で切れた」見た目になる。非折り返し時は中身を
+   inline にして 1 行に流し、はみ出し分は省略記号にする。 */
+#mikke-root .mikke-table:not(.mikke-wrap) .mikke-cell-rich > * {
+  display: inline; margin: 0; padding: 0;
+}
+#mikke-root .mikke-table:not(.mikke-wrap) .mikke-cell-rich br { display: none; }
+#mikke-root .mikke-table:not(.mikke-wrap) .mikke-cell-rich img {
+  max-height: 1.4em; vertical-align: middle;
+}
 #mikke-root .mikke-table.mikke-wrap td {
   white-space: normal; overflow: visible; text-overflow: clip;
   overflow-wrap: anywhere; word-break: break-word; vertical-align: top;
