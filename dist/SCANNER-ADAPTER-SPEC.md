@@ -483,7 +483,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -Conten
 
 ## 11. 個別レポートの取得（脆弱性 1 件ごと）
 
-管理対象一覧でチェックを入れて **「情報更新」** を押したとき、選択された脆弱性 **1 件につき 1 回**、検査ツールからその脆弱性のレポート（zip）を取得する。取得したファイルは Mikke が SharePoint に保存し、一覧からリンクで開けるようにするほか、**資産管理者への連携用リストの該当アイテムに添付**する。
+管理対象一覧でチェックを入れて **「情報更新」** を押したとき、選択された脆弱性 **1 件につき 1 回**、検査ツールからその脆弱性のレポート（**PDF**）を取得する。取得したファイルは Mikke が SharePoint に保存し、一覧からリンクで開けるようにするほか、**資産管理者への連携用リストの該当アイテムに添付**する。
 
 > **この章の関数は任意実装**です。定義しなければ relay が 501 を返し、Mikke は個別レポートの取得だけをスキップして情報更新を続けます（エラーにはなりません）。
 
@@ -502,7 +502,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -Conten
             (b) 連携用リストの同じ Issue Instance ID のアイテムに添付
 ```
 
-選択件数分だけ順に呼ばれる（1 件ずつ直列）。1 件が失敗しても他の件と情報更新自体は続行する。
+選択件数分だけ呼ばれる。実際には §12 の `/mikke/issues` 経由で **最大 5 件並列** で呼ばれる（アダプタ側の並列安全性については §12 を参照）。1 件が失敗しても他の件と情報更新自体は続行する。
 
 ### 11-2. 契約（インターフェース — 変更不可）
 
@@ -514,15 +514,15 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/merge' -Method Post -Conten
 
 ```powershell
 @{
-  fileName            = 'IID-1001_2026_Jul_05.zip'  # 検査ツールが付けた名前のまま
+  fileName            = 'IID-1001_2026_Jul_05.pdf'  # 検査ツールが付けた名前のまま
   contentBase64       = '<Base64>'                  # ファイル本体
   scannerDownloadTime = '2026-07-05T09:00:00'       # 任意。ISO8601
 }
 ```
 
 - **`contentBase64` は必須**。空だと relay が 502 を返す。
-- `fileName` を省略した場合は relay が `<IssueInstanceId>.zip` を補う。
-- 検査ツールからは zip でダウンロードされる想定。**再圧縮もリネームもしない**でそのまま返す（Mikke 側も再圧縮しない）。
+- `fileName` を省略した場合は relay が `<IssueInstanceId>.pdf` を補う。
+- 検査ツールからは **PDF** でダウンロードされる想定。**圧縮もリネームもしない**でそのまま返す（Mikke 側も再圧縮しない。拡張子から Content-Type を決めるので、zip / CSV 等で返しても壊れないが、**拡張子は必ず中身と合わせる**こと）。
 - ファイル名は SharePoint の添付ファイル名になる。Mikke 側で英数字・`.` `_` `-` 以外は `_` に置換するので日本語名でも動くが、英数字を推奨。
 - エラーは throw する（relay が 502 + メッセージで UI に返す）。診断ログ規約は §5-1 と同じ。
 
@@ -548,7 +548,7 @@ function Invoke-MikkeScannerIssueReport {
     if ($bytes -is [string]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($bytes) }
 
     # Content-Disposition があれば検査ツールが付けた名前をそのまま使う
-    $name = "$IssueInstanceId.zip"
+    $name = "$IssueInstanceId.pdf"
     $cd = $resp.Headers['Content-Disposition']
     if ($cd -and $cd -match 'filename="?([^";]+)"?') { $name = $Matches[1] }
 
@@ -578,7 +578,7 @@ $body = @{ issueInstanceId = 'IID-1001' } | ConvertTo-Json
 Invoke-RestMethod -Uri 'http://127.0.0.1:18080/mikke/issue-report' -Method Post -ContentType 'application/json' -Body $body
 ```
 
-→ `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[issue-report] IID-1001 -> ....zip (N KB base64)` が出る。
+→ `ok: true` と `fileName` / `contentBase64` が返れば OK。relay コンソールに `[issue-report] IID-1001 -> ....pdf (N KB base64)` が出る。
 
 ### 11-5. チェックリスト（追加分）
 
@@ -633,7 +633,7 @@ relay の受付ループは `GetContext()` の逐次ループで、**1 リクエ
   { "issueInstanceId": "IID-1", "ok": true,
     "scannerStatus": "open", "severity": "high", "lastSeen": "2026-08-02T00:00:00",
     "detected": true, "scanFields": { "Scan_Asset": "host1.example.com" },
-    "report": { "fileName": "IID-1.zip", "contentBase64": "…", "scannerDownloadTime": "…" } },
+    "report": { "fileName": "IID-1.pdf", "contentBase64": "…", "scannerDownloadTime": "…" } },
   { "issueInstanceId": "IID-2", "ok": false, "error": "404 Not Found" }
 ] }
 ```

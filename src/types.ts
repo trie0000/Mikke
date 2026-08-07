@@ -73,7 +73,8 @@ export interface ManagedIssue {
   addedReason?: AddedReason;
   /** 最終同期日時 (ISO)。 */
   lastSyncedAt?: string;
-  /** 個別レポート (zip) の SP 上の URL。「情報更新」で 1 件ずつ取得したもの。 */
+  /** 個別レポートの SP 上の URL。「情報更新」で 1 件ずつ取得したもの。
+   *  形式は検査ツールが返したまま (現状 PDF)。Mikke は再圧縮もリネームもしない。 */
   reportUrl?: string;
   /** 個別レポートのファイル名 (検査ツールが付けた名前のまま)。 */
   reportName?: string;

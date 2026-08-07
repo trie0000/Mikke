@@ -120,7 +120,8 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'FirstUndetectedAt', type: 'DateTime' },
     { name: 'AddedReason', type: 'Choice', choices: ['条件一致', '個別指定'] },
     { name: 'LastSyncedAt', type: 'DateTime' },
-    // 個別レポート (情報更新で 1 件ずつ取得する zip)。URL は 255 文字を超え得るので Note。
+    // 個別レポート (情報更新で 1 件ずつ取得。形式は検査ツール次第で現状 PDF)。
+    // URL は 255 文字を超え得るので Note。
     { name: 'ReportUrl', type: 'Note' },
     { name: 'ReportName', type: 'Text' },
     { name: 'ReportAt', type: 'DateTime' },

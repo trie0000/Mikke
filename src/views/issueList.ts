@@ -15,6 +15,9 @@ import { DataTable, type DataColumn } from './dataTable';
 import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES, mapLimit, base64ToBytes } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
 import { storeIssueReport, sampleIssueReport, issueReportFolder, isAdapterMissing } from '../lib/issueReport';
+import { reportLinkLabel, zipEntryName, bulkReportZipName } from '../lib/reportFile';
+import { zipFiles, type ZipInput } from '../lib/zip';
+import { downloadFile } from '../lib/xlsx';
 import { notifyStatusOf, NOTIFY_ORDER, type NotifyStatus } from '../lib/notifyStatus';
 import { buildResponseSyncPlan } from '../lib/responseSync';
 import { buildVulnResponsePlan } from '../lib/vulnResponseSync';
@@ -23,6 +26,17 @@ import type { ManagedIssue } from '../types';
 /** 情報更新の並列数。relay 側 (/mikke/issues の runspace プール) と同じ値にする。
  *  ここを増やすなら relay の $MIKKE_ISSUES_MAX_PARALLEL も合わせること。 */
 const REFRESH_PARALLEL = 5;
+
+/** 保存済みレポートを SP から読み出すときの並列数 (SP へのファイル GET のみ)。 */
+const REPORT_FETCH_PARALLEL = 6;
+
+/** 組み込み列で既に出している CSV 列 (管理列に指定されても重複表示しない)。
+ *  import.ts の COL_TITLE='Title' / ISSUE_ID_COLUMN='Issue Instance ID' がそのまま
+ *  'Title' 列・'Issue Instance ID' 列に入るので、同じ内容の列が 2 本並んでしまう。
+ *  比較は空白・アンダースコアを除いた小文字で行う ('Issue Instance ID' / 'issue_instance_id' 等)。 */
+const BUILTIN_SCAN_COLUMNS = new Set(['title', 'issueinstanceid']);
+const normScanCol = (c: string): string =>
+  c.replace(/^Scan_/, '').replace(/[\s\u3000_]+/g, '').toLowerCase();
 
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
@@ -376,7 +390,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
 
   function buildColumns(): DataColumn<ManagedIssue>[] {
     const cols: DataColumn<ManagedIssue>[] = [
-      { id: 'title', label: 'Issue', width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
+      // ★ ラベルは 'Title'。CSV の Title 列がそのまま入るので、管理列に Title を
+      //   足すと同じ内容の列が 2 本並ぶ。重複は buildColumns の scanCols 側で外す。
+      { id: 'title', label: 'Title', width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
       { id: 'detection', label: '検知', width: 96, text: (i) => i.detectionStatus,
         sortValue: (i) => DETECTION_ORDER[i.detectionStatus] ?? 0, render: (i) => detectionBadge(i.detectionStatus) },
       { id: 'mgmt', label: '対応', width: 96, text: (i) => i.mgmtStatus,
@@ -387,16 +403,19 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         sortValue: (i) => NOTIFY_ORDER[notifyOf(i)],
         render: (i) => notifyBadge(notifyOf(i)) },
       // ── 管理系 ID ──
-      //   脆弱性ID (検査ツール) / Web資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
+      //   Issue Instance ID (検査ツール) / Web資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
       //   移行期間中だけ残す旧管理番号。
-      { id: 'iid', label: '脆弱性ID', width: 140, text: (i) => i.issueInstanceId },
+      // ★ ラベルは検査ツールの呼び名どおり 'Issue Instance ID'。CSV にも同名列が来るので、
+      //   管理列に足しても重複表示しない (BUILTIN_SCAN_COLUMNS)。
+      { id: 'iid', label: 'Issue Instance ID', width: 170, text: (i) => i.issueInstanceId },
       { id: 'assetMgmtId', label: 'Web資産管理ID', width: 150, text: (i) => assetMgmtIdOf(i) },
       { id: 'extConnAppId', label: '外部接続申請ID', width: 140, text: (i) => i.extConnAppId ?? '' },
       { id: 'legacyMgmtNumber', label: '旧管理番号', width: 140, text: (i) => i.legacyMgmtNumber ?? '',
         cellStyle: 'color:var(--ink-3)' },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
-      // 「情報更新」で取得した個別レポート (zip)。行クリック (詳細を開く) と競合しないよう
+      // 「情報更新」で取得した個別レポート。形式は検査ツールが返したまま (現状 PDF) なので、
+      // リンク表記もファイル名の拡張子から出す。行クリック (詳細を開く) と競合しないよう
       // リンク側で stopPropagation する。
       { id: 'report', label: 'レポート', width: 104,
         text: (i) => i.reportName ?? '',
@@ -406,10 +425,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
               href: '#', class: 'mikke-link',
               title: `${i.reportName ?? ''}${i.reportAt ? ` (${fmtDate(i.reportAt)})` : ''}`,
               onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); void openReport(i); },
-            }, ['zip'])
+            }, [reportLinkLabel(i.reportName)])
           : '') },
     ];
     for (const c of scanCols) {
+      // 組み込み列と同じ内容になる CSV 列は出さない (Title / Issue Instance ID)。
+      if (BUILTIN_SCAN_COLUMNS.has(normScanCol(c))) continue;
       cols.push({ id: `scan:${c}`, label: c.replace(/^Scan_/, ''), width: 160,
         text: (i) => resolveScanValue(i.scanFields, c, csvHeaders) || '', cellStyle: 'color:var(--ink-2)' });
     }
@@ -452,9 +473,18 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       onclick: () => void bulkRefresh(refreshBtn),
       html: icon('sync') + '<span>情報更新</span>',
     });
+    const zipBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary',
+      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+      title: '選択中の脆弱性の保存済みレポートを 1 つの zip にまとめてダウンロードします（検査ツールへは問い合わせません）',
+      ...(bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => void downloadSelectedReports(),
+      html: icon('download') + '<span>レポートをZIP取得</span>',
+    }) as HTMLButtonElement;
     subbar.append(
       el('span', { class: 'mikke-subbar-count', style: 'color:var(--accent-strong);font-weight:600' }, [`${sel} 件選択`]),
       refreshBtn,
+      zipBtn,
       el('button', {
         class: 'mikke-btn mikke-btn--danger', style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
         ...(bulkBusy ? { disabled: 'disabled' } : {}), onclick: () => bulkExclude(),
@@ -696,7 +726,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       html: icon('download') + '<span>一括更新(固定)</span>',
     });
     const bulkAddBtn = el('button', {
-      class: 'mikke-btn mikke-btn--primary', style: 'height:30px;font-size:var(--fs-sm)',
+      // ★ ツールバーの primary は「全文表示」が ON 状態の表示に使っている。
+      //   一括更新(追加) を常時 primary にすると状態表示と紛らわしいので secondary に揃える。
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '検査ツールから全レポートを取得し、追加モードで反映（新規追加＋全ステータス更新）',
       ...(bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => bulkUpdate('add'),
@@ -731,13 +763,73 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     ]);
   }
 
-  /** 個別レポート (zip) を保存する。SP=絶対URL / mock=data URL。 */
+  /**
+   * 選択中の脆弱性の個別レポートを 1 つの zip にまとめて保存する。
+   *
+   * ★ 取りに行くのは **SP に保存済みのレポート** だけ。検査ツールへは問い合わせないので
+   *   取り直したいときは先に「情報更新」を使う (時間と負荷が段違いなため分けている)。
+   * ★ zip 内の名前は取得順ではなく一覧の並び順で決める (実行のたびに連番が入れ替わらない)。
+   */
+  async function downloadSelectedReports(): Promise<void> {
+    const targets = cache.filter((i) => selected.has(i.id));
+    const withReport = targets.filter((i) => i.reportUrl);
+    if (!withReport.length) {
+      toast(rootEl, '選択した脆弱性に保存済みレポートがありません。先に「情報更新」で取得してください。', 'warn', 8000);
+      return;
+    }
+    bulkBusy = true;
+    updateSubbar();
+    const missing = targets.length - withReport.length;
+    toast(rootEl, `レポートを取得しています… ${withReport.length} 件 (${REPORT_FETCH_PARALLEL} 件並列)`, 'default', 8000);
+    try {
+      const fetched = new Array<Uint8Array | null>(withReport.length).fill(null);
+      const errs: string[] = [];
+      await mapLimit(
+        withReport.map((issue, idx) => ({ issue, idx })), REPORT_FETCH_PARALLEL,
+        async ({ issue, idx }) => {
+          try {
+            const href = await getRepo().docFileHref(issue.reportUrl!);
+            if (!href) throw new Error('保存済みファイルが見つかりません（削除済みの可能性）');
+            const r = await fetch(href, { credentials: 'same-origin', cache: 'no-store' });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            fetched[idx] = new Uint8Array(await r.arrayBuffer());
+          } catch (e) {
+            errs.push(`${issue.issueInstanceId}: ${(e as Error).message}`);
+          }
+        },
+      );
+
+      const used = new Set<string>();
+      const entries: ZipInput[] = [];
+      withReport.forEach((issue, idx) => {
+        const data = fetched[idx];
+        if (data) entries.push({ name: zipEntryName(issue.issueInstanceId, issue.reportName ?? '', used), data });
+      });
+      if (!entries.length) {
+        toast(rootEl, `レポートを 1 件も取得できませんでした: ${errs[0] ?? ''}`, 'error', 10000);
+        return;
+      }
+
+      downloadFile(bulkReportZipName(), await zipFiles(entries));
+      const parts = [`レポート ${entries.length} 件を zip で保存しました`];
+      if (missing) parts.push(`レポート未取得 ${missing} 件は除外`);
+      if (errs.length) parts.push(`取得失敗 ${errs.length} 件 — ${errs[0]}`);
+      toast(rootEl, parts.join(' / '), errs.length ? 'warn' : 'ok', errs.length ? 12000 : 6000);
+    } catch (e) {
+      toast(rootEl, `レポートの一括ダウンロードに失敗しました: ${(e as Error).message}`, 'error', 10000);
+    } finally {
+      bulkBusy = false;
+      updateSubbar();
+    }
+  }
+
+  /** 個別レポートを 1 件保存する (形式は検査ツールが返したまま)。SP=絶対URL / mock=data URL。 */
   async function openReport(issue: ManagedIssue): Promise<void> {
     if (!issue.reportUrl) return;
     try {
       const href = await getRepo().docFileHref(issue.reportUrl);
       if (!href) { toast(rootEl, 'レポートが見つかりません（削除済みの可能性）。', 'warn'); return; }
-      const a = el('a', { href, download: issue.reportName ?? 'report.zip', style: 'display:none' });
+      const a = el('a', { href, download: issue.reportName || 'report', style: 'display:none' });
       rootEl.appendChild(a);
       a.click();
       a.remove();

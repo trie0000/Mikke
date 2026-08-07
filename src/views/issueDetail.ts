@@ -3,7 +3,8 @@ import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState } from '../state';
 import { getRepo } from '../api/repo';
-import { detectionBadge, mgmtBadge, severityBadge } from './badges';
+import { detectionBadge, mgmtBadge, notifyBadge } from './badges';
+import { notifyStatusOf } from '../lib/notifyStatus';
 import { openEditModal } from './editModal';
 import { relayGetIssue, relayHealth, getRelayBase } from '../api/relay';
 import { toast } from '../components/toast';
@@ -37,6 +38,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
 
   let activeTab: DetailTab = 'overview';
   let current: ManagedIssue | null = null;
+  /** 連携用リスト側の最終更新時刻 (Issue Instance ID → ISO)。通知ステータスの判定に使う。 */
+  let vulnResponseUpdated = new Map<string, string>();
   // SP の安全列名 (Scan_xxx_hash) → 元の列名 の逆引き (検査ツール詳細タブの表示用)
   let scanNames: Record<string, string> = {};
   // 直近取込 CSV のヘッダ (検査ツール詳細を CSV の列順で表示するため)
@@ -101,6 +104,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       csvHeaders = settings.lastCsvHeaders ?? [];
       scanNames = scanDisplayMap([...csvHeaders, ...settings.managedColumns]);
     } catch { /* noop */ }
+    // 通知ステータス用。連携用リストが未作成でも詳細表示は続ける (その場合は「未通知」)。
+    try { vulnResponseUpdated = await getRepo().vulnResponseUpdatedAt(); } catch { /* noop */ }
     await loadHistory();
     await loadChangeLog();
     paintTabs();
@@ -145,9 +150,11 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['ID', `#${i.id}`],
         ['Issue Instance ID', i.issueInstanceId],
         ['タイトル', i.title],
-        ['深刻度', null, severityBadge(i.severity)],
+        // 深刻度は管理対象一覧・概要ともに出さない (検査ツール詳細タブでは元値を見られる)。
         ['検知ステータス', null, detectionBadge(i.detectionStatus)],
-        ['対応ステータス', null, mgmtBadge(i.mgmtStatus)],
+        // 一覧と同じ 2 項目に分ける: 対応 = Mikke 側の対応状況 / 通知 = 連携用リストとの同期状態。
+        ['対応', null, mgmtBadge(i.mgmtStatus)],
+        ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],
         ['取込経緯', i.addedReason || '—'],
@@ -188,7 +195,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['※ 検査ツール由来の項目は読み取り専用です。']));
     } else if (activeTab === 'mgmt') {
       body.appendChild(metaGrid([
-        ['対応ステータス', null, mgmtBadge(i.mgmtStatus)],
+        ['対応', null, mgmtBadge(i.mgmtStatus)],
+        ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
         ['対象外', i.isOutOfScope ? `はい — ${i.outOfScopeReason || ''}` : 'いいえ'],
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],

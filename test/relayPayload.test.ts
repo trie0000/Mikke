@@ -29,7 +29,10 @@ describe('自己更新: 配布ファイル一覧の整合', () => {
   });
 
   it('manifest の版数は relay 本体の版数と一致する', () => {
-    expect(relayPs1).toContain(`$MIKKE_RELAY_VERSION = '${manifest.version}'`);
+    // ズレていたら relay を編集して build していない (= 配布される manifest が古い)。
+    const inPs1 = /\$MIKKE_RELAY_VERSION\s*=\s*'([^']+)'/.exec(relayPs1)?.[1];
+    expect({ 'relay-version.txt': manifest.version, 'mikke-relay.ps1': inPs1 })
+      .toEqual({ 'relay-version.txt': inPs1, 'mikke-relay.ps1': inPs1 });
   });
 });
 

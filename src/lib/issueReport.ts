@@ -1,12 +1,14 @@
 // 脆弱性 1 件ごとのレポートを SP に保存し、連携用リストへ添付するフロー。
+// レポートは検査ツールが返した形式のまま扱う (現状 PDF。再圧縮もリネームもしない)。
 //   管理対象一覧の「情報更新」から呼ばれる。取得そのものは relay の /mikke/issues
 //   (runspace プールで並列) がまとめて行うので、ここは保存と添付だけを担う。
 //     1. SP のドキュメントライブラリに原本を保存 … 一覧からリンクで開く用 (世代が残る)
 //     2. 連携用リストの該当アイテムに添付       … 資産管理者が SP 上で開く用 (常に最新1つ)
 //   UI 非依存。
 import { getRepo } from '../api/repo';
-import { zipFiles } from './zip';
 import { jstStamp } from './downloadFlow';
+import { reportMime } from './reportFile';
+import { simplePdf } from './pdf';
 import type { ManagedIssue } from '../types';
 
 const DEFAULT_FOLDER = 'Shared Documents/MikkeDownloads';
@@ -33,20 +35,19 @@ export async function issueReportFolder(nowIso: string): Promise<string> {
   return `${baseFolder}/${ISSUE_REPORT_SUBFOLDER}/${jstStamp(nowIso)}`;
 }
 
-/** dev (mock) 用のサンプルレポート。中身は識別できれば十分。 */
+/** dev (mock) 用のサンプルレポート。中身は識別できれば十分。
+ *  ★ 本番の検査ツールは PDF を返すので、モックも PDF にして形式を合わせる
+ *    (一覧のリンク表記・一括 zip の中身が dev と本番でズレないように)。 */
 export async function sampleIssueReport(issue: ManagedIssue): Promise<FetchedReport> {
-  const enc = new TextEncoder();
-  const text = [
-    `Issue Instance ID,${issue.issueInstanceId}`,
-    `Title,${issue.title}`,
-    `Severity,${issue.severity ?? ''}`,
-    `Exported,${new Date().toISOString()}`,
-  ].join('\n') + '\n';
-  const zip = await zipFiles([{ name: `${issue.issueInstanceId || 'issue'}.csv`, data: enc.encode(text) }]);
-  return {
-    fileName: `${issue.issueInstanceId || 'issue'}_${jstStamp()}.zip`,
-    bytes: new Uint8Array(await zip.arrayBuffer()),
-  };
+  const bytes = simplePdf([
+    'Mikke sample vulnerability report',
+    '',
+    `Issue Instance ID: ${issue.issueInstanceId}`,
+    `Title: ${issue.title}`,
+    `Severity: ${issue.severity ?? ''}`,
+    `Exported: ${new Date().toISOString()}`,
+  ]);
+  return { fileName: `${issue.issueInstanceId || 'issue'}_${jstStamp()}.pdf`, bytes };
 }
 
 export interface IssueReportResult {
@@ -74,7 +75,8 @@ export async function storeIssueReport(
   issue: ManagedIssue, rep: FetchedReport, folder: string,
 ): Promise<IssueReportResult> {
   const fetchedAt = new Date().toISOString();
-  const blob = new Blob([rep.bytes as BlobPart], { type: 'application/zip' });
+  // Content-Type は検査ツールが返したファイル名の拡張子から決める (PDF / zip 等)。
+  const blob = new Blob([rep.bytes as BlobPart], { type: reportMime(rep.fileName) });
   const { url } = await getRepo().uploadDownloadFile(folder, rep.fileName, blob);
 
   let attach: IssueReportResult['attach'] = 'no-item';

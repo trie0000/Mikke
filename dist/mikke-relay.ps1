@@ -32,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.21'
+$MIKKE_RELAY_VERSION = '1.0.22'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -433,7 +433,7 @@ function Invoke-IssueFetch {
 # 出力: { ok:true, fileName, contentBase64, scannerDownloadTime }
 #
 # ★ 契約: Invoke-MikkeScannerIssueReport -IssueInstanceId <string> を定義し、
-#   @{ fileName='<検査ツールが付けた名前.zip>'; contentBase64='<Base64>';
+#   @{ fileName='<検査ツールが付けた名前.pdf>'; contentBase64='<Base64>';
 #      scannerDownloadTime='<ISO8601>' } を返す (scannerDownloadTime は任意)。
 # ★ 未実装 (関数が無い) は 501 で返す。ブラウザ側はレポートだけ諦めて情報更新を続ける。
 function Invoke-IssueReport {
@@ -471,7 +471,7 @@ function Invoke-IssueReport {
         $fileName = [string]$result.fileName
         $content  = [string]$result.contentBase64
         if (-not $content) { throw 'アダプタが contentBase64 を返しませんでした' }
-        if (-not $fileName) { $fileName = "$iid.zip" }
+        if (-not $fileName) { $fileName = "$iid.pdf" }
         Write-Host "[issue-report] $iid -> $fileName ($([math]::Round($content.Length / 1KB)) KB base64)" -ForegroundColor Green
         $body = @{ ok = $true; fileName = $fileName; contentBase64 = $content }
         if ($result.scannerDownloadTime) { $body.scannerDownloadTime = [string]$result.scannerDownloadTime }
@@ -555,7 +555,7 @@ function Invoke-IssuesBatch {
                     $rep = Invoke-MikkeScannerIssueReport -IssueInstanceId $Iid
                     if ($rep -and $rep.contentBase64) {
                         $name = [string]$rep.fileName
-                        if (-not $name) { $name = "$Iid.zip" }
+                        if (-not $name) { $name = "$Iid.pdf" }
                         $out.report = @{
                             fileName            = $name
                             contentBase64       = [string]$rep.contentBase64
