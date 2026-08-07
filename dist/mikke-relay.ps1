@@ -32,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.24'
+$MIKKE_RELAY_VERSION = '1.0.25'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -833,6 +833,12 @@ function Invoke-RelaySelfUpdate {
     #   途中から別のコマンドとして実行されて **置換も再起動も起きない**
     #   (relay は既に終了しているので中継サーバが落ちたままになる)。
     #   同梱の mikke-relay.bat / mikke-launch.bat と同じ規約。
+    # ★ 居残り relay の掃除は「ポートの所有者」ではなく **自分のスクリプトを実行中の
+    #   powershell.exe** を狙う。PowerShell の HttpListener は http.sys (カーネル) が
+    #   待受を持つため、Get-NetTCPConnection の OwningProcess は **PID 4 (System)** に
+    #   なる (実機で確認)。旧実装はそれを Stop-Process -Force しようとしており、
+    #   掃除にならないうえ System を kill しにいっていた。
+    #   対象は自フォルダのスクリプトに限定する (別ポートで動かしている relay を巻き込まない)。
     # ★ 待機は timeout ではなく ping。timeout は標準入力が
     #   リダイレクトされている環境で「入力のリダイレクトはサポートされていません」
     #   で即死する (relay が別プロセスから起動されている場合に起こり得る)。
@@ -850,15 +856,15 @@ set MANAGED=$managedListBat
 echo [updater] waiting for relay PID %RELAY_PID% to exit...
 set /a TRIES=0
 :wait
-if "%RELAY_PID%"=="" goto :killport
+if "%RELAY_PID%"=="" goto :killstale
 tasklist /FI "PID eq %RELAY_PID%" 2>nul | find "%RELAY_PID%" >nul
-if errorlevel 1 goto :killport
+if errorlevel 1 goto :killstale
 set /a TRIES+=1
-if %TRIES% GEQ 8 ( taskkill /F /PID %RELAY_PID% >nul 2>&1 & goto :killport )
+if %TRIES% GEQ 8 ( taskkill /F /PID %RELAY_PID% >nul 2>&1 & goto :killstale )
 ping -n 2 127.0.0.1 >nul
 goto :wait
-:killport
-powershell -NoProfile -Command "& { try { (Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique | ForEach-Object { Stop-Process -Id `$_ -Force -ErrorAction SilentlyContinue } } catch { } }" >nul 2>&1
+:killstale
+powershell -NoProfile -Command "& { try { Get-CimInstance Win32_Process | Where-Object { `$_.Name -eq 'powershell.exe' -and `$_.CommandLine -like '*%SCRIPT_DIR%mikke-relay.ps1*' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue } } catch { } }" >nul 2>&1
 echo [updater] replacing files...
 for %%F in (%MANAGED%) do (
     if exist "%SCRIPT_DIR%%%F.new" (

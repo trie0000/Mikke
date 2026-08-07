@@ -70,8 +70,16 @@ describe('自己更新: 生成される updater.bat は ASCII のみ', () => {
     expect(bat).toContain('ping -n 2 127.0.0.1');
   });
 
-  it('再起動時にポートを引き継ぐ / ポート掃除の $_ が壊れていない', () => {
+  it('再起動時にポートを引き継ぐ', () => {
     expect(bat).toContain('-Port %RELAY_PORT%');
-    expect(bat).toContain('Stop-Process -Id `$_ -Force');
+  });
+
+  it('居残り relay の掃除はポート所有者ではなく自分のスクリプトを狙う', () => {
+    // HttpListener は http.sys (カーネル) が待受を持つため、
+    // Get-NetTCPConnection の OwningProcess は PID 4 (System) になる (実機で確認)。
+    // それを Stop-Process -Force するのは掃除にならないうえ危ない。
+    expect(bat).not.toContain('Get-NetTCPConnection');
+    expect(bat).toContain("CommandLine -like '*%SCRIPT_DIR%mikke-relay.ps1*'");
+    expect(bat).toContain('Stop-Process -Id `$_.ProcessId -Force');
   });
 });
