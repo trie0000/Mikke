@@ -75,6 +75,28 @@ function textValue(expression: string): Record<string, unknown> {
   };
 }
 
+/** ファイルへのリンク。未取得なら "—" を出す。
+ *  ★ URL 列の値は式では `[$ReportUrl]` が URL、`[$ReportUrl.desc]` が表示テキスト。
+ *    リンクは a 要素 + attributes.href で作る (style だけでは押せない)。 */
+function linkValue(field: string, fallbackText: string): Record<string, unknown> {
+  return {
+    elmType: 'div',
+    style: VALUE_STYLE,
+    children: [
+      {
+        elmType: 'a',
+        txtContent: `=if([$${field}] == '', '—', if([$${field}.desc] == '', '${fallbackText}', [$${field}.desc]))`,
+        attributes: {
+          href: `[$${field}]`,
+          target: '_blank',
+          class: "=if([$" + field + "] == '', '', 'ms-fontColor-themePrimary')",
+        },
+        style: { 'text-decoration': "=if([$" + field + "] == '', 'none', 'underline')" },
+      },
+    ],
+  };
+}
+
 /** 日付。ISO のままだと読めないのでロケール表記にする。 */
 function dateValue(field: string): Record<string, unknown> {
   return {
@@ -175,6 +197,8 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
             [item('旧管理番号', textValue('[$LegacyMgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
             [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
           ),
+          // 脆弱性レポート (PDF)。一覧の「脆弱性レポート」列からも直接開ける。
+          item('脆弱性レポート', linkValue('ReportUrl', 'レポートを開く')),
         ]),
         // カード 2: 資産情報
         card('資産情報', '読み取り専用', [

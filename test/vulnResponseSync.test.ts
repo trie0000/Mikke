@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
-  VULNRESPONSE_KIND, overlongTextFields,
+  VULNRESPONSE_KIND, overlongTextFields, fileNameOf,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
-import { vulnResponseFieldSpecs } from '../src/api/sp/schema';
+import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS } from '../src/api/sp/schema';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
@@ -232,11 +232,63 @@ describe('★ 列の種類の宣言がスキーマと一致していること', 
     const specKind: Record<string, string> = {};
     for (const f of vulnResponseFieldSpecs()) {
       specKind[f.name] = f.type === 'Note' || f.type === 'NoteRich' ? 'note'
-        : f.type === 'DateTime' ? 'date' : 'text';
+        : f.type === 'DateTime' ? 'date'
+        : f.type === 'Url' ? 'url' : 'text';
     }
     const mismatch = (Object.keys(VULNRESPONSE_KIND) as (keyof typeof VULNRESPONSE_KIND)[])
       .map((k) => ({ field: k, ours: VULNRESPONSE_KIND[k], spec: specKind[VULNRESPONSE_COLUMN[k]] }))
       .filter((x) => x.ours !== x.spec);
     expect(mismatch).toEqual([]);
+  });
+});
+
+describe('脆弱性レポートへのリンク', () => {
+  it('管理対象の reportUrl をそのまま連携用リストへ渡す', () => {
+    const url = '/sites/x/Shared Documents/MikkeDownloads/issues/20260808-101500/IID-1_20260808.pdf';
+    const f = toVulnResponseFields(issue({ reportUrl: url }), [], ASSETS);
+    expect(f.reportUrl).toBe(url);
+  });
+
+  it('未取得なら空 (列も空になる)', () => {
+    expect(toVulnResponseFields(issue(), [], ASSETS).reportUrl).toBe('');
+  });
+
+  it('レポートが差し替わったら更新対象になる', () => {
+    const before = toVulnResponseFields(issue({ reportUrl: '/a/old.pdf' }), [], ASSETS);
+    const plan = buildVulnResponsePlan(
+      [issue({ reportUrl: '/a/new.pdf' })], ASSETS, keysOf([]), [{ id: 1, ...before }]);
+    expect(plan.updates[0]!.fields).toEqual({ reportUrl: '/a/new.pdf' });
+  });
+
+  it('★ URL は 255 文字制限で切り詰めない (URL 列は単一行テキストではない)', () => {
+    const long = '/sites/x/Shared Documents/' + 'a'.repeat(300) + '.pdf';
+    expect(toVulnResponseFields(issue({ reportUrl: long }), [], ASSETS).reportUrl).toBe(long);
+  });
+
+  it('fileNameOf: リンクの表示テキスト', () => {
+    expect(fileNameOf('/a/b/IID-1_2026.pdf')).toBe('IID-1_2026.pdf');
+    expect(fileNameOf('/a/b/%E6%97%A5%E6%9C%AC%E8%AA%9E.pdf')).toBe('日本語.pdf');
+    expect(fileNameOf('/a/b/x.pdf?v=1')).toBe('x.pdf');
+    expect(fileNameOf('')).toBe('レポート');
+  });
+});
+
+describe('URL 列の作成スキーマ', () => {
+  it('SP.FieldUrl / FieldTypeKind 11 / ハイパーリンク表示で作る', () => {
+    const spec = vulnResponseFieldSpecs().find((f) => f.name === 'ReportUrl')!;
+    expect(spec.type).toBe('Url');
+    expect(spec.displayName).toBe('脆弱性レポート');
+    expect(toFieldSchema(spec)).toEqual({
+      __metadata: { type: 'SP.FieldUrl' }, FieldTypeKind: 11, Title: 'ReportUrl', DisplayFormat: 0,
+    });
+  });
+
+  it('既存列との型比較に使う TypeAsString は URL', () => {
+    // ensureFields は TypeAsString で型一致を見る。ズレると毎回 削除→再作成 になる。
+    expect(spFieldTypeString('Url')).toBe('URL');
+  });
+
+  it('既定ビューに出す (一覧から 1 クリックで開けるようにするため)', () => {
+    expect(VULNRESPONSE_VIEW_FIELDS).toContain('ReportUrl');
   });
 });

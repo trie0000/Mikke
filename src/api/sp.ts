@@ -17,7 +17,7 @@ import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
-import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS } from '../lib/vulnResponseSync';
+import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, fileNameOf } from '../lib/vulnResponseSync';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -516,7 +516,7 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
       + '?$select=Id,IssueInstanceId,Title,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
       + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
-      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence&$top=5000';
+      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence,ReportUrl&$top=5000';
     try {
       while (url) {
         const j: any = await this.spGet(url);
@@ -538,6 +538,8 @@ export class SpRepository implements Repository {
             extConnAppId: r.ExtConnAppId ?? '',
             relatedAssets: r.RelatedAssets ?? '',
             identifyEvidence: r.IdentifyEvidence ?? '',
+            // URL 列は {Url, Description} で返る。差分は Url だけで比べる。
+            reportUrl: r.ReportUrl?.Url ?? '',
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
@@ -554,6 +556,14 @@ export class SpRepository implements Repository {
     for (const [key, col] of Object.entries(VULNRESPONSE_COLUMN) as [keyof VulnResponseFields, string][]) {
       const v = f[key];
       if (v === undefined) continue;
+      if (VULNRESPONSE_KIND[key] === 'url') {
+        // URL 列は {Url, Description}。Description が一覧でのリンク文字列になるので
+        // ファイル名を出す (空なら列をクリアする)。
+        row[col] = v
+          ? { __metadata: { type: 'SP.FieldUrlValue' }, Url: v, Description: fileNameOf(v) }
+          : null;
+        continue;
+      }
       // 日付は空文字だと SP が 400 を返すので null を送る。
       row[col] = VULNRESPONSE_DATE_FIELDS.includes(key) ? (v || null) : v;
     }

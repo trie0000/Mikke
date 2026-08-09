@@ -2,7 +2,7 @@
 // SpRepository.ensureLists から呼ばれる。
 import { MGMT_STATUSES } from '../../types';
 
-export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User';
+export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User' | 'Url';
 
 export interface FieldSpec {
   /** 内部名 (InternalName)。作成時の Title にもこれを使い、内部名を ASCII に固定する。
@@ -62,6 +62,7 @@ export function spFieldTypeString(t: FieldType): string {
     case 'NoteRich': return 'Note';
     case 'Number': return 'Number';
     case 'DateTime': return 'DateTime';
+    case 'Url': return 'URL';
     case 'Boolean': return 'Boolean';
     case 'Choice': return 'Choice';
     case 'User': return 'User';
@@ -92,6 +93,10 @@ export function toFieldSchema(f: FieldSpec): unknown {
     case 'User':
       // SelectionMode 0 = ユーザーのみ (グループを選ばせない)。
       return { __metadata: { type: 'SP.FieldUser' }, FieldTypeKind: 20, Title: f.name, SelectionMode: 0 };
+    case 'Url':
+      // DisplayFormat 0 = ハイパーリンク (1 = 画像)。値は SP.FieldUrlValue
+      // ({Url, Description}) で送る。一覧では Description がリンク文字列になる。
+      return { __metadata: { type: 'SP.FieldUrl' }, FieldTypeKind: 11, Title: f.name, DisplayFormat: 0 };
   }
 }
 
@@ -257,6 +262,11 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('ExtConnAppId', '外部接続申請ID'),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
     pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),
+    // ★ 脆弱性レポート (PDF) へのリンク。資産管理者が一覧から 1 クリックで開ける
+    //   ようにするための列。値は Mikke が保存した SP 上のファイルのサーバ相対 URL、
+    //   表示テキストはファイル名。同じファイルはアイテムの添付にも付く (権限が
+    //   ライブラリまで届かない利用者はそちらから開ける)。
+    pushed('ReportUrl', '脆弱性レポート', { type: 'Url' }),
 
     // ── 対応 (資産管理者が記入) ──
     { name: 'ResponseStatus', type: 'Choice', displayName: '対応状況',
@@ -304,7 +314,7 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
   'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
-  'BusinessCompany', 'AssetMgmtId', 'ResponseStatus', 'DueDate', 'Responder',
+  'BusinessCompany', 'AssetMgmtId', 'ReportUrl', 'ResponseStatus', 'DueDate', 'Responder',
 ];
 
 /** MikkeImportLog: 取込履歴。 */

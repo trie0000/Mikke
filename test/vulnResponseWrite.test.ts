@@ -23,6 +23,7 @@ const COLUMNS = new Set([
   'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
   'AssetMgmtId', 'RelatedAssets', 'IdentifyEvidence',
   'ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks', 'ID', 'Modified',
+  // 欠けているもの: LegacyMgmtNumber / ExtConnAppId / ReportUrl
 ]);
 
 const posted: { path: string; columns: string[] }[] = [];
@@ -83,6 +84,7 @@ const FIELDS = {
   assetIp: '', assetFqdn: 'web01.example.com', assetType: 'FQDN',
   businessCompany: 'エナジー事業', affiliateCompany: 'ABC株式会社', assetMgmtId: 'W-0001',
   extConnAppId: 'EXT-1', relatedAssets: '', identifyEvidence: 'FQDN一致',
+  reportUrl: '/sites/x/Shared Documents/MikkeDownloads/issues/20260808-101500/IID-1_20260808.pdf',
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,7 +107,7 @@ afterAll(() => { server?.close(); });
 
 describe('連携用リストへの書込: リストに無い列を送らない', () => {
   it('足りない列を名指しで報告する (エラーに出して構築を促すため)', async () => {
-    expect(await repo.findMissingVulnResponseColumns()).toEqual(['LegacyMgmtNumber', 'ExtConnAppId']);
+    expect(await repo.findMissingVulnResponseColumns()).toEqual(['LegacyMgmtNumber', 'ExtConnAppId', 'ReportUrl']);
   });
 
   it('★ 絞らずに送ると SharePoint は 400 を返す (これが「反映が全件エラー」の正体)', async () => {
@@ -173,5 +175,19 @@ describe('連携用リストへの書込: 単一行テキストに収まらな�
       title: fitSingleLine(f.title),
     };
     await expect(repo.createVulnResponseItem(fitted)).resolves.toBeUndefined();
+  });
+});
+
+describe('連携用リストの「脆弱性レポート」列 (URL 列)', () => {
+  // 資産管理者が一覧から 1 クリックで PDF を開けるようにするための列。
+  it('URL 列は {Url, Description} で送り、表示テキストはファイル名になる', async () => {
+    const row = repo.vulnResponseRow(FIELDS) as Record<string, { Url: string; Description: string }>;
+    expect(row.ReportUrl.Url).toBe(FIELDS.reportUrl);
+    expect(row.ReportUrl.Description).toBe('IID-1_20260808.pdf');
+  });
+
+  it('レポート未取得なら null を送って列を空にする', async () => {
+    const row = repo.vulnResponseRow({ ...FIELDS, reportUrl: '' }) as Record<string, unknown>;
+    expect(row.ReportUrl).toBeNull();
   });
 });

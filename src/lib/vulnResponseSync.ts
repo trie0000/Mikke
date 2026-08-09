@@ -26,6 +26,8 @@ export interface VulnResponseFields {
   extConnAppId: string;
   relatedAssets: string;
   identifyEvidence: string;
+  /** 脆弱性レポート (PDF) の SP 上のサーバ相対 URL。空なら未取得。 */
+  reportUrl: string;
 }
 
 /** VulnResponseFields のキー → 連携用リストの SP 列名 (内部名)。
@@ -48,6 +50,7 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   extConnAppId: 'ExtConnAppId',
   relatedAssets: 'RelatedAssets',
   identifyEvidence: 'IdentifyEvidence',
+  reportUrl: 'ReportUrl',
 };
 
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
@@ -55,13 +58,21 @@ export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSee
 
 /** 列の種類。sp/schema.ts の vulnResponseFieldSpecs() と一致させること
  *  (ズレは test/vulnResponseSync.test.ts で検査)。 */
-export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note' | 'date'> = {
+export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note' | 'date' | 'url'> = {
   issueInstanceId: 'text', title: 'text', legacyMgmtNumber: 'text', detectionStatus: 'text',
   firstSeen: 'date', lastSeen: 'date',
   assetIp: 'text', assetFqdn: 'text', assetType: 'text',
   businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text', extConnAppId: 'text',
   relatedAssets: 'note', identifyEvidence: 'note',
+  reportUrl: 'url',
 };
+
+/** URL からファイル名 (最後のパス要素) を取り出す。URL 列の表示テキストに使う。 */
+export function fileNameOf(url: string): string {
+  const path = String(url ?? '').split(/[?#]/)[0] ?? '';
+  const last = path.split('/').filter(Boolean).pop() ?? '';
+  try { return decodeURIComponent(last) || 'レポート'; } catch { return last || 'レポート'; }
+}
 
 /** SharePoint の単一行テキスト列の既定上限。 */
 export const TEXT_MAX_LENGTH = 255;
@@ -163,6 +174,9 @@ export function toVulnResponseFields(
     extConnAppId: text(issue.extConnAppId),
     relatedAssets: related.join(' | '),
     identifyEvidence: pick((a) => a.identifyEvidence),
+    // ★ レポートは「情報更新」で取得したときに管理対象へ記録される。ここでは
+    //   その URL をそのまま渡すだけ (未取得なら空 = 列も空になる)。
+    reportUrl: text(issue.reportUrl),
   };
   // 単一行テキスト列は 255 文字・改行なしに収める (超えると SP が 500 を返す)。
   const out = { ...raw };
