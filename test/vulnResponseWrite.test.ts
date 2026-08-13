@@ -180,11 +180,10 @@ describe('連携用リストへの書込: 単一行テキストに収まらな�
 
 describe('連携用リストの「脆弱性レポート」列 (URL 列)', () => {
   // 資産管理者が一覧から 1 クリックで PDF を開けるようにするための列。
-  it('URL 列は {Url, Description} で送り、表示テキストは形式 (PDF) になる', async () => {
-    // ファイル名 (IID_日時.pdf) は長くて一覧の幅を食うだけなので出さない。
+  it('URL 列は {Url, Description} で送り、表示テキストは「レポートを開く」', async () => {
     const row = repo.vulnResponseRow(FIELDS) as Record<string, { Url: string; Description: string }>;
     expect(row.ReportUrl.Url).toBe(FIELDS.reportUrl);
-    expect(row.ReportUrl.Description).toBe('PDF');
+    expect(row.ReportUrl.Description).toBe('レポートを開く');
   });
 
   it('レポート未取得なら null を送って列を空にする', async () => {

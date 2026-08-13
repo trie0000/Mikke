@@ -17,7 +17,7 @@ import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
-import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, reportLinkText } from '../lib/vulnResponseSync';
+import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, REPORT_LINK_TEXT } from '../lib/vulnResponseSync';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -558,9 +558,9 @@ export class SpRepository implements Repository {
       if (v === undefined) continue;
       if (VULNRESPONSE_KIND[key] === 'url') {
         // URL 列は {Url, Description}。Description が一覧でのリンク文字列になる。
-        // ファイル名ではなく形式 (PDF) を出す (空なら列をクリアする)。
+        // 表示テキストは固定文言 (空なら列をクリアする)。
         row[col] = v
-          ? { __metadata: { type: 'SP.FieldUrlValue' }, Url: v, Description: reportLinkText(v) }
+          ? { __metadata: { type: 'SP.FieldUrlValue' }, Url: v, Description: REPORT_LINK_TEXT }
           : null;
         continue;
       }

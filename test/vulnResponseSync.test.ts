@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
-  VULNRESPONSE_KIND, overlongTextFields, fileNameOf, reportLinkText,
+  VULNRESPONSE_KIND, overlongTextFields, REPORT_LINK_TEXT,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
-import { reportLinkLabel } from '../src/lib/reportFile';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
   return {
@@ -266,12 +265,6 @@ describe('脆弱性レポートへのリンク', () => {
     expect(toVulnResponseFields(issue({ reportUrl: long }), [], ASSETS).reportUrl).toBe(long);
   });
 
-  it('fileNameOf: リンクの表示テキスト', () => {
-    expect(fileNameOf('/a/b/IID-1_2026.pdf')).toBe('IID-1_2026.pdf');
-    expect(fileNameOf('/a/b/%E6%97%A5%E6%9C%AC%E8%AA%9E.pdf')).toBe('日本語.pdf');
-    expect(fileNameOf('/a/b/x.pdf?v=1')).toBe('x.pdf');
-    expect(fileNameOf('')).toBe('レポート');
-  });
 });
 
 describe('URL 列の作成スキーマ', () => {
@@ -314,20 +307,9 @@ describe('突合キーは組込みの Title 列', () => {
   });
 });
 
-describe('reportLinkText: 連携用リストのリンク表記', () => {
-  it('拡張子を大文字で出す (ファイル名は出さない)', () => {
-    expect(reportLinkText('/a/b/IID-1_20260808-101500.pdf')).toBe('PDF');
-    expect(reportLinkText('/a/b/IID-1.zip')).toBe('ZIP');
-    expect(reportLinkText('/a/b/REPORT.PDF')).toBe('PDF');
-  });
-
-  it('拡張子が分からなければ「レポート」', () => {
-    expect(reportLinkText('/a/b/report')).toBe('レポート');
-    expect(reportLinkText('')).toBe('レポート');
-  });
-
-  it('管理対象一覧の「レポート」列と同じ表記になる', () => {
-    // 画面ごとに違う表記だと、同じものを指していると分からない。
-    expect(reportLinkText('/a/b/x.pdf')).toBe(reportLinkLabel('x.pdf'));
+describe('連携用リストのリンク表記', () => {
+  it('固定文言「レポートを開く」', () => {
+    // ファイル名は長くて一覧の幅を食い、形式 (PDF) だけだと押せると分かりにくい。
+    expect(REPORT_LINK_TEXT).toBe('レポートを開く');
   });
 });

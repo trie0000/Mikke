@@ -198,7 +198,7 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
             [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
           ),
           // 脆弱性レポート (PDF)。一覧の「脆弱性レポート」列からも直接開ける。
-          item('脆弱性レポート', linkValue('ReportUrl', 'PDF')),
+          item('脆弱性レポート', linkValue('ReportUrl', 'レポートを開く')),
         ]),
         // カード 2: 資産情報
         card('資産情報', '読み取り専用', [

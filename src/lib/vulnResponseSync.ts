@@ -68,23 +68,13 @@ export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note'
   reportUrl: 'url',
 };
 
-/** URL からファイル名 (最後のパス要素) を取り出す。 */
-export function fileNameOf(url: string): string {
-  const path = String(url ?? '').split(/[?#]/)[0] ?? '';
-  const last = path.split('/').filter(Boolean).pop() ?? '';
-  try { return decodeURIComponent(last) || 'レポート'; } catch { return last || 'レポート'; }
-}
-
 /**
  * 連携用リストの「脆弱性レポート」列に出すリンク文字列。
- * ★ ファイル名 (IID_日時.pdf) ではなく **形式** を出す。資産管理者が見るのは
- *   「何のファイルか」だけで、長いファイル名は一覧の幅を食うだけになる。
- *   管理対象一覧の「レポート」列と同じ表記に揃えてある。
+ * ★ ファイル名 (IID_日時.pdf) や形式ではなく、何をする列かが分かる固定文言にする。
+ *   ファイル名は長くて一覧の幅を食い、形式だけだと押せると分かりにくい。
+ *   レポートが無い行は URL 列自体を空にするので、この文言は出ない。
  */
-export function reportLinkText(url: string): string {
-  const m = /\.([A-Za-z0-9]{1,8})$/.exec(fileNameOf(url));
-  return m ? m[1]!.toUpperCase() : 'レポート';
-}
+export const REPORT_LINK_TEXT = 'レポートを開く';
 
 /** SharePoint の単一行テキスト列の既定上限。 */
 export const TEXT_MAX_LENGTH = 255;
