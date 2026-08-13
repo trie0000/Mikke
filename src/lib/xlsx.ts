@@ -249,13 +249,23 @@ function inflateBlockData(d: InflateData, lt: Tree, dt: Tree): void {
   }
 }
 function inflateUncompressed(d: InflateData): void {
-  while (d.bitcount > 8) { d.i--; d.bitcount -= 8; }
+  // ★ バイト境界まで戻す。
+  //   readBits / decodeSymbol は 1 バイトずつではなく **24 ビット以上まとめて**
+  //   先読みするので、ここに来た時点で d.t には最大 31 ビット分が溜まっている。
+  //   丸ごと残っているバイト数だけ i を巻き戻し、半端なビットは捨てる
+  //   (stored ブロックはバイト境界から始まる)。
+  //   旧実装は while (bitcount > 8) { i--; bitcount -= 8 } で、bitcount が
+  //   8 の倍数のとき最後の 1 バイトを戻し損ねていた。この関数に来るときの
+  //   bitcount は必ず 22〜29 なので **24 のときだけ** 1 バイトずれ、
+  //   LEN/NLEN を 1 バイト後ろから読んで 'bad stored block' になっていた。
+  d.i -= d.bitcount >> 3;
+  d.bitcount = 0;
+  d.t = 0;               // 溜めていたビットは使わない (残すと次の読み出しが濁る)
   const length = d.s[d.i + 1]! * 256 + d.s[d.i]!;
   const invlength = d.s[d.i + 3]! * 256 + d.s[d.i + 2]!;
   if (length !== (~invlength & 0xffff)) throw new Error('inflate: bad stored block');
   d.i += 4;
   for (let i = length; i; --i) d.dest[d.destLen++] = d.s[d.i++]!;
-  d.bitcount = 0;
 }
 
 /** raw DEFLATE を展開する (展開後サイズ既知)。 */
@@ -402,9 +412,15 @@ function parseSheetXml(files: Map<string, Uint8Array>, xml: string): Sheet {
       let val = '';
       if (t === 'inlineStr') val = collectText(inner);
       else {
+        // ★ 数式セル (<f>XLOOKUP(...)</f><v>結果</v>) は **キャッシュされた値** を読む。
+        //   別シート参照でも、Excel が保存時に書いた結果がここに入っている。
+        //   t の意味: 's'=共有文字列の番号 / 'str'=数式の文字列結果 /
+        //   'b'=真偽 (1/0) / 'e'=エラー (#N/A 等) / 無し=数値。
         const vm = /<v[^>]*>([\s\S]*?)<\/v>/.exec(inner);
         const raw = vm ? vm[1]! : '';
-        val = t === 's' ? (shared[parseInt(raw, 10)] ?? '') : xmlUnescape(raw);
+        if (t === 's') val = shared[parseInt(raw, 10)] ?? '';
+        else if (t === 'b') val = raw === '1' ? 'TRUE' : 'FALSE';   // Excel の見た目に合わせる
+        else val = xmlUnescape(raw);
       }
       cells[col] = val;
       auto = col + 1;

@@ -15,6 +15,10 @@ import { normalizePerms, type VulnResponsePerms } from './itemPerms';
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
 
+/** Excel の数式エラー値 (XLOOKUP が外れたときの #N/A など)。 */
+const EXCEL_ERROR = /^#(N\/A|REF!|VALUE!|NAME\?|DIV\/0!|NUM!|NULL!|SPILL!|CALC!|GETTING_DATA)$/i;
+export function isExcelError(v: string): boolean { return EXCEL_ERROR.test(text(v)); }
+
 // ── Excel の列名 (シート「list」のヘッダ) ────────────────────────────────────
 export const MIG_COL = {
   legacyMgmtNumber: 'No.',
@@ -179,7 +183,14 @@ export interface MigrationContext {
 /** Excel の 1 行を管理対象に変換する。 */
 export function migrateRow(row: Record<string, string>, ctx: MigrationContext): MigrationRowResult {
   const warnings: string[] = [];
-  const get = (k: string): string => text(row[k]);
+  // ★ 数式セルは値 (キャッシュ結果) で読まれる。XLOOKUP が外れた行は #N/A などの
+  //   エラー値になるので、そのまま保存せず空として扱い、気づけるよう警告に出す。
+  const errorCells: string[] = [];
+  const get = (k: string): string => {
+    const v = text(row[k]);
+    if (isExcelError(v)) { errorCells.push(`${k}=${v}`); return ''; }
+    return v;
+  };
 
   const issueInstanceId = get(MIG_COL.issueInstanceId);
   if (!issueInstanceId) {
@@ -239,6 +250,9 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     scanFields,
   };
 
+  if (errorCells.length) {
+    warnings.push(`数式のエラー値を空にしました: ${errorCells.join(' / ')}`);
+  }
   return {
     issue,
     assigneeEmail: get(MIG_COL.personEmail),

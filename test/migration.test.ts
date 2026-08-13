@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   toDetectionStatus, isRiskAccepted, toMgmtStatus, extractWebMapsIds, isIpAddress,
   buildAliasIndex, resolveCompany, detectVulnType, normalizeVulnTypeRules,
-  migrateRow, buildMigrationPlan, MIG_COL,
+  migrateRow, buildMigrationPlan, MIG_COL, isExcelError,
 } from '../src/lib/migration';
 import { normalizePerms } from '../src/lib/itemPerms';
 
@@ -238,5 +238,55 @@ describe('シート全体の計画', () => {
     const plan = buildMigrationPlan(rows, undefined, undefined, '2026-08-13T00:00:00Z');
     expect(plan.ready).toBe(2);
     expect(plan.unknownAliases).toEqual(['ENG', 'XYZ']);
+  });
+});
+
+describe('数式セル (XLOOKUP) の扱い', () => {
+  // ★ 別シート参照の XLOOKUP は、Excel が保存したキャッシュ値で読まれる。
+  //   引き当たらなかった行は #N/A などのエラー値になるので、そのまま保存しない。
+  const ctx = {
+    aliasIndex: buildAliasIndex(PERMS),
+    vulnTypeRules: normalizeVulnTypeRules({}),
+    nowIso: '2026-08-13T00:00:00Z',
+  };
+
+  it.each(['#N/A', '#REF!', '#VALUE!', '#NAME?', '#DIV/0!', '#SPILL!'])('%s はエラー値', (v) => {
+    expect(isExcelError(v)).toBe(true);
+  });
+
+  it('似ているだけの文字列はエラー扱いしない', () => {
+    expect(isExcelError('#1')).toBe(false);
+    expect(isExcelError('N/A')).toBe(false);
+    expect(isExcelError('対応不要 #N/A の件')).toBe(false);
+  });
+
+  it('★ エラー値は空にして、どのセルだったかを警告に出す', () => {
+    const r = migrateRow({
+      [MIG_COL.issueInstanceId]: 'IID-1',
+      [MIG_COL.businessCompany]: '#N/A',
+      [MIG_COL.affiliateCompany]: '#REF!',
+      [MIG_COL.title]: 'TLS 1.0',
+    }, ctx);
+    expect(r.issue!.businessCompany).toBe('');
+    expect(r.issue!.affiliateCompany).toBe('');
+    const w = r.warnings.join(' ');
+    expect(w).toMatch(/数式のエラー値を空にしました/);
+    expect(w).toMatch(/事業会社=#N\/A/);
+    expect(w).toMatch(/管理会社=#REF!/);
+  });
+
+  it('エラー値は「未登録の略称」としては数えない (原因が別なので)', () => {
+    const r = migrateRow({
+      [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: '#N/A',
+    }, ctx);
+    expect(r.warnings.join()).not.toMatch(/対応する事業会社が未登録/);
+  });
+
+  it('引き当たった行は値がそのまま入る', () => {
+    const r = migrateRow({
+      [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'ENG',
+    }, ctx);
+    expect(r.issue!.businessCompany).toBe('エナジー事業');
+    expect(r.warnings).toEqual([]);
   });
 });
