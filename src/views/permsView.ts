@@ -15,6 +15,7 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import {
   normalizePerms, registeredCompanies, groupIdsFor, parseCompanyList, mergeCompanies,
+  aliasesFor, parseAliases,
   type VulnResponsePerms, type SiteGroup,
 } from '../lib/itemPerms';
 import type { MikkeSettings } from '../types';
@@ -253,15 +254,31 @@ export function renderPermsView(rootEl: HTMLElement): HTMLElement {
     table.style.tableLayout = 'auto';
     table.style.width = '100%';
     table.appendChild(el('thead', {}, [el('tr', {}, [
-      el('th', { style: 'width:280px' }, ['事業会社']),
+      el('th', { style: 'width:220px' }, ['事業会社']),
+      el('th', { style: 'width:200px' }, ['略称 (移行データの表記)']),
       el('th', {}, ['参照・更新できるグループ']),
       el('th', { style: 'width:140px' }, ['']),
     ])]));
     const tbody = el('tbody');
     for (const c of companies) {
       const assigned = groupIdsFor(c, perms);
+      // 略称。移行データ (Excel) はこの表記で事業会社が書かれている。
+      const aliasInput = el('input', {
+        class: 'mikke-input', type: 'text', value: aliasesFor(c, perms).join(', '),
+        placeholder: '例: ENG, エナジー', style: 'width:100%',
+        title: 'カンマ・読点・改行で複数登録できます',
+      }) as HTMLInputElement;
+      aliasInput.addEventListener('change', () => void (async () => {
+        const list = parseAliases(aliasInput.value);
+        const next = { ...perms.aliasesByCompany };
+        if (list.length) next[c] = list; else delete next[c];
+        perms = { ...perms, aliasesByCompany: next };
+        await save();
+        aliasInput.value = list.join(', ');
+      })());
       tbody.appendChild(el('tr', {}, [
         el('td', {}, [c]),
+        el('td', {}, [aliasInput]),
         el('td', { style: assigned.length ? '' : 'color:var(--ink-4)' }, [
           assigned.length ? assigned.map(groupTitle).join(' / ') : '未割当（管理者のみ）',
         ]),

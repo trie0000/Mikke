@@ -4,6 +4,8 @@ import { el, clear } from '../utils/dom';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
+import { renderMigrationPanel } from './migrationPanel';
+import { normalizeVulnTypeRules } from '../lib/migration';
 import { opsForType, opLabel, opNeedsValue2 } from '../lib/conditions';
 import { parseCsv } from '../lib/csv';
 import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
@@ -147,6 +149,8 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
           { key: 'columns', label: '管理項目の選択 (F6)', render: () => renderColumnsPanel(root) },
           { key: 'conditions', label: '管理対象条件 (F7)', render: () => renderConditionsPanel(root) },
           { key: 'individual', label: '個別追加 (Issue ID)', render: () => renderIndividualPanel(root) },
+          { key: 'vulnType', label: '脆弱性タイプの判定', render: () => renderVulnTypePanel() },
+          { key: 'migration', label: 'データ移行 (Excel)', render: () => renderMigrationPanel(root) },
         ] },
         { title: 'ダウンロード', items: [
           { key: 'downloadFolder', label: '保存先フォルダ', render: () => renderDownloadPanel(root) },
@@ -643,6 +647,49 @@ function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
     result,
   ]);
   return { body };
+}
+
+// ── 共通: 脆弱性タイプの判定条件 ──
+//   Title に含まれる文字列で判定する (OR)。どれにも当たらなければ「脆弱性」。
+async function renderVulnTypePanel(): Promise<SettingPanel> {
+  const settings = await getRepo().getSettings();
+  const rules = normalizeVulnTypeRules(settings.vulnTypeRules);
+  const ta = (v: string[]): HTMLTextAreaElement => el('textarea', {
+    class: 'mikke-input', rows: '6', spellcheck: 'false',
+    style: 'width:100%;font-size:var(--fs-sm);line-height:1.7',
+  }, [v.join('\n')]) as HTMLTextAreaElement;
+  const portTa = ta(rules.port);
+  const adminTa = ta(rules.admin);
+  const parse = (t: string): string[] =>
+    [...new Set(t.split(/\r?\n/).map((x) => x.trim()).filter(Boolean))];
+
+  const body = el('div', {}, [
+    panelHead('脆弱性タイプの判定',
+      'Title に含まれる文字列で「ポート」「管理画面」を判定します。1 行 1 条件で、いずれかに当てはまれば該当 (OR)。'
+      + 'どちらにも当てはまらないものは「脆弱性」になります。'),
+    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
+      el('li', {}, ['大文字・小文字は区別しません。']),
+      el('li', {}, ['ポートと管理画面の両方に当てはまる場合は「ポート」になります。']),
+      el('li', {}, ['判定はデータ移行の取込時に行います。']),
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['「ポート」と判定する文字列 (1 行 1 件)']),
+      portTa,
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['「管理画面」と判定する文字列 (1 行 1 件)']),
+      adminTa,
+    ]),
+  ]);
+  return {
+    body,
+    save: async () => {
+      await getRepo().saveSettings({
+        ...settings,
+        vulnTypeRules: { port: parse(portTa.value), admin: parse(adminTa.value) },
+      });
+    },
+  };
 }
 
 // ── その他: 接続 ──

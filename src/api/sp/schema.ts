@@ -1,6 +1,6 @@
 // SharePoint REST: スキーマ宣言 / FieldSpec → SP REST 型変換。
 // SpRepository.ensureLists から呼ばれる。
-import { MGMT_STATUSES } from '../../types';
+import { MGMT_STATUSES, VULN_TYPES } from '../../types';
 
 export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User' | 'Url';
 
@@ -118,6 +118,11 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     // ケースがあるので管理対象側にも持つ (未設定なら資産の値を使う)。
     { name: 'BusinessCompany', type: 'Text', indexed: true },
     { name: 'AffiliateCompany', type: 'Text' },
+    { name: 'WebMapsId', type: 'Text', indexed: true },
+    { name: 'IdentifyEvidence', type: 'Note' },
+    { name: 'ResponsePlan', type: 'Note' },
+    { name: 'NoAppReason', type: 'Note' },
+    { name: 'VulnType', type: 'Choice', choices: [...VULN_TYPES] },
     // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
     //   移行期間中は参考情報として管理リスト・連携用リストの双方で見せる。
     { name: 'LegacyMgmtNumber', type: 'Text', indexed: true },

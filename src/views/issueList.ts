@@ -90,9 +90,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const notifyOf = (i: ManagedIssue): NotifyStatus =>
     notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId));
 
-  /** その脆弱性に紐づく資産の「Web資産管理ID」。複数資産に跨る場合は重複を除いて並べる。
-   *  ★ Web資産管理ID は資産リスト側が持つ値なので、脆弱性からは資産キー経由で引く。 */
+  /** その脆弱性の「WebMAPS管理ID」。
+   *  ★ 移行データで管理対象に直接入った値を優先し、無ければ資産リストから資産キー
+   *    経由で引く (複数資産に跨る場合は重複を除いて並べる)。 */
   const assetMgmtIdOf = (i: ManagedIssue): string => {
+    if ((i.webMapsId ?? '').trim()) return i.webMapsId!.trim();
     const ids = new Set<string>();
     for (const col of assetColumns) {
       const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
@@ -520,18 +522,20 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         sortValue: (i) => NOTIFY_ORDER[notifyOf(i)],
         render: (i) => notifyBadge(notifyOf(i)) },
       // ── 管理系 ID ──
-      //   Issue Instance ID (検査ツール) / Web資産管理ID (資産リスト) / 外部接続申請ID の 3 種類 +
+      //   Issue Instance ID (検査ツール) / WebMAPS管理ID / 外部接続申請ID の 3 種類 +
       //   移行期間中だけ残す旧管理番号。
       // ★ ラベルは検査ツールの呼び名どおり 'Issue Instance ID'。CSV にも同名列が来るので、
       //   管理列に足しても重複表示しない (BUILTIN_SCAN_COLUMNS)。
       { id: 'iid', label: 'Issue Instance ID', width: 170, text: (i) => i.issueInstanceId },
-      { id: 'assetMgmtId', label: 'Web資産管理ID', width: 150, text: (i) => assetMgmtIdOf(i) },
+      { id: 'assetMgmtId', label: 'WebMAPS管理ID', width: 150, text: (i) => assetMgmtIdOf(i) },
       { id: 'extConnAppId', label: '外部接続申請ID', width: 140, text: (i) => i.extConnAppId ?? '' },
       { id: 'legacyMgmtNumber', label: '旧管理番号', width: 140, text: (i) => i.legacyMgmtNumber ?? '',
         cellStyle: 'color:var(--ink-3)' },
       // 組織。管理対象に入れた値が優先、無ければ資産リストから引く。
       { id: 'businessCompany', label: '事業会社', width: 150, text: (i) => companyOf(i, 'business') },
       { id: 'affiliateCompany', label: '管理会社', width: 150, text: (i) => companyOf(i, 'affiliate') },
+      { id: 'vulnType', label: '脆弱性タイプ', width: 110, text: (i) => i.vulnType ?? '' },
+      { id: 'identifyEvidence', label: '事業会社特定の根拠', width: 200, text: (i) => i.identifyEvidence ?? '' },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
       // 「情報更新」で取得した個別レポート。形式は検査ツールが返したまま (現状 PDF) なので、

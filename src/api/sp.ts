@@ -589,6 +589,22 @@ export class SpRepository implements Repository {
   // ── 連携用リストのアイテム単位アクセス権 ─────────────────────────────────
   //   方式は lib/itemPerms.ts のコメントを参照 (WebReg の src/perms.js に準拠)。
 
+  /** メールアドレスから利用者を引く。
+   *  ★ ensureuser は SP のユーザー情報リストに居ない相手も AD/Entra から解決できる
+   *    (サイトに未参加でも引ける)。副作用はユーザー情報リストへの登録だけ。 */
+  async resolveUserByEmail(email: string): Promise<SiteUser | null> {
+    const v = (email ?? '').trim();
+    if (!v) return null;
+    try {
+      const r = await this.spPost('/_api/web/ensureuser', { logonName: v });
+      const j = await r.json();
+      const d = j.d ?? {};
+      return { displayName: d.Title ?? '', email: d.Email ?? v };
+    } catch {
+      return null;
+    }
+  }
+
   async listSiteGroups(): Promise<{ id: number; title: string }[]> {
     const j = await this.spGet('/_api/web/sitegroups?$select=Id,Title&$top=999');
     return (j.d?.results ?? [])
@@ -1415,6 +1431,11 @@ export class SpRepository implements Repository {
       legacyMgmtNumber: row.LegacyMgmtNumber ?? undefined,
       businessCompany: row.BusinessCompany ?? undefined,
       affiliateCompany: row.AffiliateCompany ?? undefined,
+      webMapsId: row.WebMapsId ?? undefined,
+      identifyEvidence: row.IdentifyEvidence ?? undefined,
+      responsePlan: row.ResponsePlan ?? undefined,
+      noAppReason: row.NoAppReason ?? undefined,
+      vulnType: row.VulnType ?? undefined,
       dueDate: row.DueDate ?? undefined,
       mgmtNote: row.MgmtNote ?? undefined,
       scannerStatus: row.ScannerStatus ?? undefined,
@@ -1449,6 +1470,11 @@ export class SpRepository implements Repository {
     if (p.legacyMgmtNumber !== undefined) row.LegacyMgmtNumber = p.legacyMgmtNumber;
     if (p.businessCompany !== undefined) row.BusinessCompany = p.businessCompany;
     if (p.affiliateCompany !== undefined) row.AffiliateCompany = p.affiliateCompany;
+    if (p.webMapsId !== undefined) row.WebMapsId = p.webMapsId;
+    if (p.identifyEvidence !== undefined) row.IdentifyEvidence = p.identifyEvidence;
+    if (p.responsePlan !== undefined) row.ResponsePlan = p.responsePlan;
+    if (p.noAppReason !== undefined) row.NoAppReason = p.noAppReason;
+    if (p.vulnType !== undefined) row.VulnType = p.vulnType;
     // DateTime 列は空文字 ('') だと SP が HTTP 400。クリアは null で送る。
     if (p.dueDate !== undefined) row.DueDate = p.dueDate || null;
     if (p.mgmtNote !== undefined) row.MgmtNote = p.mgmtNote;

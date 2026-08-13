@@ -328,23 +328,66 @@ function collectText(inner: string): string {
 }
 
 /** .xlsx (最初のワークシート) を { headers, rows } に読み込む。 */
-export function parseXlsx(buf: ArrayBuffer): Sheet {
+/** ブック内のシート名一覧 (定義順)。 */
+export function xlsxSheetNames(buf: ArrayBuffer): string[] {
+  const files = unzip(buf);
+  const wb = files.get('xl/workbook.xml');
+  if (!wb) return [];
+  const xml = new TextDecoder().decode(wb);
+  return [...xml.matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map((m) => decodeXmlEntities(m[1]!));
+}
+
+/** XML の実体参照を戻す (シート名に & や < が入り得る)。 */
+function decodeXmlEntities(s: string): string {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+}
+
+/**
+ * シート名を指定して読む。見つからなければ null。
+ * ★ ワークシートの実ファイル名 (sheet1.xml など) は定義順と一致しないことがあるので、
+ *   workbook.xml の r:id → workbook.xml.rels の Target で辿る。
+ *   辿れないブックでは定義順のインデックスで代替する。
+ */
+export function parseXlsxSheet(buf: ArrayBuffer, sheetName: string): Sheet | null {
   const files = unzip(buf);
   const dec = new TextDecoder();
+  const wb = files.get('xl/workbook.xml');
+  if (!wb) return null;
+  const wbXml = dec.decode(wb);
+  const sheets = [...wbXml.matchAll(/<sheet\b([^>]*)>/g)].map((m) => ({
+    name: decodeXmlEntities(/\bname="([^"]*)"/.exec(m[1]!)?.[1] ?? ''),
+    rid: /\br:id="([^"]*)"/.exec(m[1]!)?.[1] ?? '',
+  }));
+  const want = sheets.findIndex((x) => x.name === sheetName);
+  if (want < 0) return null;
 
-  // sharedStrings
+  let target = '';
+  const rels = files.get('xl/_rels/workbook.xml.rels');
+  if (rels && sheets[want]!.rid) {
+    const rx = new RegExp(`<Relationship\\b[^>]*\\bId="${sheets[want]!.rid}"[^>]*\\bTarget="([^"]*)"`);
+    target = rx.exec(dec.decode(rels))?.[1] ?? '';
+  }
+  let key = target ? `xl/${target.replace(/^\/?(xl\/)?/, '')}` : '';
+  if (!key || !files.has(key)) {
+    // rels を辿れないブック向けのフォールバック (定義順 = ファイル番号順とみなす)
+    const all = [...files.keys()].filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(k))
+      .sort((a, b) => Number(/(\d+)/.exec(a)![1]) - Number(/(\d+)/.exec(b)![1]));
+    key = all[want] ?? '';
+  }
+  if (!key || !files.has(key)) return null;
+  return parseSheetXml(files, dec.decode(files.get(key)!));
+}
+
+/** ワークシート XML → Sheet。sharedStrings はブック共通なので files から引く。 */
+function parseSheetXml(files: Map<string, Uint8Array>, xml: string): Sheet {
+  const dec = new TextDecoder();
   const shared: string[] = [];
   const ssBytes = files.get('xl/sharedStrings.xml');
   if (ssBytes) {
-    const xml = dec.decode(ssBytes);
-    for (const m of xml.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(collectText(m[1]!));
+    const ss = dec.decode(ssBytes);
+    for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(collectText(m[1]!));
   }
-
-  // 最初のワークシート
-  let sheetKey: string | null = null;
-  for (const k of files.keys()) if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(k)) { sheetKey = k; break; }
-  if (!sheetKey) return { headers: [], rows: [] };
-  const xml = dec.decode(files.get(sheetKey)!);
 
   const grid: string[][] = [];
   for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
@@ -380,6 +423,15 @@ export function parseXlsx(buf: ArrayBuffer): Sheet {
     rows.push(obj);
   }
   return { headers, rows };
+}
+
+/** 最初のワークシートを読む (従来の入口)。 */
+export function parseXlsx(buf: ArrayBuffer): Sheet {
+  const files = unzip(buf);
+  let sheetKey: string | null = null;
+  for (const k of files.keys()) if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(k)) { sheetKey = k; break; }
+  if (!sheetKey) return { headers: [], rows: [] };
+  return parseSheetXml(files, new TextDecoder().decode(files.get(sheetKey)!));
 }
 
 /** ファイル拡張子で CSV / xlsx を判定して読み込む。 */

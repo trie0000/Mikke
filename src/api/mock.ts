@@ -190,6 +190,13 @@ export class MockRepository implements Repository {
   async findMissingVulnResponseColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
 
   /** モックのサイト権限グループ (画面の見え方を確認できる程度の顔ぶれ)。 */
+  /** モック: メールのローカル部を氏名に見立てて返す (画面確認用)。 */
+  async resolveUserByEmail(email: string): Promise<SiteUser | null> {
+    const v = (email ?? '').trim();
+    if (!v.includes('@')) return null;
+    return { displayName: `${v.split('@')[0]} (AD)`, email: v };
+  }
+
   async listSiteGroups(): Promise<{ id: number; title: string }[]> {
     return [
       { id: 11, title: 'Mikke 管理者' },

@@ -22,6 +22,8 @@ export interface Repository {
   saveSettings(s: MikkeSettings): Promise<void>;
   /** ログインユーザー。 */
   getCurrentUser(): Promise<SiteUser | null>;
+  /** メールアドレスから利用者を引く (移行データの担当者解決)。見つからなければ null。 */
+  resolveUserByEmail(email: string): Promise<SiteUser | null>;
   /** 取込計画の ops を一括適用 (SP は $batch、mock は逐次)。 */
   applyImportOps(ops: ImportOp[], onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
   /** F6: 動的列 (Scan_*) を ManagedIssues に遅延作成する。既存はスキップ。 */

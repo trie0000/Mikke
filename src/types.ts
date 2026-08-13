@@ -43,6 +43,10 @@ export function normalizeMgmtStatus(v: unknown): MgmtStatus {
 /** 取込経緯。 */
 export type AddedReason = '条件一致' | '個別指定';
 
+/** 脆弱性タイプ。Title から自動判定する (設定の判定条件)。 */
+export type VulnType = '脆弱性' | 'ポート' | '管理画面';
+export const VULN_TYPES: VulnType[] = ['脆弱性', 'ポート', '管理画面'];
+
 /** 管理対象脆弱性 (SP リスト MikkeManagedIssues の 1 行)。 */
 export interface ManagedIssue {
   /** SP リスト内部 ID (自動採番)。 */
@@ -76,6 +80,17 @@ export interface ManagedIssue {
   businessCompany?: string;
   /** 管理会社。 */
   affiliateCompany?: string;
+  /** WebMAPS 管理ID (A/B + 数字6桁)。移行データから抽出して入れる。
+   *  未設定なら資産リストの管理番号を使う。 */
+  webMapsId?: string;
+  /** 事業会社特定の根拠。 */
+  identifyEvidence?: string;
+  /** 対応計画。 */
+  responsePlan?: string;
+  /** 申請不要理由。 */
+  noAppReason?: string;
+  /** 脆弱性タイプ。Title から自動判定する (設定の判定条件)。 */
+  vulnType?: VulnType;
   /** 検査ツール側ステータス (CSV/API 由来、読取専用)。 */
   scannerStatus?: string;
   /** 深刻度 (CSV/API 由来)。 */
@@ -159,7 +174,15 @@ export interface MikkeSettings {
   accentColor?: string;
   /** 連携用リストのアイテム単位アクセス権 (管理者グループ / 事業会社ごとの割当)。
    *  実体は lib/itemPerms.ts の VulnResponsePerms。JSON でそのまま保持する。 */
-  vulnResponsePerms?: { adminGroupIds: number[]; byBusinessCompany: Record<string, number[]> };
+  vulnResponsePerms?: {
+    adminGroupIds: number[];
+    byBusinessCompany: Record<string, number[]>;
+    /** 事業会社名 → 略称 (移行データはこの略称で書かれている)。複数可。 */
+    aliasesByCompany?: Record<string, string[]>;
+  };
+  /** 脆弱性タイプの判定条件。Title に含まれる文字列で判定する (OR)。
+   *  どれにも当たらなければ「脆弱性」。 */
+  vulnTypeRules?: { port: string[]; admin: string[] };
 }
 
 /** 検査ツールから一括ダウンロードする対象の種別。

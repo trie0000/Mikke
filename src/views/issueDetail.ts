@@ -200,6 +200,11 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['対象外', i.isOutOfScope ? `はい — ${i.outOfScopeReason || ''}` : 'いいえ'],
         ['事業会社', i.businessCompany || '—'],
         ['管理会社', i.affiliateCompany || '—'],
+        ['事業会社特定の根拠', i.identifyEvidence || '—'],
+        ['脆弱性タイプ', i.vulnType || '—'],
+        ['WebMAPS管理ID', i.webMapsId || '—'],
+        ['対応計画', i.responsePlan || '—'],
+        ['申請不要理由', i.noAppReason || '—'],
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],
       ]));

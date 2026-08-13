@@ -21,9 +21,12 @@ export interface VulnResponsePerms {
   adminGroupIds: number[];
   /** 事業会社名 → 投稿を付ける SP 権限グループ ID。 */
   byBusinessCompany: Record<string, number[]>;
+  /** 事業会社名 → 略称。移行データ (Excel) は略称で書かれているので、
+   *  取込のときにここから正式名を引く。1 社に複数の略称を持てる。 */
+  aliasesByCompany: Record<string, string[]>;
 }
 
-export const EMPTY_PERMS: VulnResponsePerms = { adminGroupIds: [], byBusinessCompany: {} };
+export const EMPTY_PERMS: VulnResponsePerms = { adminGroupIds: [], byBusinessCompany: {}, aliasesByCompany: {} };
 
 /** SP のサイト権限グループ。 */
 export interface SiteGroup { id: number; title: string }
@@ -47,7 +50,29 @@ export function normalizePerms(v: unknown): VulnResponsePerms {
       if (name) byCompany[name] = ids(list);
     }
   }
-  return { adminGroupIds: ids(o.adminGroupIds), byBusinessCompany: byCompany };
+  // 略称は登録済みの事業会社にひもづくものだけ持つ (会社を消したら略称も消える)。
+  const aliases: Record<string, string[]> = {};
+  const asrc = (o.aliasesByCompany ?? {}) as Record<string, unknown>;
+  if (asrc && typeof asrc === 'object') {
+    for (const [company, list] of Object.entries(asrc)) {
+      const name = String(company).trim();
+      if (!name || !(name in byCompany)) continue;
+      const arr = Array.isArray(list)
+        ? [...new Set(list.map((x) => String(x ?? '').trim()).filter(Boolean))] : [];
+      if (arr.length) aliases[name] = arr;
+    }
+  }
+  return { adminGroupIds: ids(o.adminGroupIds), byBusinessCompany: byCompany, aliasesByCompany: aliases };
+}
+
+/** その事業会社の略称。 */
+export function aliasesFor(company: string, p: VulnResponsePerms): string[] {
+  return p.aliasesByCompany[String(company ?? '').trim()] ?? [];
+}
+
+/** 入力欄 (カンマ / 読点 / 改行区切り) を略称の配列にする。 */
+export function parseAliases(text: string): string[] {
+  return [...new Set(String(text ?? '').split(/[,、\n]/).map((s) => s.trim()).filter(Boolean))];
 }
 
 /** 何か設定されているか (未設定なら権限適用そのものを行わない)。
@@ -84,7 +109,9 @@ export function parseCompanyList(text: string): string[] {
 export function mergeCompanies(p: VulnResponsePerms, names: string[]): VulnResponsePerms {
   const next: Record<string, number[]> = {};
   for (const name of names) next[name] = p.byBusinessCompany[name] ?? [];
-  return { adminGroupIds: [...p.adminGroupIds], byBusinessCompany: next };
+  const aliases: Record<string, string[]> = {};
+  for (const name of names) if (p.aliasesByCompany[name]) aliases[name] = p.aliasesByCompany[name]!;
+  return { adminGroupIds: [...p.adminGroupIds], byBusinessCompany: next, aliasesByCompany: aliases };
 }
 
 /** その事業会社に割り当てられたグループ。未設定なら空 (= 管理者だけが見られる)。 */
