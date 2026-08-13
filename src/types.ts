@@ -288,4 +288,4 @@ export interface ChangeLogEntry {
 }
 
 /** メイン画面のビュー。 */
-export type ViewName = 'issues' | 'import' | 'assets' | 'downloads';
+export type ViewName = 'issues' | 'import' | 'assets' | 'downloads' | 'perms';

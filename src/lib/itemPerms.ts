@@ -42,16 +42,49 @@ export function normalizePerms(v: unknown): VulnResponsePerms {
   if (src && typeof src === 'object') {
     for (const [company, list] of Object.entries(src)) {
       const name = String(company).trim();
-      const g = ids(list);
-      if (name && g.length) byCompany[name] = g;   // 空の割当は持たない
+      // ★ 割当が空でもキーは残す。一括登録した事業会社は「登録済み・割当なし」
+      //   という状態を持つ (消すと画面から消えて登録し直しになる)。
+      if (name) byCompany[name] = ids(list);
     }
   }
   return { adminGroupIds: ids(o.adminGroupIds), byBusinessCompany: byCompany };
 }
 
-/** 何か設定されているか (未設定なら権限適用そのものを行わない)。 */
+/** 何か設定されているか (未設定なら権限適用そのものを行わない)。
+ *  ★ 事業会社を登録しただけ (割当なし) では適用しない。管理者グループが無いまま
+ *    継承を解除すると、誰も見られないアイテムができる。 */
 export function hasAnyPerms(p: VulnResponsePerms): boolean {
-  return p.adminGroupIds.length > 0 || Object.keys(p.byBusinessCompany).length > 0;
+  return p.adminGroupIds.length > 0
+    || Object.values(p.byBusinessCompany).some((g) => g.length > 0);
+}
+
+/** 一括登録された事業会社 (割当の有無を問わない)。画面の一覧に出す順。 */
+export function registeredCompanies(p: VulnResponsePerms): string[] {
+  return Object.keys(p.byBusinessCompany).sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+/**
+ * 一括入力 (1 行 1 件) を事業会社名の配列にする。
+ * Excel から貼り付けられるよう、タブ区切りは先頭列だけを使う。
+ * 空行・重複は落とし、順序は入力順を保つ。
+ */
+export function parseCompanyList(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const name = (line.split('\t')[0] ?? '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+/** 一括登録の結果を既存の割当にマージする。既存の割当は消さない。 */
+export function mergeCompanies(p: VulnResponsePerms, names: string[]): VulnResponsePerms {
+  const next: Record<string, number[]> = {};
+  for (const name of names) next[name] = p.byBusinessCompany[name] ?? [];
+  return { adminGroupIds: [...p.adminGroupIds], byBusinessCompany: next };
 }
 
 /** その事業会社に割り当てられたグループ。未設定なら空 (= 管理者だけが見られる)。 */

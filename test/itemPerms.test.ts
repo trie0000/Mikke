@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   normalizePerms, hasAnyPerms, groupIdsFor, pickRoles, buildItemPermPlan,
   companyChoices, companiesWithoutGroups, EMPTY_PERMS,
+  parseCompanyList, mergeCompanies, registeredCompanies,
 } from '../src/lib/itemPerms';
 
 const PERMS = normalizePerms({
@@ -15,9 +16,9 @@ describe('normalizePerms: 壊れた保存値でも落ちない', () => {
     expect(p.adminGroupIds).toEqual([11]);
   });
 
-  it('割当が空の事業会社は持たない (残すと「設定済み」に見える)', () => {
+  it('割当が空でも事業会社は残す (一括登録した「登録済み・割当なし」の状態)', () => {
     const p = normalizePerms({ byBusinessCompany: { A: [], B: [5], '  ': [7] } });
-    expect(p.byBusinessCompany).toEqual({ B: [5] });
+    expect(p.byBusinessCompany).toEqual({ A: [], B: [5] });   // 名前が空の行だけ落とす
   });
 
   it('未設定・null・壊れた形でも空の設定になる', () => {
@@ -38,6 +39,11 @@ describe('hasAnyPerms: 未設定なら権限適用そのものを行わない', 
   });
   it('割当だけでも設定済み', () => {
     expect(hasAnyPerms(normalizePerms({ byBusinessCompany: { A: [2] } }))).toBe(true);
+  });
+
+  it('★ 事業会社を登録しただけ (割当なし) では未設定扱い', () => {
+    // 管理者グループが無いまま継承を解除すると、誰も見られないアイテムができる。
+    expect(hasAnyPerms(normalizePerms({ byBusinessCompany: { A: [], B: [] } }))).toBe(false);
   });
   it('空なら未設定', () => {
     expect(hasAnyPerms(EMPTY_PERMS)).toBe(false);
@@ -120,5 +126,42 @@ describe('groupIdsFor', () => {
   });
   it('未登録なら空', () => {
     expect(groupIdsFor('知らない会社', PERMS)).toEqual([]);
+  });
+});
+
+describe('事業会社の一括登録 (WebReg の一括入力と同じ形)', () => {
+  it('1 行 1 件。空行を落とし、順序は入力順', () => {
+    expect(parseCompanyList('エナジー事業\n\nモビリティ事業\n  住宅事業  \n'))
+      .toEqual(['エナジー事業', 'モビリティ事業', '住宅事業']);
+  });
+
+  it('Excel から貼り付けたタブ区切りは先頭列だけ使う', () => {
+    expect(parseCompanyList('エナジー事業\t100\t備考\nモビリティ事業\t200'))
+      .toEqual(['エナジー事業', 'モビリティ事業']);
+  });
+
+  it('重複は 1 件にまとめる', () => {
+    expect(parseCompanyList('A\nB\nA')).toEqual(['A', 'B']);
+  });
+
+  it('CRLF でも壊れない', () => {
+    expect(parseCompanyList('A\r\nB\r\n')).toEqual(['A', 'B']);
+  });
+
+  it('★ 登録し直しても既存の割当は消えない', () => {
+    const p = normalizePerms({ adminGroupIds: [11], byBusinessCompany: { A: [12], B: [13] } });
+    const next = mergeCompanies(p, ['A', 'C']);
+    expect(next.byBusinessCompany).toEqual({ A: [12], C: [] });   // A は据え置き / C は新規
+    expect(next.adminGroupIds).toEqual([11]);                     // 管理者は触らない
+  });
+
+  it('一覧から消した会社は割当ごと消える (画面の説明どおり)', () => {
+    const p = normalizePerms({ byBusinessCompany: { A: [12], B: [13] } });
+    expect(Object.keys(mergeCompanies(p, ['A']).byBusinessCompany)).toEqual(['A']);
+  });
+
+  it('registeredCompanies は割当の有無を問わず並べる', () => {
+    const p = normalizePerms({ byBusinessCompany: { 'モビリティ事業': [], 'エナジー事業': [12] } });
+    expect(registeredCompanies(p)).toEqual(['エナジー事業', 'モビリティ事業']);
   });
 });

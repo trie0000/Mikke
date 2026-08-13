@@ -2,12 +2,14 @@
 import { el, clear } from '../utils/dom';
 import { icon, brandMark } from '../icons';
 import { getState, setState, subscribe } from '../state';
+import type { ViewName } from '../types';
 import { getRepo, getRepoMode } from '../api/repo';
 import { renderIssueList } from './issueList';
 import { renderIssueDetail } from './issueDetail';
 import { renderImportView } from './importView';
 import { renderAssetsView } from './assetsView';
 import { renderDownloadsView } from './downloadsView';
+import { renderPermsView } from './permsView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { resolveSiteUrl } from '../utils/spSites';
@@ -176,6 +178,8 @@ function paintMain(main: HTMLElement, root: HTMLElement): void {
     main.appendChild(renderAssetsView(root));
   } else if (s.view === 'downloads') {
     main.appendChild(renderDownloadsView(root));
+  } else if (s.view === 'perms') {
+    main.appendChild(renderPermsView(root));
   }
 }
 
@@ -244,7 +248,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
   const item = (view: string, ic: string, label: string) =>
     el('div', {
       class: `mikke-nav-item${s.view === view ? ' is-active' : ''}`,
-      onclick: () => setState({ view: view as 'issues' | 'import' | 'assets' | 'downloads', selectedIssueId: null }),
+      onclick: () => setState({ view: view as ViewName, selectedIssueId: null }),
     }, [el('span', { html: icon(ic) }), el('span', {}, [label])]);
 
   // 資産管理者への連携用リスト (SharePoint リスト) を別タブで開く外部リンク。
@@ -289,6 +293,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
     item('import', 'upload', 'CSV 取込'),
     item('assets', 'building', '資産管理'),
     item('downloads', 'download', 'ダウンロードデータ'),
+    item('perms', 'shield', 'アクセス権'),
     ...(extLink ? [extLink] : []),
     el('div', { class: 'mikke-side-foot' }, [
       el('div', {}, [`mode: ${getRepoMode()}`]),
