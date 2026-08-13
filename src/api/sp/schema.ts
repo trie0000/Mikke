@@ -209,7 +209,7 @@ export function downloadFieldSpecs(): FieldSpec[] {
  *
  * 運用: Mikke の管理表 (MikkeManagedIssues) は管理者専用。資産管理者にはこのリストを
  * 見てもらい、対応状況を記入してもらう。Mikke 側から「SPO リストに反映」で
- * アイテムを追加/更新し、記入結果は後日 Mikke に取り込む (突合キー = IssueInstanceId)。
+ * アイテムを追加/更新し、記入結果は後日 Mikke に取り込む (突合キー = 組込みの Title)。
  *
  * フォームの見せ方:
  *   - 脆弱性情報 (Mikke が書き込む列) は本体から隠し、ヘッダーのカードで読み取り専用表示。
@@ -237,9 +237,14 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
   });
   return [
     // ── 脆弱性情報 (ヘッダーカード) ──
-    { name: 'Title', type: 'Text', displayName: '脆弱性タイトル', conditionalFormula: HIDDEN_UNLESS_NEW, required: false },
-    // 突合キー。Mikke 側の Issue Instance ID と 1:1。
-    pushed('IssueInstanceId', '脆弱性ID', { indexed: true }),
+    // ★ SharePoint 組込みの Title を **突合キー (Issue Instance ID)** にする。
+    //   Title はビューの既定リンク列 (LinkTitle) なので、ここが ID になっていると
+    //   一覧でそのままアイテムを識別できる。別に IssueInstanceId 列を持つと
+    //   同じ値の列が 2 本並ぶので置き換えた (旧列は OBSOLETE で削除される)。
+    { name: 'Title', type: 'Text', displayName: 'Issue Instance ID', conditionalFormula: HIDDEN_UNLESS_NEW,
+      required: false, indexed: true },
+    // 脆弱性の名前。Title を ID にしたので独立した列で持つ。
+    pushed('VulnTitle', '脆弱性タイトル'),
     // ★ Excel 運用時代の暫定 ID (事業会社名-YYMM-XX)。将来廃止するが、移行期間中は
     //   資産管理者にも見えるようにする。内部名は管理対象リスト側と揃えてある。
     pushed('LegacyMgmtNumber', '旧管理番号'),
@@ -289,6 +294,7 @@ export const VULNRESPONSE_OBSOLETE_FIELDS = [
   'ExceptionReason', // 例外・対象外の理由
   'TargetAsset',     // 対象資産 (IP / FQDN に分割)
   'MgmtNumber',      // 管理番号 → 旧管理番号 (LegacyMgmtNumber) に一本化
+  'IssueInstanceId', // 突合キーは組込みの Title に移した (同じ値の列が 2 本になるため)
 ];
 
 /**
@@ -313,7 +319,7 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
-  'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
+  'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
   'BusinessCompany', 'AssetMgmtId', 'ReportUrl', 'ResponseStatus', 'DueDate', 'Responder',
 ];
 

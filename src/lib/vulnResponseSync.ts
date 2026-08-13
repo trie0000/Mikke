@@ -35,8 +35,9 @@ export interface VulnResponseFields {
  *    送ることになり **1 件ごと 400 = 反映が全件失敗** する。突合は
  *    test/vulnResponseSync.test.ts で検査している。 */
 export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
-  issueInstanceId: 'IssueInstanceId',
-  title: 'Title',
+  // ★ 突合キーは SharePoint 組込みの Title 列に入れる (ビューの既定リンク列)。
+  issueInstanceId: 'Title',
+  title: 'VulnTitle',
   legacyMgmtNumber: 'LegacyMgmtNumber',
   detectionStatus: 'DetectionStatus',
   firstSeen: 'FirstSeen',

@@ -15,6 +15,7 @@ const LS_HISTORY = 'mikke.mock.history';
 const LS_CHANGELOG = 'mikke.mock.changelog';
 const LS_DOWNLOADS = 'mikke.mock.downloads';
 const LS_DOCFILES = 'mikke.mock.docfiles';
+const LS_ATTACHMENTS = 'mikke.mock.attachments';   // 連携用リストの添付 (IID → [{name,size}])
 const LS_VULNRESPONSE = 'mikke.mock.vulnresponse';
 
 function load<T>(key: string, fallback: T): T {
@@ -218,9 +219,18 @@ export class MockRepository implements Repository {
   }
 
   /** モックには連携用リストの実体が無いので、添付できたことにして UI を通す。 */
+  /** モックにも添付を記録する (件数だけでなく「何が付いたか」を確認できるように)。
+   *  実物と同じく、該当アイテムが無ければ 'no-item'、常に最新 1 つだけ残す。 */
   async attachVulnResponseFile(
-    _issueInstanceId: string, _fileName: string, _data: Blob, _previousFileName?: string,
+    issueInstanceId: string, fileName: string, data: Blob, previousFileName?: string,
   ): Promise<'attached' | 'no-item'> {
+    const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
+    if (!rows.some((r) => r.issueInstanceId === issueInstanceId)) return 'no-item';
+    const store = load<Record<string, { name: string; size: number }[]>>(LS_ATTACHMENTS, {});
+    const drop = new Set([fileName, previousFileName ?? ''].filter(Boolean));
+    const kept = (store[issueInstanceId] ?? []).filter((a) => !drop.has(a.name));
+    store[issueInstanceId] = [...kept, { name: fileName, size: data.size }];
+    save(LS_ATTACHMENTS, store);
     return 'attached';
   }
 

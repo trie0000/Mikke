@@ -180,7 +180,7 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         // 件名 (カードの外に大きく)
         {
           elmType: 'div',
-          txtContent: "=if([$Title] == '', '（脆弱性タイトル未入力）', [$Title])",
+          txtContent: "=if([$VulnTitle] == '', '（脆弱性タイトル未入力）', [$VulnTitle])",
           style: {
             'font-size': '18px', 'font-weight': '600', color: '#201f1e',
             'padding-bottom': '2px', 'word-break': 'break-word',
@@ -188,7 +188,7 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         },
         {
           elmType: 'div',
-          txtContent: "=if([$IssueInstanceId] == '', '', 'ID: ' + [$IssueInstanceId])",
+          txtContent: "=if([$Title] == '', '', 'Issue Instance ID: ' + [$Title])",
           style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' },
         },
         // カード 1: 脆弱性情報

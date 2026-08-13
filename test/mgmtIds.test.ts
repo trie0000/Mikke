@@ -17,7 +17,9 @@ describe('管理系 ID の持ち場所', () => {
 
   it('検査ツールの ID は管理対象と連携用リストの両方にある', () => {
     expect(managed).toContain('IssueInstanceId');
-    expect(vulnNames).toContain('IssueInstanceId');
+    // 連携用リストでは組込みの Title 列がその役割を持つ (ビューの既定リンク列にするため)。
+    expect(vulnNames).toContain('Title');
+    expect(vulnNames).not.toContain('IssueInstanceId');
   });
 
   it('Web資産管理ID の実体は資産リストが持つ (管理対象には持たせない)', () => {

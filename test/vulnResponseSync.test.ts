@@ -4,7 +4,7 @@ import {
   VULNRESPONSE_KIND, overlongTextFields, fileNameOf,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
-import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS } from '../src/api/sp/schema';
+import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
@@ -290,5 +290,25 @@ describe('URL 列の作成スキーマ', () => {
 
   it('既定ビューに出す (一覧から 1 クリックで開けるようにするため)', () => {
     expect(VULNRESPONSE_VIEW_FIELDS).toContain('ReportUrl');
+  });
+});
+
+describe('突合キーは組込みの Title 列', () => {
+  it('Title に Issue Instance ID、VulnTitle に脆弱性タイトルを入れる', () => {
+    expect(VULNRESPONSE_COLUMN.issueInstanceId).toBe('Title');
+    expect(VULNRESPONSE_COLUMN.title).toBe('VulnTitle');
+  });
+
+  it('同じ値の列を 2 本持たない (IssueInstanceId 列は使わない)', () => {
+    expect(Object.values(VULNRESPONSE_COLUMN)).not.toContain('IssueInstanceId');
+  });
+
+  it('旧 IssueInstanceId 列は構築時に削除される', () => {
+    expect(VULNRESPONSE_OBSOLETE_FIELDS).toContain('IssueInstanceId');
+  });
+
+  it('既定ビューは Title (リンク列) と脆弱性タイトルを出す', () => {
+    expect(VULNRESPONSE_VIEW_FIELDS).toContain('LinkTitle');
+    expect(VULNRESPONSE_VIEW_FIELDS).toContain('VulnTitle');
   });
 });

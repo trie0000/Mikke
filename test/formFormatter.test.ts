@@ -91,13 +91,18 @@ describe('schema: 連携用リストの列定義', () => {
     expect(CONDITIONAL_FORMULA_PROPERTY).toBe('ClientValidationFormula');
   });
 
-  it('突合キー IssueInstanceId は index 付きで存在する', () => {
-    const key = specs.find((f) => f.name === 'IssueInstanceId');
+  it('突合キーは組込みの Title 列で、index 付き', () => {
+    // ★ Title はビューの既定リンク列。ここに Issue Instance ID を入れることで
+    //   一覧でそのままアイテムを識別できる。$filter=Title eq で引くので index 必須。
+    const key = specs.find((f) => f.name === 'Title');
+    expect(key?.displayName).toBe('Issue Instance ID');
     expect(key?.indexed).toBe(true);
+    // 同じ値の列を 2 本持たない (旧 IssueInstanceId 列は廃止)。
+    expect(specs.find((f) => f.name === 'IssueInstanceId')).toBeUndefined();
   });
 
   it('Mikke が書き込む脆弱性情報の列は「新規時だけ入力可」', () => {
-    for (const name of ['Title', 'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus', 'FirstSeen', 'LastSeen']) {
+    for (const name of ['Title', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'FirstSeen', 'LastSeen']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBe(HIDDEN_UNLESS_NEW);
     }
   });

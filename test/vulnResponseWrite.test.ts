@@ -12,7 +12,7 @@ import { fitSingleLine } from '../src/lib/vulnResponseSync';
 
 /** 単一行テキスト列 (SharePoint 既定 255 文字・改行不可)。 */
 const TEXT_COLUMNS = new Set([
-  'Title', 'IssueInstanceId', 'LegacyMgmtNumber', 'DetectionStatus',
+  'Title', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus',
   'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
   'AssetMgmtId', 'ExtConnAppId',
 ]);
@@ -23,7 +23,7 @@ const COLUMNS = new Set([
   'AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
   'AssetMgmtId', 'RelatedAssets', 'IdentifyEvidence',
   'ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks', 'ID', 'Modified',
-  // 欠けているもの: LegacyMgmtNumber / ExtConnAppId / ReportUrl
+  // 欠けているもの: VulnTitle / LegacyMgmtNumber / ExtConnAppId / ReportUrl
 ]);
 
 const posted: { path: string; columns: string[] }[] = [];
@@ -107,7 +107,7 @@ afterAll(() => { server?.close(); });
 
 describe('連携用リストへの書込: リストに無い列を送らない', () => {
   it('足りない列を名指しで報告する (エラーに出して構築を促すため)', async () => {
-    expect(await repo.findMissingVulnResponseColumns()).toEqual(['LegacyMgmtNumber', 'ExtConnAppId', 'ReportUrl']);
+    expect(await repo.findMissingVulnResponseColumns()).toEqual(['VulnTitle', 'LegacyMgmtNumber', 'ExtConnAppId', 'ReportUrl']);
   });
 
   it('★ 絞らずに送ると SharePoint は 400 を返す (これが「反映が全件エラー」の正体)', async () => {
@@ -124,7 +124,7 @@ describe('連携用リストへの書込: リストに無い列を送らない',
     const cols = posted.at(-1)!.columns;
     expect(cols).not.toContain('LegacyMgmtNumber');
     expect(cols).not.toContain('ExtConnAppId');
-    expect(cols).toContain('IssueInstanceId');
+    expect(cols).toContain('Title');          // 突合キーは組込みの Title
     expect(cols).toContain('AssetMgmtId');
   });
 
@@ -155,7 +155,7 @@ describe('連携用リストへの書込: 単一行テキストに収まらな�
     await expect(repo.spPost(
       `/_api/web/lists/getbytitle('MikkeVulnResponse')/items`,
       { __metadata: { type: 'SP.Data.MikkeVulnResponseListItem' },
-        IssueInstanceId: 'IID-L', Title: 'x', AssetFqdn: LONG_FQDN },
+        Title: 'IID-L', AssetFqdn: LONG_FQDN },
     )).rejects.toThrow(/500/);
   });
 
@@ -163,7 +163,7 @@ describe('連携用リストへの書込: 単一行テキストに収まらな�
     await expect(repo.spPost(
       `/_api/web/lists/getbytitle('MikkeVulnResponse')/items`,
       { __metadata: { type: 'SP.Data.MikkeVulnResponseListItem' },
-        IssueInstanceId: 'IID-N', Title: 'a\nb' },
+        Title: 'a\nb' },
     )).rejects.toThrow(/500/);
   });
 

@@ -466,12 +466,12 @@ export class SpRepository implements Repository {
     const out = new Map<string, string>();
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
-      + '?$select=IssueInstanceId,Modified&$top=5000';
+      + '?$select=Title,Modified&$top=5000';
     try {
       while (url) {
         const j: any = await this.spGet(url);
-        for (const row of j.d.results as { IssueInstanceId?: string; Modified?: string }[]) {
-          if (row.IssueInstanceId) out.set(row.IssueInstanceId, row.Modified ?? '');
+        for (const row of j.d.results as { Title?: string; Modified?: string }[]) {
+          if (row.Title) out.set(row.Title, row.Modified ?? '');
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
       }
@@ -486,15 +486,15 @@ export class SpRepository implements Repository {
     const out: VulnResponseItem[] = [];
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
-      + '?$select=IssueInstanceId,ResponseStatus,DueDate,ResponseNote,Remarks,Responder/Title'
+      + '?$select=Title,ResponseStatus,DueDate,ResponseNote,Remarks,Responder/Title'
       + '&$expand=Responder&$top=5000';
     try {
       while (url) {
         const j: any = await this.spGet(url);
         for (const row of j.d.results as any[]) {
-          if (!row.IssueInstanceId) continue;
+          if (!row.Title) continue;
           out.push({
-            issueInstanceId: row.IssueInstanceId,
+            issueInstanceId: row.Title,
             responseStatus: row.ResponseStatus ?? undefined,
             responderName: row.Responder?.Title ?? undefined,
             dueDate: row.DueDate ?? undefined,
@@ -514,7 +514,7 @@ export class SpRepository implements Repository {
     const out: VulnResponseRow[] = [];
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
-      + '?$select=Id,IssueInstanceId,Title,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
+      + '?$select=Id,Title,VulnTitle,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
       + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
       + 'ExtConnAppId,RelatedAssets,IdentifyEvidence,ReportUrl&$top=5000';
     try {
@@ -523,8 +523,8 @@ export class SpRepository implements Repository {
         for (const r of j.d.results as any[]) {
           out.push({
             id: r.Id,
-            issueInstanceId: r.IssueInstanceId ?? '',
-            title: r.Title ?? '',
+            issueInstanceId: r.Title ?? '',
+            title: r.VulnTitle ?? '',
             legacyMgmtNumber: r.LegacyMgmtNumber ?? '',
             detectionStatus: r.DetectionStatus ?? '',
             firstSeen: r.FirstSeen ?? '',
@@ -1081,7 +1081,8 @@ export class SpRepository implements Repository {
     issueInstanceId: string, fileName: string, data: Blob, previousFileName?: string,
   ): Promise<'attached' | 'no-item'> {
     const listPath = `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')`;
-    const q = `${listPath}/items?$select=Id&$filter=IssueInstanceId eq '${issueInstanceId.replace(/'/g, "''")}'&$top=1`;
+    // 突合キーは組込みの Title 列。
+    const q = `${listPath}/items?$select=Id&$filter=Title eq '${issueInstanceId.replace(/'/g, "''")}'&$top=1`;
     const found = await this.spGet(q);
     const itemId: number | undefined = found.d?.results?.[0]?.Id;
     if (!itemId) return 'no-item';

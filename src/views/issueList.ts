@@ -361,10 +361,40 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       await mapLimit(plan.creates, REFRESH_PARALLEL, (c) => run(c.issueInstanceId, () => getRepo().createVulnResponseItem(c), c));
       await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(u.issueInstanceId, () => getRepo().updateVulnResponseItem(u.id, u.fields), u.fields));
 
+      // ★ レポート PDF をアイテムの添付にも載せる。
+      //   リンク列 (脆弱性レポート) はドキュメントライブラリを指すので、そこへの
+      //   参照権限が無い利用者は開けない。添付ならアイテムと同じ権限で開ける。
+      //   毎回上げ直すと重いので、追加した件 / レポートが変わった件だけにする。
+      const attachTargets = targets.filter((i) => i.reportUrl && (
+        plan.creates.some((c) => c.issueInstanceId === i.issueInstanceId)
+        || plan.updates.some((u) => u.issueInstanceId === i.issueInstanceId && u.fields.reportUrl !== undefined)
+      ));
+      const att = { ok: 0, noItem: 0, fail: 0, firstErr: '' };
+      if (attachTargets.length) {
+        toast(rootEl, `レポートを添付しています… ${attachTargets.length} 件`, 'default', 6000);
+        await mapLimit(attachTargets, REPORT_FETCH_PARALLEL, async (issue) => {
+          try {
+            const href = await getRepo().docFileHref(issue.reportUrl!);
+            if (!href) throw new Error('保存済みレポートが見つかりません');
+            const r = await fetch(href, { credentials: 'same-origin', cache: 'no-store' });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const name = issue.reportName || 'report.pdf';
+            const res = await getRepo().attachVulnResponseFile(
+              issue.issueInstanceId, name, await r.blob(), issue.reportName);
+            if (res === 'attached') att.ok++; else att.noItem++;
+          } catch (e) {
+            att.fail++;
+            if (!att.firstErr) att.firstErr = `${issue.issueInstanceId}: ${(e as Error).message}`;
+          }
+        });
+      }
+
+      const attMsg = att.ok || att.fail
+        ? ` / レポート添付 ${att.ok} 件${att.fail ? ` (失敗 ${att.fail}: ${att.firstErr})` : ''}` : '';
       toast(rootEl,
         `${label}: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
-        + ` / 変更なし ${plan.unchanged}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
-        fail ? 'error' : 'ok', fail ? 12000 : 8000);
+        + ` / 変更なし ${plan.unchanged}${attMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
+        fail || att.fail ? 'error' : 'ok', fail || att.fail ? 12000 : 8000);
       void ok;
     } catch (e) {
       toast(rootEl, `連携リストへの反映に失敗しました: ${(e as Error).message}`, 'error', 10000);
