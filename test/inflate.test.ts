@@ -168,3 +168,66 @@ describe('数式セルは値 (キャッシュ結果) で読む', () => {
     expect(rowsOf(xml)).toEqual([{ 件数: '42' }]);
   });
 });
+
+describe('テーブルオブジェクトの見出し行を見る', () => {
+  // ★ 実際に踏んだ事故: 「全ての列で見つからない列がありますと出る」。
+  //   Excel のテーブルは 1 行目から始まるとは限らず、上に表題行があることが多い。
+  //   1 行目を見出しと決め打ちしていたため、表題行を見出しとして読んでいた。
+  const withTable = (ref: string, headerRowCount = 1): Record<string, string>[] => {
+    const sheetXml =
+      '<?xml version="1.0"?><worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>'
+      + '<row r="1"><c r="A1" t="inlineStr"><is><t>脆弱性管理台帳</t></is></c></row>'
+      + '<row r="2"><c r="A2" t="inlineStr"><is><t>最終更新 2026-08-01</t></is></c></row>'
+      + '<row r="3"><c r="B3" t="inlineStr"><is><t>Issue ID</t></is></c>'
+      + '<c r="C3" t="inlineStr"><is><t>事業会社</t></is></c></row>'
+      + '<row r="4"><c r="B4" t="inlineStr"><is><t>IID-1</t></is></c>'
+      + '<c r="C4" t="inlineStr"><is><t>ENG</t></is></c></row>'
+      + '</sheetData><tableParts count="1"><tablePart r:id="rId1"/></tableParts></worksheet>';
+    const tableXml = `<table ref="${ref}" headerRowCount="${headerRowCount}">`
+      + '<tableColumns><tableColumn name="Issue ID"/><tableColumn name="事業会社"/></tableColumns></table>';
+    return parseXlsxSheet(buildZip([
+      ['[Content_Types].xml', '<Types/>'],
+      ['_rels/.rels', '<Relationships/>'],
+      ['xl/workbook.xml',
+        '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<sheets><sheet name="list" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/worksheets/sheet1.xml', sheetXml],
+      ['xl/worksheets/_rels/sheet1.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="../tables/table1.xml"/></Relationships>'],
+      ['xl/tables/table1.xml', tableXml],
+    ]), 'list')!.rows;
+  };
+
+  it('★ 表題行を飛ばし、テーブルの見出し行から読む', () => {
+    expect(withTable('B3:C4')).toEqual([{ 'Issue ID': 'IID-1', 事業会社: 'ENG' }]);
+  });
+
+  it('テーブルの範囲外 (表題行) はデータに入れない', () => {
+    expect(withTable('B3:C4')).toHaveLength(1);
+  });
+
+  it('テーブル定義が無いブックは、最初の中身のある行を見出しにする', () => {
+    // 1 セルだけの表題行は見出しにしない (2 セル以上ある行を探す)。
+    const sheetXml =
+      '<?xml version="1.0"?><worksheet><sheetData>'
+      + '<row r="1"><c r="A1" t="inlineStr"><is><t>表題だけの行</t></is></c></row>'
+      + '<row r="3"><c r="A3" t="inlineStr"><is><t>Issue ID</t></is></c>'
+      + '<c r="B3" t="inlineStr"><is><t>事業会社</t></is></c></row>'
+      + '<row r="4"><c r="A4" t="inlineStr"><is><t>IID-9</t></is></c>'
+      + '<c r="B4" t="inlineStr"><is><t>MOB</t></is></c></row>'
+      + '</sheetData></worksheet>';
+    const rows = parseXlsxSheet(buildZip([
+      ['[Content_Types].xml', '<Types/>'],
+      ['_rels/.rels', '<Relationships/>'],
+      ['xl/workbook.xml',
+        '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<sheets><sheet name="list" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/worksheets/sheet1.xml', sheetXml],
+    ]), 'list')!.rows;
+    expect(rows).toEqual([{ 'Issue ID': 'IID-9', 事業会社: 'MOB' }]);
+  });
+});

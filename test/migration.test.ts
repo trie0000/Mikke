@@ -290,3 +290,13 @@ describe('数式セル (XLOOKUP) の扱い', () => {
     expect(r.warnings).toEqual([]);
   });
 });
+
+describe('未解決の略称の集計', () => {
+  it('★ 数式のエラー値は「未登録の略称」に混ぜない (原因が別なので)', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: '#N/A' },
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'XYZ' },
+    ], PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.unknownAliases).toEqual(['XYZ']);
+  });
+});

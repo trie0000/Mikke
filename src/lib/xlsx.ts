@@ -386,11 +386,60 @@ export function parseXlsxSheet(buf: ArrayBuffer, sheetName: string): Sheet | nul
     key = all[want] ?? '';
   }
   if (!key || !files.has(key)) return null;
-  return parseSheetXml(files, dec.decode(files.get(key)!));
+  return sheetFrom(files, dec.decode(files.get(key)!), readTableDef(files, key));
 }
 
 /** ワークシート XML → Sheet。sharedStrings はブック共通なので files から引く。 */
-function parseSheetXml(files: Map<string, Uint8Array>, xml: string): Sheet {
+/** セル参照 (A1 / AB12) を 0 始まりの列・行に分解する。 */
+function refToRC(ref: string): { col: number; row: number } | null {
+  const m = /^([A-Z]+)(\d+)$/.exec(ref.trim().toUpperCase());
+  if (!m) return null;
+  return { col: letterCol(m[1]!), row: parseInt(m[2]!, 10) - 1 };
+}
+
+/** テーブルオブジェクトの定義 (見出し行の位置と列名)。 */
+interface TableDef { top: number; left: number; right: number; bottom: number; names: string[] }
+
+/**
+ * ワークシートに紐づくテーブルオブジェクトを読む。
+ * ★ Excel の「テーブル」は 1 行目から始まるとは限らない (上に表題や説明行がある)。
+ *   ref="A3:AB500" のような範囲と列名が xl/tables/tableN.xml に入っているので、
+ *   そこから見出し行を決める。これを見ないと表題行を見出しとして読んでしまい、
+ *   「全ての列が見つからない」ことになる。
+ */
+function readTableDef(files: Map<string, Uint8Array>, sheetKey: string): TableDef | null {
+  const dec = new TextDecoder();
+  const sheetXml = dec.decode(files.get(sheetKey)!);
+  if (!/<tableParts\b/.test(sheetXml)) return null;
+  const relKey = sheetKey.replace(/^(.*\/)([^/]+)$/, '$1_rels/$2.rels');
+  const relBytes = files.get(relKey);
+  if (!relBytes) return null;
+  const relXml = dec.decode(relBytes);
+  for (const pm of sheetXml.matchAll(/<tablePart\b[^>]*r:id="([^"]+)"/g)) {
+    const rx = new RegExp(`<Relationship\\b[^>]*\\bId="${pm[1]!}"[^>]*\\bTarget="([^"]*)"`);
+    const target = rx.exec(relXml)?.[1];
+    if (!target) continue;
+    // Target は "../tables/table1.xml" のような相対パス
+    const key = `xl/${target.replace(/^(\.\.\/)+/, '').replace(/^\/?(xl\/)?/, '')}`;
+    const tBytes = files.get(key);
+    if (!tBytes) continue;
+    const tXml = dec.decode(tBytes);
+    const ref = /<table\b[^>]*\bref="([^"]+)"/.exec(tXml)?.[1];
+    if (!ref) continue;
+    const [a, b] = ref.split(':');
+    const tl = refToRC(a ?? ''); const br = refToRC(b ?? a ?? '');
+    if (!tl || !br) continue;
+    const headerRowCount = Number(/<table\b[^>]*\bheaderRowCount="(\d+)"/.exec(tXml)?.[1] ?? '1');
+    if (headerRowCount < 1) continue;   // 見出し無しテーブルは扱わない
+    const names = [...tXml.matchAll(/<tableColumn\b[^>]*\bname="([^"]*)"/g)]
+      .map((m) => xmlUnescape(m[1]!));
+    return { top: tl.row, left: tl.col, right: br.col, bottom: br.row, names };
+  }
+  return null;
+}
+
+/** 行番号つきのセル格子を作る (xlsx は空行を書かないので、絶対行で持つ)。 */
+function readGrid(files: Map<string, Uint8Array>, xml: string): Map<number, string[]> {
   const dec = new TextDecoder();
   const shared: string[] = [];
   const ssBytes = files.get('xl/sharedStrings.xml');
@@ -399,11 +448,15 @@ function parseSheetXml(files: Map<string, Uint8Array>, xml: string): Sheet {
     for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(collectText(m[1]!));
   }
 
-  const grid: string[][] = [];
-  for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+  const grid = new Map<number, string[]>();
+  let autoRow = 0;
+  for (const rm of xml.matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
+    const rAttr = /\br="(\d+)"/.exec(rm[1]!)?.[1];
+    const rowIdx = rAttr ? parseInt(rAttr, 10) - 1 : autoRow;
+    autoRow = rowIdx + 1;
     const cells: string[] = [];
     let auto = 0;
-    for (const cm of rm[1]!.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    for (const cm of rm[2]!.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
       const attrs = cm[1]!;
       const inner = cm[2]!;
       const ref = /r="([A-Z]+)\d+"/.exec(attrs);
@@ -425,18 +478,54 @@ function parseSheetXml(files: Map<string, Uint8Array>, xml: string): Sheet {
       cells[col] = val;
       auto = col + 1;
     }
-    grid.push(cells);
+    grid.set(rowIdx, cells);
   }
-  if (!grid.length) return { headers: [], rows: [] };
+  return grid;
+}
 
-  const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+/** 見出しらしい最初の行 (テーブル定義が無いブック向け)。 */
+function guessHeaderRow(grid: Map<number, string[]>): number {
+  const rows = [...grid.keys()].sort((a, b) => a - b);
+  for (const r of rows) {
+    const filled = (grid.get(r) ?? []).filter((v) => (v ?? '').trim()).length;
+    if (filled >= 2) return r;     // 表題行 (1 セルだけ) は飛ばす
+  }
+  return rows[0] ?? 0;
+}
+
+function sheetFrom(files: Map<string, Uint8Array>, xml: string, table: TableDef | null): Sheet {
+  const grid = readGrid(files, xml);
+  if (!grid.size) return { headers: [], rows: [] };
+
+  const maxRow = Math.max(...grid.keys());
+  const width = Math.max(...[...grid.values()].map((r) => r.length), 0);
+  const headerRow = table ? table.top : guessHeaderRow(grid);
+  const left = table ? table.left : 0;
+  const right = table ? table.right : width - 1;
+  const bottom = table ? Math.min(table.bottom, maxRow) : maxRow;
+
+  const headerCells = grid.get(headerRow) ?? [];
   const headers: string[] = [];
-  for (let c = 0; c < width; c++) headers.push((grid[0]![c] ?? '').trim() || `列${c + 1}`);
+  for (let c = left; c <= right; c++) {
+    // ★ 列名はテーブル定義のものを優先する (Excel 上の表記と一致し、
+    //   見出しセルが数式や書式で読みにくい場合でも確実)。
+    const fromTable = table?.names[c - left];
+    const fromCell = (headerCells[c] ?? '').trim();
+    headers.push((fromTable ?? '').trim() || fromCell || `列${c + 1}`);
+  }
+
   const rows: Record<string, string>[] = [];
-  for (let r = 1; r < grid.length; r++) {
+  for (let r = headerRow + 1; r <= bottom; r++) {
+    const cells = grid.get(r);
+    if (!cells) continue;                       // 空行は飛ばす
     const obj: Record<string, string> = {};
-    for (let c = 0; c < width; c++) obj[headers[c]!] = grid[r]![c] ?? '';
-    rows.push(obj);
+    let any = false;
+    for (let c = left; c <= right; c++) {
+      const v = cells[c] ?? '';
+      obj[headers[c - left]!] = v;
+      if (v.trim()) any = true;
+    }
+    if (any) rows.push(obj);                    // 全部空の行は入れない
   }
   return { headers, rows };
 }
@@ -447,7 +536,7 @@ export function parseXlsx(buf: ArrayBuffer): Sheet {
   let sheetKey: string | null = null;
   for (const k of files.keys()) if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(k)) { sheetKey = k; break; }
   if (!sheetKey) return { headers: [], rows: [] };
-  return parseSheetXml(files, new TextDecoder().decode(files.get(sheetKey)!));
+  return sheetFrom(files, new TextDecoder().decode(files.get(sheetKey)!), readTableDef(files, sheetKey));
 }
 
 /** ファイル拡張子で CSV / xlsx を判定して読み込む。 */

@@ -287,7 +287,8 @@ export function buildMigrationPlan(
   const unknown = new Set<string>();
   for (const r of rows) {
     const a = text(r[MIG_COL.businessCompany]);
-    if (a && !resolveCompany(a, ctx.aliasIndex)) unknown.add(a);
+    // 数式のエラー値は「未登録の略称」ではない (原因が別なので混ぜない)。
+    if (a && !isExcelError(a) && !resolveCompany(a, ctx.aliasIndex)) unknown.add(a);
   }
   return {
     rows: results,
