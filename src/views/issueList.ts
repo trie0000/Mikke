@@ -62,6 +62,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let lastFiltered: ManagedIssue[] = [];
   const selected = new Set<number>();
   let bulkBusy = false;
+  /** ツールバーの「列」ボタン。非表示件数の表示を追随させるために持っておく。 */
+  let colBtn: HTMLButtonElement | null = null;
   /** 連携内容の自動取り込みはこの画面を開いたとき 1 回だけ (毎回の再描画で走らせない)。 */
   let autoSyncDone = false;
 
@@ -71,6 +73,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     rowId: (i) => i.id,
     virtualMin: 40,
     onRowClick: (i) => openDetail(i.id),
+    columnToggle: true,           // ツールバーの「列」ボタンが戻す入口
+    onColumnsChange: () => paintColBtn(),
     rowSelected: (i) => getState().selectedIssueId === i.id,
     selection: {
       checked: (i) => selected.has(i.id),
@@ -737,6 +741,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       style: 'height:30px;font-size:var(--fs-sm)', title: '列幅で折り返して全文表示',
       onclick: () => { table.toggleWrap(); paint(); },
     }, ['全文表示']);
+    // 列の表示/非表示。非表示にした列を戻す入口はここだけ (ヘッダから消えるため)。
+    colBtn = el('button', {
+      style: 'height:30px;font-size:var(--fs-sm)',
+      title: '表示する列を選びます（列ヘッダのメニューからも非表示にできます）',
+      onclick: () => { if (colBtn) table.openColumnPicker(colBtn); },
+    }) as HTMLButtonElement;
+    paintColBtn();
     const clearBtn = (table.hasActiveFilters() || f.query)
       ? el('button', {
           class: 'mikke-btn mikke-btn--ghost', style: 'height:30px;font-size:var(--fs-sm)',
@@ -782,13 +793,22 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
     toolbar.append(
       el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
-      search, wrapBtn, ...(clearBtn ? [clearBtn] : []),
+      search, wrapBtn, colBtn, ...(clearBtn ? [clearBtn] : []),
       el('span', { style: 'display:inline-flex;gap:var(--s-3)' }, [pushBtn, syncBtn, bulkFixedBtn, bulkAddBtn]),
       hiddenToggle,
     );
 
     if (cache.length === 0) { clear(tableWrap); tableWrap.appendChild(emptyState()); return; }
     refresh();
+  }
+
+  /** 「列」ボタンの見た目だけを更新する。
+   *  ★ 列を隠すたびに paint() し直すと、開いている列メニューが閉じてしまう。 */
+  function paintColBtn(): void {
+    if (!colBtn) return;
+    const n = table.hiddenColumnCount();
+    colBtn.className = n ? 'mikke-btn mikke-btn--primary' : 'mikke-btn mikke-btn--secondary';
+    colBtn.innerHTML = icon('columns') + `<span>列${n ? ` (${n} 非表示)` : ''}</span>`;
   }
 
   /** 検索/表示条件を反映して表を再描画 (toolbar は保持)。 */

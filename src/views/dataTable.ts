@@ -33,6 +33,12 @@ export interface DataTableOptions<T> {
   rowSelected?: (row: T) => boolean;
   selection?: DataTableSelection<T>;
   onVisibleChange?: (visible: T[]) => void;
+  /** 列の表示/非表示が変わったとき (ツールバーの表示を追随させる用)。 */
+  onColumnsChange?: () => void;
+  /** 列の非表示を許可する。
+   *  ★ 有効にする表は、戻すための入口 (openColumnPicker を開くボタン) を必ず用意すること。
+   *    ヘッダのメニューから隠すと列自体が消えるので、入口が無いと二度と戻せない。 */
+  columnToggle?: boolean;
   virtualMin?: number;
   emptyText?: string;
 }
@@ -56,6 +62,8 @@ export class DataTable<T> {
   private colWidths: Record<string, number>;
   private colExcluded: Record<string, string[]>;
   private colOrder: string[];
+  /** 非表示にしている列 ID。端末ごとに保存する。 */
+  private colHidden: string[];
   private wrapOn: boolean;
   private sortId: string | null;
   private sortDir: 'asc' | 'desc';
@@ -84,6 +92,7 @@ export class DataTable<T> {
     this.colWidths = lsGet(`${k}.colWidths`, {} as Record<string, number>);
     this.colExcluded = lsGet(`${k}.colFilters`, {} as Record<string, string[]>);
     this.colOrder = lsGet(`${k}.colOrder`, [] as string[]);
+    this.colHidden = lsGet(`${k}.colHidden`, [] as string[]);
     this.wrapOn = lsGet(`${k}.wrap`, false);
     const sort = lsGet<{ id: string | null; dir: 'asc' | 'desc' }>(`${k}.sort`, { id: null, dir: 'asc' });
     this.sortId = sort.id;
@@ -108,6 +117,34 @@ export class DataTable<T> {
   isWrap(): boolean { return this.wrapOn; }
   toggleWrap(): void { this.wrapOn = !this.wrapOn; lsSet(`${this.opts.storeKey}.wrap`, this.wrapOn); this.render(); }
   hasActiveFilters(): boolean { return Object.values(this.colExcluded).some((a) => a.length); }
+  /** 非表示にしている列の数 (ツールバーのバッジ表示用)。 */
+  hiddenColumnCount(): number {
+    const ids = new Set(this.opts.columns.map((c) => c.id));
+    return this.colHidden.filter((id) => ids.has(id)).length;
+  }
+  /** 列の表示/非表示を切り替える。最後の 1 列は隠せない。 */
+  setColumnHidden(id: string, hidden: boolean): void {
+    const set = new Set(this.colHidden);
+    if (hidden) {
+      if (this.orderedColumns().length <= 1) return;   // 全部隠さない
+      set.add(id);
+      // 隠した列で並べ替えていたら並べ替えを解除する (効かないまま残ると混乱する)。
+      if (this.sortId === id) { this.sortId = null; lsSet(`${this.opts.storeKey}.sort`, { id: null, dir: this.sortDir }); }
+    } else {
+      set.delete(id);
+    }
+    this.colHidden = [...set];
+    lsSet(`${this.opts.storeKey}.colHidden`, this.colHidden);
+    this.render();
+    this.opts.onColumnsChange?.();
+  }
+  /** すべての列を再表示する。 */
+  showAllColumns(): void {
+    this.colHidden = [];
+    lsSet(`${this.opts.storeKey}.colHidden`, this.colHidden);
+    this.render();
+    this.opts.onColumnsChange?.();
+  }
   clearFilters(): void {
     this.colExcluded = {};
     lsSet(`${this.opts.storeKey}.colFilters`, this.colExcluded);
@@ -123,12 +160,23 @@ export class DataTable<T> {
   }
 
   // ── 列順 ────────────────────────────────────────────────────────────────────
-  private orderedColumns(): DataColumn<T>[] {
+  /** 並び順を適用した全列 (非表示も含む)。列表示メニュー用。 */
+  private orderedAll(): DataColumn<T>[] {
     const byId = new Map(this.opts.columns.map((c) => [c.id, c]));
     const out: DataColumn<T>[] = [];
     for (const id of this.colOrder) { const c = byId.get(id); if (c) { out.push(c); byId.delete(id); } }
     for (const c of this.opts.columns) if (byId.has(c.id)) out.push(c); // 未登録(新規)列は末尾
     return out;
+  }
+
+  /** 実際に描画する列 (非表示を除く)。
+   *  ★ 非表示の列はここに載らないので、その列の絞り込み・並べ替えも効かなくなる。
+   *    「見えていないのに行が減っている」を避けるための意図的な挙動。再表示すれば戻る。 */
+  private orderedColumns(): DataColumn<T>[] {
+    const hidden = new Set(this.colHidden);
+    const shown = this.orderedAll().filter((c) => !hidden.has(c.id));
+    // 全部隠すと何も見えなくなるので、そのときは非表示指定を無視する。
+    return shown.length ? shown : this.orderedAll();
   }
 
   // ── フィルタ・ソート ──────────────────────────────────────────────────────────
@@ -397,6 +445,72 @@ export class DataTable<T> {
     if (this.openMenu) { this.openMenu.remove(); this.openMenu = null; }
     this.openMenuCol = null;
   }
+  /**
+   * 列の表示/非表示を選ぶメニューを anchor の下に開く。
+   * 非表示にした列はヘッダから消えるので、戻す入口はここにしかない。
+   * ツールバーのボタンから呼ぶ想定。
+   */
+  openColumnPicker(anchor: HTMLElement): void {
+    if (this.openMenuCol === '__columns__') { this.closeMenu(); return; }
+    this.closeMenu();
+    this.openMenuCol = '__columns__';
+    const rect = anchor.getBoundingClientRect();
+    const menu = el('div', { class: 'mikke-colmenu' });
+
+    menu.appendChild(el('div', { class: 'mikke-colmenu-note' }, ['表示する列を選びます']));
+    const listWrap = el('div', { class: 'mikke-colmenu-vlist' });
+    const renderList = (): void => {
+      const scroll = listWrap.scrollTop;
+      clear(listWrap);
+      // 状態は毎回 this.colHidden から引き直す (ローカルに写しを持つと二重適用になる)。
+      const hidden = new Set(this.colHidden);
+      const all = this.orderedAll();
+      const shownCount = all.filter((c) => !hidden.has(c.id)).length;
+      for (const c of all) {
+        const cb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+        cb.checked = !hidden.has(c.id);
+        // 最後の 1 列は外せない (全部消すと何も見えなくなる)。
+        if (cb.checked && shownCount <= 1) cb.disabled = true;
+        cb.addEventListener('change', () => {
+          // ★ 先に立てる。setColumnHidden が render() を呼ぶので、後だと閉じてしまう。
+          this.keepMenuOnRender = true;
+          this.setColumnHidden(c.id, !cb.checked);
+          renderList();
+        });
+        listWrap.appendChild(el('label', { class: 'mikke-colmenu-item' }, [cb, el('span', {}, [c.label])]));
+      }
+      listWrap.scrollTop = scroll;
+    };
+    renderList();
+    menu.appendChild(listWrap);
+    menu.appendChild(el('div', { class: 'mikke-colmenu-sep' }));
+    menu.appendChild(el('button', {
+      class: 'mikke-colmenu-act',
+      onclick: () => { this.closeMenu(); this.showAllColumns(); },
+    }, [el('span', { html: icon('check'), style: 'display:inline-flex' }), el('span', {}, ['すべて表示'])]));
+
+    this.placeMenu(menu, rect);
+  }
+
+  /** メニューを画面内に収めて開き、外側クリックで閉じるようにする。 */
+  private placeMenu(menu: HTMLElement, rect: DOMRect): void {
+    const width = 260;
+    menu.style.left = `${Math.max(6, Math.min(rect.left, window.innerWidth - width - 6))}px`;
+    menu.style.top = `${Math.min(rect.bottom + 2, window.innerHeight - 120)}px`;
+    menu.addEventListener('mousedown', (e) => e.stopPropagation());
+    this.container.closest('#mikke-root')!.appendChild(menu);
+    this.openMenu = menu;
+    // メニュー外の mousedown で閉じる。その直後に発火する click (行クリック=詳細を開く等)
+    //  を capture で握り潰し、閉じる動作だけにする。
+    this.menuDocHandler = (): void => {
+      this.closeMenu();
+      const swallow = (ev: Event): void => { ev.stopPropagation(); ev.preventDefault(); };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener('click', swallow, true), 350);
+    };
+    setTimeout(() => document.addEventListener('mousedown', this.menuDocHandler!), 0);
+  }
+
   private openColMenu(th: HTMLElement, col: DataColumn<T>): void {
     if (this.openMenuCol === col.id) { this.closeMenu(); return; }
     this.closeMenu();
@@ -416,6 +530,14 @@ export class DataTable<T> {
           [el('span', { html: icon('chevronDown'), style: 'display:inline-flex' }), el('span', {}, ['降順で並べ替え'])]),
       );
       if (filterable) menu.appendChild(el('div', { class: 'mikke-colmenu-sep' }));
+    }
+    // 「この列を非表示」。最後の 1 列だけになるときは出さない (全部消せてしまうため)。
+    if (this.opts.columnToggle && this.orderedColumns().length > 1) {
+      menu.appendChild(el('button', {
+        class: 'mikke-colmenu-act',
+        onclick: () => { this.closeMenu(); this.setColumnHidden(col.id, true); },
+      }, [el('span', { html: icon('eyeOff'), style: 'display:inline-flex' }), el('span', {}, ['この列を非表示'])]));
+      menu.appendChild(el('div', { class: 'mikke-colmenu-sep' }));
     }
     if (filterable) {
       const search = el('input', { class: 'mikke-colmenu-search', type: 'text', placeholder: '値を検索' }) as HTMLInputElement;
@@ -470,20 +592,6 @@ export class DataTable<T> {
       renderList('');
     }
 
-    const width = 260;
-    menu.style.left = `${Math.max(6, Math.min(rect.left, window.innerWidth - width - 6))}px`;
-    menu.style.top = `${Math.min(rect.bottom + 2, window.innerHeight - 120)}px`;
-    menu.addEventListener('mousedown', (e) => e.stopPropagation());
-    this.container.closest('#mikke-root')!.appendChild(menu);
-    this.openMenu = menu;
-    // メニュー外の mousedown で閉じる。その直後に発火する click (行クリック=詳細を開く等)
-    //  を capture で握り潰し、フィルタを閉じる動作だけにする。
-    this.menuDocHandler = (): void => {
-      this.closeMenu();
-      const swallow = (ev: Event): void => { ev.stopPropagation(); ev.preventDefault(); };
-      document.addEventListener('click', swallow, { capture: true, once: true });
-      setTimeout(() => document.removeEventListener('click', swallow, true), 350);
-    };
-    setTimeout(() => document.addEventListener('mousedown', this.menuDocHandler!), 0);
+    this.placeMenu(menu, rect);
   }
 }
