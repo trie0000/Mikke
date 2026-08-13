@@ -198,6 +198,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['対応', null, mgmtBadge(i.mgmtStatus)],
         ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
         ['対象外', i.isOutOfScope ? `はい — ${i.outOfScopeReason || ''}` : 'いいえ'],
+        ['事業会社', i.businessCompany || '—'],
+        ['管理会社', i.affiliateCompany || '—'],
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],
       ]));

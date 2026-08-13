@@ -54,6 +54,27 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   reportUrl: 'ReportUrl',
 };
 
+/**
+ * 検知日を **JST の暦日** に直して返す (`YYYY-MM-DDT00:00:00Z`)。
+ *
+ * ★ 検査ツールの値は UTC の ISO (例 2026-07-30T20:00:00Z)。そのまま日付列へ入れると
+ *   UTC の暦日 (7/30) で登録され、JST では 7/31 なのに 1 日ずれて見える。
+ *   9 時間ずらしてから日付部分を取れば JST の暦日になる。
+ * ★ 時刻を 00:00:00Z に固定するのは、SharePoint の「日付のみ」列がタイムゾーンに
+ *   依存せずその日付を表示するため。時刻付きのまま入れると閲覧者の地域設定で
+ *   前後にずれ得る。
+ * ★ 変換は「書き込む値の組み立て時」に行う。差分比較も同じ値どうしで行われるので、
+ *   毎回「差分あり」になってしまうことがない。
+ */
+export function jstDateOnly(iso?: string): string {
+  const s = text(iso);
+  if (!s) return '';
+  const t = new Date(s);
+  if (Number.isNaN(t.getTime())) return '';
+  const jst = new Date(t.getTime() + 9 * 60 * 60 * 1000);
+  return `${jst.toISOString().slice(0, 10)}T00:00:00Z`;
+}
+
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
 export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
 
@@ -165,13 +186,15 @@ export function toVulnResponseFields(
     title: text(issue.title),
     legacyMgmtNumber: text(issue.legacyMgmtNumber),
     detectionStatus: text(issue.detectionStatus),
-    firstSeen: text(issue.firstSeen),
-    lastSeen: text(issue.lastSeen),
+    firstSeen: jstDateOnly(issue.firstSeen),
+    lastSeen: jstDateOnly(issue.lastSeen),
     assetIp: ips.join(' | '),
     assetFqdn: fqdns.join(' | '),
     assetType: fqdns.length ? 'FQDN' : (ips.length ? 'IP' : ''),
-    businessCompany: pick((a) => a.businessCompany),
-    affiliateCompany: pick((a) => a.affiliateCompany),
+    // ★ 管理対象に直接入れた値を優先し、無ければ資産リストから引く。
+    //   事業会社はアクセス権の割当キーなので、脆弱性ごとに直したいことがある。
+    businessCompany: text(issue.businessCompany) || pick((a) => a.businessCompany),
+    affiliateCompany: text(issue.affiliateCompany) || pick((a) => a.affiliateCompany),
     assetMgmtId: pick((a) => a.mgmtNumber),
     extConnAppId: text(issue.extConnAppId),
     relatedAssets: related.join(' | '),

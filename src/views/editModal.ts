@@ -6,9 +6,34 @@ import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { diffManagedIssue } from '../lib/issueChangeLog';
 import { MGMT_STATUSES } from '../types';
+import { normalizePerms, registeredCompanies } from '../lib/itemPerms';
 import type { ManagedIssue, MgmtStatus } from '../types';
 
 export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: () => void): void {
+  // ★ 事業会社は自由入力にしない。アクセス権 (連携用リストの権限) の割当キーなので、
+  //   表記ゆれがあるとその会社のグループに権限が付かない。登録済みの一覧から選ぶ。
+  const bizSel = el('select', {}, [
+    el('option', { value: '' }, ['（未設定）']),
+  ]) as HTMLSelectElement;
+  void (async () => {
+    let names: string[] = [];
+    try { names = registeredCompanies(normalizePerms((await getRepo().getSettings()).vulnResponsePerms)); }
+    catch { /* 取れなければ現在値だけ選べる状態にする */ }
+    const cur = (issue.businessCompany ?? '').trim();
+    // 一覧から消えた会社が入っている場合も選択を保てるようにしておく
+    if (cur && !names.includes(cur)) names = [...names, cur];
+    for (const n of names) {
+      bizSel.appendChild(el('option', { value: n, ...(n === cur ? { selected: 'selected' } : {}) }, [n]));
+    }
+    if (!names.length) {
+      bizSel.appendChild(el('option', { value: '', disabled: 'disabled' },
+        ['（アクセス権画面で事業会社を登録してください）']));
+    }
+  })();
+  const affiliateCompany = el('input', {
+    type: 'text', value: issue.affiliateCompany ?? '', placeholder: '例: ABC株式会社',
+  }) as HTMLInputElement;
+
   const statusSel = el('select', {}, MGMT_STATUSES.map((s) =>
     el('option', { value: s, ...(s === issue.mgmtStatus ? { selected: 'selected' } : {}) }, [s]),
   )) as HTMLSelectElement;
@@ -51,6 +76,8 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
       ]),
     ]),
     field('対象外の理由', oosReason),
+    field('事業会社 (アクセス権画面で登録した一覧から選択)', bizSel),
+    field('管理会社', affiliateCompany),
     field('外部接続申請ID', extConnAppId),
     // 移行期間中だけの参考情報。将来この列ごと廃止する。
     field('旧管理番号 (Excel 運用時の暫定 ID。移行期間中のみ)', legacyMgmtNumber),
@@ -71,6 +98,8 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         isOutOfScope: isOos,
         outOfScopeReason: isOos ? oosReason.value.trim() : '',
         assignee: assignee.value.trim(),
+        businessCompany: bizSel.value.trim(),
+        affiliateCompany: affiliateCompany.value.trim(),
         extConnAppId: extConnAppId.value.trim(),
         legacyMgmtNumber: legacyMgmtNumber.value.trim(),
         dueDate: due.value ? new Date(due.value).toISOString() : '',

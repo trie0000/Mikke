@@ -71,6 +71,11 @@ export interface ManagedIssue {
   /** 旧管理番号 (Excel 運用時代の「事業会社名-YYMM-XX」)。
    *  ★ 将来廃止する暫定 ID。移行期間中だけ参考情報として持つ。 */
   legacyMgmtNumber?: string;
+  /** 事業会社。アクセス権画面で登録した一覧から選ぶ。
+   *  ★ 未設定なら資産リスト側の値を使う (連携用リストへ渡すときのフォールバック)。 */
+  businessCompany?: string;
+  /** 管理会社。 */
+  affiliateCompany?: string;
   /** 検査ツール側ステータス (CSV/API 由来、読取専用)。 */
   scannerStatus?: string;
   /** 深刻度 (CSV/API 由来)。 */

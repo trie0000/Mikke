@@ -114,6 +114,10 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     // 管理系 ID。IssueInstanceId (検査ツール) / Web資産管理ID (資産リスト側の MgmtNumber) と
     // 並ぶ 3 種類目。連携用リストにも同じ値を渡す。
     { name: 'ExtConnAppId', type: 'Text', indexed: true },
+    // 管理会社・事業会社。資産リストからも引けるが、脆弱性ごとに上書きしたい
+    // ケースがあるので管理対象側にも持つ (未設定なら資産の値を使う)。
+    { name: 'BusinessCompany', type: 'Text', indexed: true },
+    { name: 'AffiliateCompany', type: 'Text' },
     // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
     //   移行期間中は参考情報として管理リスト・連携用リストの双方で見せる。
     { name: 'LegacyMgmtNumber', type: 'Text', indexed: true },
@@ -319,8 +323,9 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
-  'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'AssetFqdn', 'AssetIp',
-  'BusinessCompany', 'AssetMgmtId', 'ReportUrl', 'ResponseStatus', 'DueDate', 'Responder',
+  'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'LastSeen',
+  'AssetFqdn', 'AssetIp', 'BusinessCompany', 'AssetMgmtId', 'ReportUrl',
+  'ResponseStatus', 'DueDate', 'Responder',
 ];
 
 /** MikkeImportLog: 取込履歴。 */

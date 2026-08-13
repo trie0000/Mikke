@@ -1,6 +1,6 @@
 // CSV 取込エンジン (差分判定)。クライアント / 中継サーバ両用の純粋関数。
 // 機能設計書 §2 (F1) / §9 (差分マトリクス) に準拠。
-import type { ManagedIssue, MikkeSettings, AddedReason } from '../types';
+import type { ManagedIssue, MikkeSettings, AddedReason, ColumnType } from '../types';
 import { DEFAULT_MGMT_STATUS } from '../types';
 import { evalConditions } from './conditions';
 import { nextDetectionWhenPresent, nextDetectionWhenAbsent, fixedNextDetectionWhenAbsent } from './detection';
@@ -46,24 +46,52 @@ export interface ImportPlan {
 /** 動的列 (Scan_*) を CSV 行から抽出。
  *  ★ CSV の「全列」を保存する (F6 のチェックは一覧に表示する列の選択であり、
  *    保存対象の絞り込みではない)。検査ツール詳細タブで全項目を参照できる。 */
-function extractScanFields(row: Record<string, string>, headers: string[]): Record<string, string> {
+/**
+ * 検査ツールの日付を JST 表記にする。
+ *
+ * ★ 検査ツールは UTC の ISO (例 2026-07-30T20:00:00.000Z) で返す。そのまま持つと
+ *   一覧にも詳細にも `2026-07-30T20:00:00.000Z` と出て読めないし、JST では 7/31 な
+ *   のに 7/30 に見える。**取込の時点で** JST の表記に直して保存する。
+ *   - 'datetime' → `YYYY-MM-DD HH:MM`
+ *   - 'date'     → `YYYY-MM-DD`
+ * ★ 変換できない値 (元から日付でない / 解釈不能) はそのまま通す。取込を止めない。
+ */
+export function toJstText(raw: string, type: ColumnType | undefined): string {
+  if (type !== 'date' && type !== 'datetime') return raw;
+  const v = (raw ?? '').trim();
+  if (!v) return raw;
+  const t = new Date(v);
+  if (Number.isNaN(t.getTime())) return raw;
+  const jst = new Date(t.getTime() + 9 * 60 * 60 * 1000);   // JST = UTC+9
+  const iso = jst.toISOString();
+  return type === 'date' ? iso.slice(0, 10) : `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+}
+
+function extractScanFields(
+  row: Record<string, string>, headers: string[], columnTypes?: Record<string, ColumnType>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const h of headers) {
     const name = h.trim();
     if (!name) continue;
-    out[`Scan_${name}`] = row[name] ?? '';
+    // 列の型は設定 (F6 の管理項目) が持つ。未設定の列はそのまま。
+    out[`Scan_${name}`] = toJstText(row[name] ?? '', columnTypes?.[name]);
   }
   return out;
 }
 
 /** CSV 行 → 検査ツール由来フィールド (更新/新規共通)。 */
-function scannerFieldsFromRow(row: Record<string, string>, headers: string[]): Partial<ManagedIssue> {
+function scannerFieldsFromRow(
+  row: Record<string, string>, headers: string[], columnTypes?: Record<string, ColumnType>,
+): Partial<ManagedIssue> {
   return {
     title: row[COL_TITLE] ?? '',
     severity: row[COL_SEVERITY] || undefined,
     scannerStatus: row[COL_SCANNER_STATUS] || undefined,
+    // ★ firstSeen / lastSeen は ISO のまま持つ。SP の日付列に入れる値であり、
+    //   並べ替え・差分計算にも使うため。画面表示は fmtDate が JST に直している。
     lastSeen: row[COL_LAST_SEEN] || undefined,
-    scanFields: extractScanFields(row, headers),
+    scanFields: extractScanFields(row, headers, columnTypes),
   };
 }
 
@@ -97,7 +125,7 @@ export function buildImportPlan(
     seenInCsv.add(iid);
 
     const cur = byId.get(iid);
-    const sf = scannerFieldsFromRow(row, headers);
+    const sf = scannerFieldsFromRow(row, headers, settings.columnTypes);
 
     if (cur) {
       // 既存管理対象に一致 → 更新。

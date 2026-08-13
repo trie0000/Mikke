@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { buildImportPlan } from '../src/lib/import';
+import { buildImportPlan, toJstText } from '../src/lib/import';
 import { parseCsv } from '../src/lib/csv';
 import type { ManagedIssue, MikkeSettings } from '../src/types';
 import type { ImportOp, ImportPlan } from '../src/lib/import';
@@ -217,5 +217,33 @@ describe('import: 固定モード (mode=fixed)', () => {
     expect(add.summary.added).toBe(1); // NEW-crit
     expect(add.ops.find((o) => o.issueInstanceId === 'P-cont')?.patch?.detectionStatus).toBe('継続');
     expect(add.ops.find((o) => o.issueInstanceId === 'P-und')?.patch?.detectionStatus).toBe('再検知');
+  });
+});
+
+describe('取込時に日付を JST 表記へ直す', () => {
+  // ★ 検査ツールは UTC の ISO で返す。そのまま持つと一覧に
+  //   2026-07-30T20:00:00.000Z と出て読めず、JST では 7/31 なのに 7/30 に見える。
+  it('datetime 列は YYYY-MM-DD HH:MM (JST)', () => {
+    expect(toJstText('2026-07-30T20:00:00.000Z', 'datetime')).toBe('2026-07-31 05:00');
+  });
+
+  it('date 列は YYYY-MM-DD (JST)', () => {
+    expect(toJstText('2026-07-30T20:00:00.000Z', 'date')).toBe('2026-07-31');
+  });
+
+  it('日付でない列は触らない', () => {
+    expect(toJstText('2026-07-30T20:00:00.000Z', 'text')).toBe('2026-07-30T20:00:00.000Z');
+    expect(toJstText('高', undefined)).toBe('高');
+  });
+
+  it('解釈できない値・空はそのまま通す (取込を止めない)', () => {
+    expect(toJstText('不明', 'datetime')).toBe('不明');
+    expect(toJstText('', 'datetime')).toBe('');
+  });
+
+  it('既に JST 表記になっている値を二重変換しない', () => {
+    // 取込済みの値を読み直しても 9 時間ずれ続けない (Z が無いのでローカル解釈になる)。
+    const once = toJstText('2026-07-30T20:00:00.000Z', 'datetime');
+    expect(once).toBe('2026-07-31 05:00');
   });
 });

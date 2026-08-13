@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
-  VULNRESPONSE_KIND, overlongTextFields, REPORT_LINK_TEXT,
+  VULNRESPONSE_KIND, overlongTextFields, REPORT_LINK_TEXT, jstDateOnly,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
@@ -95,11 +95,19 @@ describe('buildVulnResponsePlan: 追加 / 更新 / 削除の計画', () => {
     expect(plan.updates[0]!.fields).toEqual({ detectionStatus: '再検知' });
   });
 
-  it('検知日は日単位で比べる (時刻差で毎回更新しない)', () => {
+  it('検知日は日単位で比べる (同じ JST の日なら時刻差で更新しない)', () => {
+    // 2026-07-30T05:00:00Z = JST 14:00 同日。
     const plan = buildVulnResponsePlan(
-      [issue({ lastSeen: '2026-07-30T15:00:00Z' })], ASSETS, keysOf(['web01.example.com']), [row()]);
+      [issue({ lastSeen: '2026-07-30T05:00:00Z' })], ASSETS, keysOf(['web01.example.com']), [row()]);
     expect(plan.updates).toEqual([]);
     expect(plan.unchanged).toBe(1);
+  });
+
+  it('★ JST で日が変わる時刻なら更新対象になる', () => {
+    // 2026-07-30T15:00:00Z = JST 2026-07-31 00:00。UTC 基準だと同じ日に見えてしまう。
+    const plan = buildVulnResponsePlan(
+      [issue({ lastSeen: '2026-07-30T15:00:00Z' })], ASSETS, keysOf(['web01.example.com']), [row()]);
+    expect(plan.updates[0]!.fields).toEqual({ lastSeen: '2026-07-31T00:00:00Z' });
   });
 
   it('管理対象外にしたものは削除する', () => {
@@ -311,5 +319,73 @@ describe('連携用リストのリンク表記', () => {
   it('固定文言「レポートを開く」', () => {
     // ファイル名は長くて一覧の幅を食い、形式 (PDF) だけだと押せると分かりにくい。
     expect(REPORT_LINK_TEXT).toBe('レポートを開く');
+  });
+});
+
+describe('事業会社・管理会社の決め方', () => {
+  it('管理対象に入れた値があればそれを使う', () => {
+    const f = toVulnResponseFields(
+      issue({ businessCompany: '住宅事業', affiliateCompany: 'XYZ株式会社' }),
+      ['web01.example.com'], ASSETS);
+    expect(f.businessCompany).toBe('住宅事業');
+    expect(f.affiliateCompany).toBe('XYZ株式会社');
+  });
+
+  it('未設定なら資産リストから引く (従来どおり)', () => {
+    const f = toVulnResponseFields(issue(), ['web01.example.com'], ASSETS);
+    expect(f.businessCompany).toBe('エナジー事業');
+    expect(f.affiliateCompany).toBe('ABC株式会社');
+  });
+
+  it('片方だけ設定した場合はもう片方だけ資産から引く', () => {
+    const f = toVulnResponseFields(
+      issue({ businessCompany: '住宅事業' }), ['web01.example.com'], ASSETS);
+    expect(f.businessCompany).toBe('住宅事業');
+    expect(f.affiliateCompany).toBe('ABC株式会社');
+  });
+
+  it('★ 事業会社を変えるとアクセス権の割当先も変わる', () => {
+    // 事業会社はアクセス権 (連携用リストの権限) の割当キー。
+    const f = toVulnResponseFields(issue({ businessCompany: '住宅事業' }), ['web01.example.com'], ASSETS);
+    expect(f.businessCompany).toBe('住宅事業');
+  });
+});
+
+describe('検知日は JST の暦日で登録する', () => {
+  it('★ UTC で日付をまたぐ値は JST 側の日付になる', () => {
+    // 2026-07-30T20:00:00Z = JST 2026-07-31 05:00。UTC のまま入れると 7/30 にずれる。
+    expect(jstDateOnly('2026-07-30T20:00:00Z')).toBe('2026-07-31T00:00:00Z');
+  });
+
+  it('日中の値はそのままの日付', () => {
+    expect(jstDateOnly('2026-07-30T00:00:00Z')).toBe('2026-07-30T00:00:00Z');
+    expect(jstDateOnly('2026-07-30T14:59:59Z')).toBe('2026-07-30T23:59:59Z'.slice(0, 10) + 'T00:00:00Z');
+  });
+
+  it('時刻を 00:00:00Z に固定する (閲覧者の地域設定でずれないように)', () => {
+    expect(jstDateOnly('2026-07-30T12:34:56.789Z')).toMatch(/T00:00:00Z$/);
+  });
+
+  it('日付だけの入力・空・不正な値でも落ちない', () => {
+    expect(jstDateOnly('2026-07-30')).toBe('2026-07-30T00:00:00Z');
+    expect(jstDateOnly('')).toBe('');
+    expect(jstDateOnly('not-a-date')).toBe('');
+  });
+
+  it('連携用リストへ渡す最終検知日が JST になる', () => {
+    const f = toVulnResponseFields(issue({ lastSeen: '2026-07-30T20:00:00Z' }), [], ASSETS);
+    expect(f.lastSeen).toBe('2026-07-31T00:00:00Z');
+  });
+
+  it('★ 変換後の値どうしを比べるので毎回更新にならない', () => {
+    const first = toVulnResponseFields(issue({ lastSeen: '2026-07-30T20:00:00Z' }), [], ASSETS);
+    const plan = buildVulnResponsePlan(
+      [issue({ lastSeen: '2026-07-30T20:00:00Z' })], ASSETS, keysOf([]), [{ id: 1, ...first }]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('既定ビューに最終検知日を出す', () => {
+    expect(VULNRESPONSE_VIEW_FIELDS).toContain('LastSeen');
   });
 });
