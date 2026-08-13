@@ -389,11 +389,35 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         });
       }
 
+      // ★ 追加したアイテムには権限が付いていない (継承のまま = 全員が見える)。
+      //   アクセス権を設定している環境では、その場で付ける。未設定なら何もしない。
+      let permMsg = '';
+      if (plan.creates.length) {
+        try {
+          // 追加したばかりのアイテムの ID は手元に無いので、突合キーから引き直す。
+          const rows = await getRepo().listVulnResponseRows();
+          const idByIid = new Map(rows.map((r) => [r.issueInstanceId, r.id]));
+          const permTargets = plan.creates
+            .map((c) => ({ id: idByIid.get(c.issueInstanceId) ?? 0, businessCompany: c.businessCompany }))
+            .filter((t) => t.id > 0);
+          if (permTargets.length) {
+            const pr = await getRepo().applyVulnResponseItemPerms(permTargets);
+            permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
+              + (pr.errors.length ? ` (失敗 ${pr.errors.length})` : '');
+          }
+        } catch (e) {
+          // 未設定なら「アクセス権が未設定です」で例外になる。反映自体は成功しているので黙って続ける。
+          if (!/未設定/.test((e as Error).message)) {
+            permMsg = ` / アクセス権の付与に失敗: ${(e as Error).message}`;
+          }
+        }
+      }
+
       const attMsg = att.ok || att.fail
         ? ` / レポート添付 ${att.ok} 件${att.fail ? ` (失敗 ${att.fail}: ${att.firstErr})` : ''}` : '';
       toast(rootEl,
         `${label}: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
-        + ` / 変更なし ${plan.unchanged}${attMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
+        + ` / 変更なし ${plan.unchanged}${attMsg}${permMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
         fail || att.fail ? 'error' : 'ok', fail || att.fail ? 12000 : 8000);
       void ok;
     } catch (e) {

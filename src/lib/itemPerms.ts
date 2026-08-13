@@ -1,0 +1,117 @@
+// 連携用リストのアイテム単位アクセス権。
+//
+// ★ 方式は WebReg (src/perms.js) に合わせる:
+//   - 管理者グループ … 全アイテムに **フルコントロール**
+//   - 割当グループ   … その事業会社のアイテムに **投稿** (更新は参照を含むので分けない)
+//   - 適用は「継承解除 → 先に付与 → 付与したもの以外を削除」の順。
+//     先に付与するのが重要で、実行者の権限を消してから付与すると途中でアイテムを
+//     見失って失敗する。
+//   - 個別ユーザ権限は残さない (グループだけで構成)。ただし実行者がどの管理者
+//     グループにも属していない場合だけは自分の権限を残す (ロックアウト防止の安全弁)。
+//
+// ★ 割当のキーは **事業会社**。連携用リストのアイテムは「連携リストへ反映」で
+//   作り直されるので、行 ID に紐づけると割当が消える。アイテムが持つ値
+//   (BusinessCompany) をキーにすれば作り直されても割当は残る。
+//
+// このファイルは UI にも SP にも依存しない (テストしやすくするため)。
+
+/** 連携用リストのアクセス権設定 (共通設定に JSON で保存する)。 */
+export interface VulnResponsePerms {
+  /** 全アイテムにフルコントロールを付ける SP 権限グループ ID。 */
+  adminGroupIds: number[];
+  /** 事業会社名 → 投稿を付ける SP 権限グループ ID。 */
+  byBusinessCompany: Record<string, number[]>;
+}
+
+export const EMPTY_PERMS: VulnResponsePerms = { adminGroupIds: [], byBusinessCompany: {} };
+
+/** SP のサイト権限グループ。 */
+export interface SiteGroup { id: number; title: string }
+
+/** SP のロール定義 (必要な 3 つだけ)。 */
+export interface PermRoles { read: number; edit: number; full: number }
+
+const ids = (v: unknown): number[] =>
+  Array.isArray(v) ? [...new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : [];
+
+/** 保存済み JSON を安全な形に整える (壊れていても落とさない)。 */
+export function normalizePerms(v: unknown): VulnResponsePerms {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const byCompany: Record<string, number[]> = {};
+  const src = (o.byBusinessCompany ?? {}) as Record<string, unknown>;
+  if (src && typeof src === 'object') {
+    for (const [company, list] of Object.entries(src)) {
+      const name = String(company).trim();
+      const g = ids(list);
+      if (name && g.length) byCompany[name] = g;   // 空の割当は持たない
+    }
+  }
+  return { adminGroupIds: ids(o.adminGroupIds), byBusinessCompany: byCompany };
+}
+
+/** 何か設定されているか (未設定なら権限適用そのものを行わない)。 */
+export function hasAnyPerms(p: VulnResponsePerms): boolean {
+  return p.adminGroupIds.length > 0 || Object.keys(p.byBusinessCompany).length > 0;
+}
+
+/** その事業会社に割り当てられたグループ。未設定なら空 (= 管理者だけが見られる)。 */
+export function groupIdsFor(businessCompany: string, p: VulnResponsePerms): number[] {
+  return p.byBusinessCompany[String(businessCompany ?? '').trim()] ?? [];
+}
+
+/**
+ * SP のロール定義から使う 3 つを選ぶ。
+ * RoleTypeKind: 2=読み取り / 3=投稿 (無ければ 6=編集) / 5=フルコントロール。
+ */
+export function pickRoles(defs: { Id: number; RoleTypeKind: number }[]): PermRoles {
+  const byKind = (k: number): number | undefined => defs.find((d) => d.RoleTypeKind === k)?.Id;
+  const read = byKind(2);
+  const edit = byKind(3) ?? byKind(6);
+  const full = byKind(5);
+  if (!read || !edit || !full) {
+    throw new Error('サイトのロール定義 (読み取り / 投稿 / フルコントロール) を取得できません');
+  }
+  return { read, edit, full };
+}
+
+/** 1 アイテムに付与する内容。 */
+export interface ItemPermPlan {
+  id: number;
+  businessCompany: string;
+  /** フルコントロールを付けるグループ (管理者)。 */
+  full: number[];
+  /** 投稿を付けるグループ (事業会社の割当)。管理者と重複するものは除く。 */
+  edit: number[];
+}
+
+/**
+ * アイテムごとの付与内容を組み立てる。
+ * ★ 同じグループに 2 つのロールを付けない。SP は後勝ちにならず、
+ *   フルコントロールを付けた直後に投稿を付けると権限が下がる。
+ */
+export function buildItemPermPlan(
+  items: { id: number; businessCompany: string }[],
+  p: VulnResponsePerms,
+): ItemPermPlan[] {
+  const admin = [...new Set(p.adminGroupIds)];
+  const adminSet = new Set(admin);
+  return items.map((it) => ({
+    id: it.id,
+    businessCompany: it.businessCompany,
+    full: admin,
+    edit: groupIdsFor(it.businessCompany, p).filter((g) => !adminSet.has(g)),
+  }));
+}
+
+/** 事業会社ごとの割当を作るとき、画面に出す候補 (実データにある値 + 割当済みの値)。 */
+export function companyChoices(inUse: string[], p: VulnResponsePerms): string[] {
+  const set = new Set<string>();
+  for (const c of inUse) { const s = String(c ?? '').trim(); if (s) set.add(s); }
+  for (const c of Object.keys(p.byBusinessCompany)) set.add(c);
+  return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+/** 割当が 1 つも無い事業会社 (= 管理者しか見られない)。画面で注意を出すために使う。 */
+export function companiesWithoutGroups(inUse: string[], p: VulnResponsePerms): string[] {
+  return companyChoices(inUse, p).filter((c) => groupIdsFor(c, p).length === 0);
+}

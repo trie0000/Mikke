@@ -7,6 +7,7 @@ import type { ImportOp } from '../lib/import';
 import { vulnResponseFieldSpecs } from './sp/schema';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
+import { normalizePerms, hasAnyPerms, buildItemPermPlan } from '../lib/itemPerms';
 
 const LS_ISSUES = 'mikke.mock.issues';
 const LS_SETTINGS = 'mikke.mock.settings';
@@ -187,6 +188,35 @@ export class MockRepository implements Repository {
     return load<VulnResponseRow[]>(LS_VULNRESPONSE, []);
   }
   async findMissingVulnResponseColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
+
+  /** モックのサイト権限グループ (画面の見え方を確認できる程度の顔ぶれ)。 */
+  async listSiteGroups(): Promise<{ id: number; title: string }[]> {
+    return [
+      { id: 11, title: 'Mikke 管理者' },
+      { id: 12, title: 'エナジー事業 資産管理者' },
+      { id: 13, title: 'モビリティ事業 資産管理者' },
+      { id: 14, title: '情報システム部' },
+    ];
+  }
+
+  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]> {
+    return load<VulnResponseRow[]>(LS_VULNRESPONSE, [])
+      .map((r) => ({ id: r.id, businessCompany: r.businessCompany ?? '' }));
+  }
+
+  /** モックには権限の実体が無いので、件数の内訳だけ再現する (UI 検証用)。 */
+  async applyVulnResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    const perms = normalizePerms((await this.getSettings()).vulnResponsePerms);
+    if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
+    const plans = buildItemPermPlan(targets, perms);
+    return {
+      applied: plans.filter((p) => p.edit.length).length,
+      adminOnly: plans.filter((p) => !p.edit.length).length,
+      errors: [],
+    };
+  }
 
   async createVulnResponseItem(fields: VulnResponseFields): Promise<void> {
     const rows = load<VulnResponseRow[]>(LS_VULNRESPONSE, []);

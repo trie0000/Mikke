@@ -152,6 +152,9 @@ export interface MikkeSettings {
   downloadFolder?: string;
   /** UI アクセント色 (将来の上書き用)。 */
   accentColor?: string;
+  /** 連携用リストのアイテム単位アクセス権 (管理者グループ / 事業会社ごとの割当)。
+   *  実体は lib/itemPerms.ts の VulnResponsePerms。JSON でそのまま保持する。 */
+  vulnResponsePerms?: { adminGroupIds: number[]; byBusinessCompany: Record<string, number[]> };
 }
 
 /** 検査ツールから一括ダウンロードする対象の種別。

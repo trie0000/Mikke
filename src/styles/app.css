@@ -341,6 +341,9 @@
   border-radius: var(--r-2); color: var(--danger); background: rgba(184,83,74,0.08); user-select: text;
 }
 
+/* 補足テキスト (結果表示・注意書き)。エラーではないもの。 */
+#mikke-root .mikke-note { color: var(--ink-3); font-size: var(--fs-sm); line-height: 1.7; user-select: text; }
+
 /* ---------- toast ---------- */
 #mikke-root .mikke-toast-stack {
   position: fixed; top: var(--s-6); right: var(--s-6); z-index: 2147483800;

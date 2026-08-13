@@ -18,6 +18,8 @@ import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, REPORT_LINK_TEXT } from '../lib/vulnResponseSync';
+import { normalizePerms, hasAnyPerms, pickRoles, buildItemPermPlan,
+  type VulnResponsePerms, type PermRoles } from '../lib/itemPerms';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
 
 const V = 'application/json;odata=verbose';
@@ -584,6 +586,98 @@ export class SpRepository implements Repository {
   }
 
   /** 連携用リストに足りない列 (Mikke が書く項目のうち実在しないもの) を返す。 */
+  // ── 連携用リストのアイテム単位アクセス権 ─────────────────────────────────
+  //   方式は lib/itemPerms.ts のコメントを参照 (WebReg の src/perms.js に準拠)。
+
+  async listSiteGroups(): Promise<{ id: number; title: string }[]> {
+    const j = await this.spGet('/_api/web/sitegroups?$select=Id,Title&$top=999');
+    return (j.d?.results ?? [])
+      // SP が自動生成するシステムグループは割当先にならない。
+      .filter((g: { Title?: string }) => !/^(SharingLinks\.|Limited Access System Group)/.test(g.Title ?? ''))
+      .map((g: { Id: number; Title: string }) => ({ id: g.Id, title: g.Title }))
+      .sort((a: { title: string }, b: { title: string }) => a.title.localeCompare(b.title, 'ja'));
+  }
+
+  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]> {
+    const out: { id: number; businessCompany: string }[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items?$select=Id,BusinessCompany&$top=5000`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const r of j.d.results as { Id: number; BusinessCompany?: string }[]) {
+        out.push({ id: r.Id, businessCompany: r.BusinessCompany ?? '' });
+      }
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+
+  /** 適用に必要な文脈 (ロール定義・実行者・ロックアウト防止の判定) を一度だけ作る。 */
+  private async buildPermContext(perms: VulnResponsePerms): Promise<{
+    roles: PermRoles; currentUserId: number; keepExecutor: boolean;
+  }> {
+    const defs = await this.spGet('/_api/web/roledefinitions?$select=Id,Name,RoleTypeKind');
+    const roles = pickRoles((defs.d?.results ?? []) as { Id: number; RoleTypeKind: number }[]);
+    const me = await this.spGet('/_api/web/currentuser?$select=Id,IsSiteAdmin');
+    let myGroupIds: number[] = [];
+    try {
+      const g = await this.spGet('/_api/web/currentuser/groups?$select=Id');
+      myGroupIds = (g.d?.results ?? []).map((x: { Id: number }) => x.Id);
+    } catch { /* 取れなければ安全側 (実行者の個別権限を残す) に倒す */ }
+    // 実行者がサイト管理者 or 管理者グループの一員なら、グループ経由で全件見られるので
+    // 個別権限は外してよい。そうでなければ外すと自分が見られなくなる。
+    const adminSet = new Set(perms.adminGroupIds);
+    const keepExecutor = !(me.d.IsSiteAdmin || myGroupIds.some((id) => adminSet.has(id)));
+    return { roles, currentUserId: me.d.Id, keepExecutor };
+  }
+
+  async applyVulnResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    const settings = await this.getSettings();
+    const perms = normalizePerms(settings.vulnResponsePerms);
+    if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
+    const ctx = await this.buildPermContext(perms);
+    const plans = buildItemPermPlan(targets, perms);
+    const listPath = `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')`;
+    const out = { applied: 0, adminOnly: 0, errors: [] as string[] };
+    let done = 0;
+    for (const plan of plans) {
+      done++;
+      onProgress?.(done, plans.length);
+      const base = `${listPath}/items(${plan.id})`;
+      try {
+        await this.spPost(`${base}/breakroleinheritance(copyroleassignments=false,clearsubscopes=true)`, undefined);
+        // 1) 先に付与する。実行者の権限を消してから付けると、途中でアイテムを
+        //    見失って 400 になる。
+        const keep = new Set<number>();
+        for (const gid of plan.full) {
+          if (keep.has(gid)) continue;
+          await this.spPost(`${base}/roleassignments/addroleassignment(principalid=${gid},roledefid=${ctx.roles.full})`, undefined);
+          keep.add(gid);
+        }
+        for (const gid of plan.edit) {
+          if (keep.has(gid)) continue;
+          await this.spPost(`${base}/roleassignments/addroleassignment(principalid=${gid},roledefid=${ctx.roles.edit})`, undefined);
+          keep.add(gid);
+        }
+        // 2) 付与したもの以外を削除 (既定の継承グループ・継承解除で付く実行者の個別権限)。
+        const cur = await this.spGet(`${base}/roleassignments?$select=PrincipalId`);
+        for (const ra of (cur.d?.results ?? []) as { PrincipalId: number }[]) {
+          if (keep.has(ra.PrincipalId)) continue;
+          if (ctx.keepExecutor && ra.PrincipalId === ctx.currentUserId) continue;   // 安全弁
+          await this.spPost(`${base}/roleassignments/getbyprincipalid(${ra.PrincipalId})`,
+            undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
+        }
+        if (plan.edit.length) out.applied++; else out.adminOnly++;
+      } catch (e) {
+        out.errors.push(`#${plan.id}: ${(e as Error).message}`);
+      }
+    }
+    return out;
+  }
+
   async findMissingVulnResponseColumns(): Promise<string[]> {
     this.fieldNamesByList.delete(LIST_VULNRESPONSE);   // 最新の実在列で判定する
     let existing: Set<string>;

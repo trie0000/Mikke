@@ -4,6 +4,7 @@ import { el, clear } from '../utils/dom';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
+import { normalizePerms, companyChoices, groupIdsFor, type SiteGroup } from '../lib/itemPerms';
 import { opsForType, opLabel, opNeedsValue2 } from '../lib/conditions';
 import { parseCsv } from '../lib/csv';
 import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
@@ -153,6 +154,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
         ] },
         { title: '連携', items: [
           { key: 'vulnResponseList', label: '資産管理者向けリスト', render: () => renderVulnResponsePanel(root) },
+          { key: 'vulnResponsePerms', label: 'アクセス権 (連携用リスト)', render: () => renderPermsPanel() },
         ] },
       ],
     },
@@ -643,6 +645,116 @@ function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
     result,
   ]);
   return { body };
+}
+
+// ── 共通: 連携用リストのアクセス権 ──
+//   方式は WebReg に合わせている (lib/itemPerms.ts の先頭コメント)。
+//   管理者グループ = 全アイテムにフルコントロール
+//   事業会社ごとの割当 = そのアイテムに投稿 (参照+更新)
+async function renderPermsPanel(): Promise<SettingPanel> {
+  const settings = await getRepo().getSettings();
+  const perms = normalizePerms(settings.vulnResponsePerms);
+  // 割当先の候補と、実データにある事業会社
+  const [groups, targets] = await Promise.all([
+    getRepo().listSiteGroups().catch(() => [] as SiteGroup[]),
+    getRepo().listVulnResponsePermTargets().catch(() => [] as { id: number; businessCompany: string }[]),
+  ]);
+  const companies = companyChoices(targets.map((t) => t.businessCompany), perms);
+
+  // 編集中の状態 (保存時にまとめて書く)
+  const adminSel = new Set(perms.adminGroupIds);
+  const byCompany = new Map<string, Set<number>>(
+    companies.map((c: string) => [c, new Set(groupIdsFor(c, perms))]));
+
+  const groupChecks = (selected: Set<number>): HTMLElement => {
+    if (!groups.length) return el('div', { class: 'mikke-note' }, ['サイトの権限グループを取得できませんでした。']);
+    const wrap = el('div', { style: 'display:flex;flex-wrap:wrap;gap:var(--s-2) var(--s-4)' });
+    for (const g of groups) {
+      const cb = el('input', { type: 'checkbox', ...(selected.has(g.id) ? { checked: 'checked' } : {}) }) as HTMLInputElement;
+      cb.addEventListener('change', () => { if (cb.checked) selected.add(g.id); else selected.delete(g.id); });
+      wrap.appendChild(el('label', {
+        style: 'display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer',
+      }, [cb, el('span', {}, [g.title])]));
+    }
+    return wrap;
+  };
+
+  const companyRows = el('div', {});
+  const paintCompanies = (): void => {
+    clear(companyRows);
+    if (!companies.length) {
+      companyRows.appendChild(el('div', { class: 'mikke-note' }, [
+        '連携用リストにまだアイテムがありません。「連携リストへ反映」を実行すると事業会社が並びます。',
+      ]));
+      return;
+    }
+    for (const c of companies) {
+      companyRows.appendChild(el('div', { style: 'padding:var(--s-3) 0;border-top:1px solid var(--line)' }, [
+        el('div', { style: 'font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--s-2)' }, [c]),
+        groupChecks(byCompany.get(c)!),
+      ]));
+    }
+  };
+  paintCompanies();
+
+  const result = el('div', { style: 'margin-top:var(--s-4)' });
+  const applyBtn = el('button', { class: 'mikke-btn mikke-btn--primary', type: 'button' },
+    ['権限を反映']) as HTMLButtonElement;
+  applyBtn.addEventListener('click', () => void (async () => {
+    applyBtn.setAttribute('disabled', '');
+    clear(result);
+    const line = el('div', { class: 'mikke-note' }, ['準備中…']);
+    result.appendChild(line);
+    try {
+      await saveNow();
+      const list = await getRepo().listVulnResponsePermTargets();
+      const r = await getRepo().applyVulnResponseItemPerms(list, (done, total) => {
+        line.textContent = `権限を反映中… (${done}/${total})`;
+      });
+      clear(result);
+      result.appendChild(el('div', { class: r.errors.length ? 'mikke-error' : 'mikke-note' }, [
+        `反映しました: 割当あり ${r.applied} 件 / 管理者のみ ${r.adminOnly} 件`
+        + (r.errors.length ? ` / 失敗 ${r.errors.length} 件 — ${r.errors[0]}` : ''),
+      ]));
+    } catch (e) {
+      clear(result);
+      result.appendChild(el('div', { class: 'mikke-error' }, [`反映に失敗しました: ${(e as Error).message}`]));
+    } finally {
+      applyBtn.removeAttribute('disabled');
+    }
+  })());
+
+  const saveNow = async (): Promise<void> => {
+    const byBusinessCompany: Record<string, number[]> = {};
+    for (const [c, set] of byCompany) if (set.size) byBusinessCompany[c] = [...set];
+    await getRepo().saveSettings({
+      ...settings,
+      vulnResponsePerms: normalizePerms({ adminGroupIds: [...adminSel], byBusinessCompany }),
+    });
+  };
+
+  const body = el('div', {}, [
+    panelHead('連携用リストのアクセス権',
+      '連携用リスト (MikkeVulnResponse) のアイテムごとに、参照・更新できる SharePoint 権限グループを決めます。'
+      + '管理者グループは全アイテムにフルコントロール、事業会社ごとの割当はその事業会社のアイテムに投稿 (参照+更新) を付けます。'),
+    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
+      el('li', {}, ['反映するとアイテムの権限継承が解除され、ここで選んだグループだけがアクセスできます。']),
+      el('li', {}, ['割当が無い事業会社のアイテムは、管理者グループだけが見られます。']),
+      el('li', {}, ['「連携リストへ反映」で追加したアイテムには、その場で同じ権限が付きます。']),
+      el('li', {}, ['更新の権限には参照が含まれるため、参照だけ・更新だけの区別はしていません。']),
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['管理者グループ (全アイテムにフルコントロール)']),
+      groupChecks(adminSel),
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['事業会社ごとの割当 (そのアイテムに参照・更新)']),
+      companyRows,
+    ]),
+    applyBtn,
+    result,
+  ]);
+  return { body, save: saveNow };
 }
 
 // ── その他: 接続 ──

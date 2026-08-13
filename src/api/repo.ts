@@ -62,6 +62,16 @@ export interface Repository {
   docFileHref(serverRelativeUrl: string): Promise<string>;
   /** 連携用リストの既存アイテム (Mikke が書き込む項目のみ)。反映の差分計算に使う。 */
   listVulnResponseRows(): Promise<VulnResponseRow[]>;
+  /** サイトの権限グループ (アクセス権の割当先候補)。 */
+  listSiteGroups(): Promise<{ id: number; title: string }[]>;
+  /** 連携用リストの全アイテムの (Id, 事業会社)。アクセス権の適用対象を決めるのに使う。 */
+  listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]>;
+  /** 連携用リストのアイテムへアクセス権を適用する。
+   *  ★ 継承解除 → 先に付与 → 付与したもの以外を削除、の順で行う (lib/itemPerms.ts)。 */
+  applyVulnResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }>;
   /** 連携用リストに足りない列 (Mikke が書く項目のうち実在しないもの)。
    *  1 列でも欠けると SP は書込を 400 で返すので、反映の前に確認する。 */
   findMissingVulnResponseColumns(): Promise<string[]>;

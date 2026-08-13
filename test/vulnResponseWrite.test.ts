@@ -191,3 +191,78 @@ describe('連携用リストの「脆弱性レポート」列 (URL 列)', () => 
     expect(row.ReportUrl).toBeNull();
   });
 });
+
+describe('アイテム単位アクセス権の適用 (SharePoint への要求)', () => {
+  // ★ 順序が肝。継承解除 → 先に付与 → 付与したもの以外を削除、で行う。
+  //   付与より先に削除すると、実行者がアイテムを見失って以降が 400 になる。
+  const calls: { method: string; path: string }[] = [];
+
+  beforeAll(() => {
+    // このブロックだけ SP 呼び出しを記録するスタブに差し替える
+    repo.spGet = async (path: string): Promise<unknown> => {
+      calls.push({ method: 'GET', path });
+      if (path.includes('roledefinitions')) {
+        return { d: { results: [
+          { Id: 1073741826, RoleTypeKind: 2 }, { Id: 1073741827, RoleTypeKind: 3 },
+          { Id: 1073741829, RoleTypeKind: 5 },
+        ] } };
+      }
+      if (path.includes('currentuser/groups')) return { d: { results: [{ Id: 11 }] } };
+      if (path.includes('currentuser')) return { d: { Id: 99, IsSiteAdmin: false } };
+      if (path.includes('roleassignments')) {
+        // 継承解除で付く既定グループ + 実行者の個別権限が残っている状態
+        return { d: { results: [{ PrincipalId: 11 }, { PrincipalId: 12 }, { PrincipalId: 77 }, { PrincipalId: 99 }] } };
+      }
+      return { d: { results: [] } };
+    };
+    repo.spPost = async (path: string, _b?: unknown, h?: Record<string, string>): Promise<unknown> => {
+      calls.push({ method: h?.['X-HTTP-Method'] ?? 'POST', path });
+      return {};
+    };
+    repo.getSettings = async (): Promise<unknown> => ({
+      managedColumns: [], matchConditions: null, individualIds: [],
+      vulnResponsePerms: { adminGroupIds: [11], byBusinessCompany: { 'エナジー事業': [12] } },
+    });
+  });
+
+  it('継承解除 → 付与 → 不要な割当の削除、の順に呼ぶ', async () => {
+    calls.length = 0;
+    const r = await repo.applyVulnResponseItemPerms([{ id: 5, businessCompany: 'エナジー事業' }]);
+    expect(r).toEqual({ applied: 1, adminOnly: 0, errors: [] });
+
+    const seq = calls.filter((c) => c.path.includes('items(5)')).map((c) => {
+      if (c.path.includes('breakroleinheritance')) return '継承解除';
+      if (c.path.includes('addroleassignment')) return `付与 ${/principalid=(\d+)/.exec(c.path)![1]}=${/roledefid=(\d+)/.exec(c.path)![1]}`;
+      if (c.method === 'DELETE') return `削除 ${/getbyprincipalid\((\d+)\)/.exec(c.path)![1]}`;
+      return '取得';
+    });
+    expect(seq).toEqual([
+      '継承解除',
+      '付与 11=1073741829',   // 管理者 = フルコントロール
+      '付与 12=1073741827',   // 事業会社の割当 = 投稿
+      '取得',
+      '削除 77',              // 付与していない既定グループだけ消す
+      '削除 99',              // 実行者は管理者グループの一員なので個別権限を残さない
+    ]);
+  });
+
+  it('★ 継承解除は copyroleassignments=false (既定の割当を持ち込まない)', async () => {
+    calls.length = 0;
+    await repo.applyVulnResponseItemPerms([{ id: 5, businessCompany: 'エナジー事業' }]);
+    const brk = calls.find((c) => c.path.includes('breakroleinheritance'))!;
+    expect(brk.path).toContain('copyroleassignments=false');
+    expect(brk.path).toContain('clearsubscopes=true');
+  });
+
+  it('割当が無い事業会社は管理者のみ (adminOnly に数える)', async () => {
+    const r = await repo.applyVulnResponseItemPerms([{ id: 6, businessCompany: '未登録の会社' }]);
+    expect(r).toEqual({ applied: 0, adminOnly: 1, errors: [] });
+  });
+
+  it('未設定なら適用そのものを行わない', async () => {
+    const orig = repo.getSettings;
+    repo.getSettings = async (): Promise<unknown> => ({ managedColumns: [], matchConditions: null, individualIds: [] });
+    await expect(repo.applyVulnResponseItemPerms([{ id: 5, businessCompany: 'A' }])).rejects.toThrow(/未設定/);
+    repo.getSettings = orig;
+  });
+});
