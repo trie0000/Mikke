@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildVulnResponsePlan, toVulnResponseFields, isExcluded, VULNRESPONSE_COLUMN,
-  VULNRESPONSE_KIND, overlongTextFields, fileNameOf,
+  VULNRESPONSE_KIND, overlongTextFields, fileNameOf, reportLinkText,
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
+import { reportLinkLabel } from '../src/lib/reportFile';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
   return {
@@ -310,5 +311,23 @@ describe('突合キーは組込みの Title 列', () => {
   it('既定ビューは Title (リンク列) と脆弱性タイトルを出す', () => {
     expect(VULNRESPONSE_VIEW_FIELDS).toContain('LinkTitle');
     expect(VULNRESPONSE_VIEW_FIELDS).toContain('VulnTitle');
+  });
+});
+
+describe('reportLinkText: 連携用リストのリンク表記', () => {
+  it('拡張子を大文字で出す (ファイル名は出さない)', () => {
+    expect(reportLinkText('/a/b/IID-1_20260808-101500.pdf')).toBe('PDF');
+    expect(reportLinkText('/a/b/IID-1.zip')).toBe('ZIP');
+    expect(reportLinkText('/a/b/REPORT.PDF')).toBe('PDF');
+  });
+
+  it('拡張子が分からなければ「レポート」', () => {
+    expect(reportLinkText('/a/b/report')).toBe('レポート');
+    expect(reportLinkText('')).toBe('レポート');
+  });
+
+  it('管理対象一覧の「レポート」列と同じ表記になる', () => {
+    // 画面ごとに違う表記だと、同じものを指していると分からない。
+    expect(reportLinkText('/a/b/x.pdf')).toBe(reportLinkLabel('x.pdf'));
   });
 });
