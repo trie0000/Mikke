@@ -475,7 +475,9 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
       [MIG_COL.responsePlan, get(MIG_COL.responsePlan)],
       [MIG_COL.responseNote, get(MIG_COL.responseNote)],
     ]),
-    mgmtNote: get(MIG_COL.remarks),
+    // ★ 特記事項は事業会社が書く「備考」に入れる (連携用リストの同名の欄と対応する)。
+    //   Mikke だけの「内部メモ」ではない。
+    responseRemarks: get(MIG_COL.remarks),
     vulnType: detectVulnType(title, ctx.vulnTypeRules),
     addedReason: '個別指定',
     lastSyncedAt: ctx.nowIso,

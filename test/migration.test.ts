@@ -175,14 +175,16 @@ describe('1 行の移行', () => {
     // 対応計画 + 完了理由 は「対応状況」に 1 本化される (見出し付きで連結)。
     expect(i.responsePlan).toBe(
       `【${MIG_COL.responsePlan}】\n9 月中に閉塞\n\n【${MIG_COL.responseNote}】\n対処済み`);
-    expect(i.mgmtNote).toBe('特記なし');
+    expect(i.responseRemarks).toBe('特記なし');   // Excel の「特記事項」→ 備考
     expect(i.vulnType).toBe('ポート');
   });
 
-  it('★ 特記事項は連携用リスト由来の項目には入れない', () => {
-    // responseRemarks は事業会社の記入欄 (備考) の写しで、
-    // 連携内容の取込のたびに上書きされる。移行データを置くと消える。
-    expect(migrateRow(row, ctx).issue!.responseRemarks).toBeUndefined();
+  it('★ 特記事項は「備考」に入れる (内部メモではない)', () => {
+    // 内部メモは Mikke の中だけで使う欄で、連携用リストには出ない。
+    // 事業会社が書いた特記事項の行き先としては合わない。
+    const i = migrateRow(row, ctx).issue!;
+    expect(i.responseRemarks).toBe('特記なし');
+    expect(i.mgmtNote).toBeUndefined();
   });
 
   it('★ 片方だけ埋まっていれば、その 1 件だけを入れる', () => {
