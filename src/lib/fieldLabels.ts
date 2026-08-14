@@ -32,7 +32,7 @@ export const LABEL = {
   extConnAppId: '外部接続申請ID',
   responsePlan: '対応計画',
   completionReason: '完了理由',
-  noAppReason: '申請不要理由',
+  noAppReason: '外部接続申請不要の理由',
   responseNote: '対応経緯',
   responseRemarks: '備考',
 

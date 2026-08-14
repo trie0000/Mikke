@@ -1,4 +1,6 @@
 /**
+import { LABEL } from '../../lib/fieldLabels';
+import { REPORT_LINK_TEXT } from '../../lib/vulnResponseSync';
  * 連携用リスト (MikkeVulnResponse) のフォームヘッダー書式設定。
  *
  * 資産管理者が SharePoint の素のフォームを開いたときに、脆弱性情報を
@@ -18,6 +20,9 @@
  *     タイトルと段組が横に並ぶ。
  *   - 値の参照は [$内部名]。表示名を日本語に変えても内部名は英語のままなので変更不要。
  */
+
+import { LABEL } from '../../lib/fieldLabels';
+import { REPORT_LINK_TEXT } from '../../lib/vulnResponseSync';
 
 const COLUMN_FORMAT_SCHEMA =
   'https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json';
@@ -194,11 +199,11 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         // カード 1: 脆弱性情報
         card('脆弱性情報', '読み取り専用', [
           twoColumns(
-            [item('旧管理番号', textValue('[$LegacyMgmtNumber]')), item('初回検知日', dateValue('FirstSeen'))],
-            [item('検知状況', textValue('[$DetectionStatus]')), item('最終検知日', dateValue('LastSeen'))],
+            [item(LABEL.legacyMgmtNumber, textValue('[$LegacyMgmtNumber]')), item(LABEL.firstSeen, dateValue('FirstSeen'))],
+            [item(LABEL.detectionStatus, textValue('[$DetectionStatus]')), item(LABEL.lastSeen, dateValue('LastSeen'))],
           ),
-          // 脆弱性レポート (PDF)。一覧の「脆弱性レポート」列からも直接開ける。
-          item('脆弱性レポート', linkValue('ReportUrl', 'レポートを開く')),
+          // 脆弱性レポート (PDF)。一覧の「レポート」列からも直接開ける。
+          item(LABEL.report, linkValue('ReportUrl', REPORT_LINK_TEXT)),
         ]),
         // カード 2: 資産情報
         card('資産情報', '読み取り専用', [
@@ -207,14 +212,13 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
               item('IP', textValue('[$AssetIp]')),
               item('FQDN', textValue('[$AssetFqdn]')),
               item('資産タイプ', textValue('[$AssetType]')),
-              item('事業会社', textValue('[$BusinessCompany]')),
-              item('管理会社', textValue('[$AffiliateCompany]')),
+              item(LABEL.businessCompany, textValue('[$BusinessCompany]')),
+              item(LABEL.affiliateCompany, textValue('[$AffiliateCompany]')),
             ],
             [
-              item('Web資産管理ID', textValue('[$AssetMgmtId]')),
-              item('外部接続申請ID', textValue('[$ExtConnAppId]')),
+              item(LABEL.assetMgmtId, textValue('[$AssetMgmtId]')),
               item('関連資産', textValue('[$RelatedAssets]')),
-              item('管理事業会社特定の根拠', textValue('[$IdentifyEvidence]')),
+              item(LABEL.identifyEvidence, textValue('[$IdentifyEvidence]')),
             ],
           ),
         ]),

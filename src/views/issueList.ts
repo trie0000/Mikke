@@ -426,11 +426,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       const label = (onlySelected ? `選択 ${targets.length} 件の反映` : '連携リストへの反映')
         + (overwriteResponse ? '（対応状況も上書き）' : '');
       const total = plan.creates.length + plan.updates.length + plan.deletes.length;
-      if (!total) {
-        toast(rootEl, `${label}: 変更はありません（一致 ${plan.unchanged} 件）。`, 'ok', 6000);
-        return;
+      // ★ 内容に変更が無くても止まらない。権限だけ未適用のことがある
+      //   (先にリストを作ってから、あとでアクセス権を設定した場合)。ここで
+      //   早期 return していたため、管理者グループが一生付かなかった。
+      if (total) {
+        toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
       }
-      toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
 
       let ok = 0, fail = 0, firstErr = '';
       // ★ 失敗はどの脆弱性かが分からないと追えない。Issue Instance ID を添える。
@@ -480,35 +481,50 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         });
       }
 
-      // ★ 追加したアイテムには権限が付いていない (継承のまま = 全員が見える)。
-      //   アクセス権を設定している環境では、その場で付ける。未設定なら何もしない。
+      // ★ アクセス権を付ける対象は「追加した分」だけではない。
+      //   ・追加した分 … 継承のままなので必ず付ける
+      //   ・事業会社が変わった分 … 割当先が変わるので付け直す
+      //   ・まだ継承のままの分 … 先にリストを作ってから権限を設定した場合がこれ。
+      //     ここを見ていなかったため、既存アイテムに管理者グループが一生付かなかった。
+      //   全件に毎回付け直すのは重い (1 件あたり 4〜6 リクエスト) ので、この 3 つに絞る。
       let permMsg = '';
-      if (plan.creates.length) {
-        try {
-          // 追加したばかりのアイテムの ID は手元に無いので、突合キーから引き直す。
-          const rows = await getRepo().listVulnResponseRows();
-          const idByIid = new Map(rows.map((r) => [r.issueInstanceId, r.id]));
-          const permTargets = plan.creates
-            .map((c) => ({ id: idByIid.get(c.issueInstanceId) ?? 0, businessCompany: c.businessCompany }))
-            .filter((t) => t.id > 0);
-          if (permTargets.length) {
-            const pr = await getRepo().applyVulnResponseItemPerms(permTargets);
-            permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
-              + (pr.errors.length ? ` (失敗 ${pr.errors.length})` : '');
-          }
-        } catch (e) {
-          // 未設定なら「アクセス権が未設定です」で例外になる。反映自体は成功しているので黙って続ける。
-          if (!/未設定/.test((e as Error).message)) {
-            permMsg = ` / アクセス権の付与に失敗: ${(e as Error).message}`;
-          }
+      try {
+        // 書き込み後の状態で引き直す (追加した分の ID と、継承のままかどうか)。
+        const [targets, rows] = await Promise.all([
+          getRepo().listVulnResponsePermTargets(),
+          getRepo().listVulnResponseRows(),
+        ]);
+        const idByIid = new Map(rows.map((r) => [r.issueInstanceId, r.id]));
+        const iidById = new Map(rows.map((r) => [r.id, r.issueInstanceId]));
+        const createdIds = new Set(
+          plan.creates.map((c) => idByIid.get(c.issueInstanceId)).filter((x): x is number => !!x));
+        const changedCompany = new Set(
+          plan.updates.filter((u) => u.fields.businessCompany !== undefined).map((u) => u.id));
+        const scoped = targets.filter((t) => {
+          if (!(createdIds.has(t.id) || changedCompany.has(t.id) || !t.hasUniquePerms)) return false;
+          // 選択分の反映では、範囲外のアイテムには触らない。
+          return !scope || scope.has(iidById.get(t.id) ?? '');
+        });
+        if (scoped.length) {
+          const pr = await getRepo().applyVulnResponseItemPerms(scoped);
+          permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
+            + (pr.errors.length ? ` (失敗 ${pr.errors.length}: ${pr.errors[0]})` : '');
         }
+      } catch (e) {
+        // ★ 未設定なら黙って飛ばさず、その旨を出す。「付いていない」ことに気づけないため。
+        permMsg = /未設定/.test((e as Error).message)
+          ? ' / アクセス権は未設定のため付与していません（アクセス権画面で管理者グループを選んでください）'
+          : ` / アクセス権の付与に失敗: ${(e as Error).message}`;
       }
 
       const attMsg = att.ok || att.fail
         ? ` / レポート添付 ${att.ok} 件${att.fail ? ` (失敗 ${att.fail}: ${att.firstErr})` : ''}` : '';
+      const summary = total
+        ? `追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
+          + ` / 変更なし ${plan.unchanged}`
+        : `変更はありません（一致 ${plan.unchanged} 件）`;
       toast(rootEl,
-        `${label}: 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`
-        + ` / 変更なし ${plan.unchanged}${attMsg}${permMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
+        `${label}: ${summary}${attMsg}${permMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
         fail || att.fail ? 'error' : 'ok', fail || att.fail ? 12000 : 8000);
       void ok;
     } catch (e) {

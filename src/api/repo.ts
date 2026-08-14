@@ -72,7 +72,9 @@ export interface Repository {
   /** サイトの権限グループ (アクセス権の割当先候補)。 */
   listSiteGroups(): Promise<{ id: number; title: string }[]>;
   /** 連携用リストの全アイテムの (Id, 事業会社)。アクセス権の適用対象を決めるのに使う。 */
-  listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]>;
+  /** 連携用リストのアイテム (アクセス権の適用対象)。
+   *  hasUniquePerms=false は **まだ権限を適用していない** (継承のまま) アイテム。 */
+  listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]>;
   /** 連携用リストのアイテムへアクセス権を適用する。
    *  ★ 継承解除 → 先に付与 → 付与したもの以外を削除、の順で行う (lib/itemPerms.ts)。 */
   applyVulnResponseItemPerms(

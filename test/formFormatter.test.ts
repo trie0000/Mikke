@@ -182,3 +182,31 @@ describe('フォームの並びと画面の並び', () => {
     expect(visible).toEqual(RESPONSE_FIELD_ORDER.map((k) => LABEL[k]));
   });
 });
+
+describe('読み取り専用カードと入力欄の重複', () => {
+  const json = JSON.stringify(buildVulnResponseHeader());
+
+  it('★ 外部接続申請ID はカードに出さない (入力欄と二重になる)', () => {
+    // 記入欄へ移した項目をカードにも残すと、同じものが 2 か所に出る。
+    expect(json).not.toContain('ExtConnAppId');
+  });
+
+  it('★ カードに出すのは、資産管理者が編集しない項目だけ', () => {
+    const editable = ['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
+      'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks'];
+    for (const n of editable) expect(json, n).not.toContain(`[$${n}]`);
+  });
+
+  it('★ カードの見出しも LABEL と同じ言葉にする', () => {
+    for (const k of ['legacyMgmtNumber', 'detectionStatus', 'firstSeen', 'lastSeen',
+      'businessCompany', 'affiliateCompany', 'assetMgmtId', 'identifyEvidence', 'report'] as const) {
+      expect(json, LABEL[k]).toContain(LABEL[k]);
+    }
+  });
+
+  it('過去の呼び名がカードに残っていない', () => {
+    for (const bad of ['Web資産管理ID', '管理事業会社特定の根拠', '脆弱性レポート']) {
+      expect(json, bad).not.toContain(bad);
+    }
+  });
+});

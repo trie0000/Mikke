@@ -18,6 +18,8 @@ const LS_DOWNLOADS = 'mikke.mock.downloads';
 const LS_DOCFILES = 'mikke.mock.docfiles';
 const LS_ATTACHMENTS = 'mikke.mock.attachments';   // 連携用リストの添付 (IID → [{name,size}])
 const LS_VULNRESPONSE = 'mikke.mock.vulnresponse';
+/** mock だけの補助: アクセス権を付与済みのアイテム ID (継承解除の代わり)。 */
+const LS_PERM_APPLIED = 'mikke.mock.permApplied';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -206,15 +208,20 @@ export class MockRepository implements Repository {
     ];
   }
 
-  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]> {
+  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]> {
+    // mock は権限の実体を持たないので、付与済み ID を localStorage で覚えておく。
+    const applied = new Set(load<number[]>(LS_PERM_APPLIED, []));
     return load<VulnResponseRow[]>(LS_VULNRESPONSE, [])
-      .map((r) => ({ id: r.id, businessCompany: r.businessCompany ?? '' }));
+      .map((r) => ({
+        id: r.id, businessCompany: r.businessCompany ?? '', hasUniquePerms: applied.has(r.id),
+      }));
   }
 
   /** モックには権限の実体が無いので、件数の内訳だけ再現する (UI 検証用)。 */
   async applyVulnResponseItemPerms(
     targets: { id: number; businessCompany: string }[],
   ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    save(LS_PERM_APPLIED, [...new Set([...load<number[]>(LS_PERM_APPLIED, []), ...targets.map((t) => t.id)])]);
     const perms = normalizePerms((await this.getSettings()).vulnResponsePerms);
     if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
     const plans = buildItemPermPlan(targets, perms);

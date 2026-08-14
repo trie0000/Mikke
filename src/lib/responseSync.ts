@@ -12,6 +12,7 @@
 //     対応表に無い値は無視する (SharePoint 側で選択肢が増えても壊れないように)。
 import type { ManagedIssue, MgmtStatus, FieldChange } from '../types';
 import { MGMT_STATUSES } from '../types';
+import { LABEL } from './fieldLabels';
 
 /** 連携用リストの 1 アイテム (資産管理者の記入内容)。 */
 export interface VulnResponseItem {
@@ -123,7 +124,7 @@ export function buildResponseSyncPlan(
     put('完了理由', text(issue.completionReason), text(r.completionReason),
       () => { patch.completionReason = text(r.completionReason); });
 
-    put('申請不要理由', text(issue.noAppReason), text(r.noAppReason),
+    put(LABEL.noAppReason, text(issue.noAppReason), text(r.noAppReason),
       () => { patch.noAppReason = text(r.noAppReason); });
 
     if (!changes.length) { unchanged++; continue; }

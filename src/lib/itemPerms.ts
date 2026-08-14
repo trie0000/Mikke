@@ -79,8 +79,10 @@ export function parseAliases(text: string): string[] {
  *  ★ 事業会社を登録しただけ (割当なし) では適用しない。管理者グループが無いまま
  *    継承を解除すると、誰も見られないアイテムができる。 */
 export function hasAnyPerms(p: VulnResponsePerms): boolean {
-  return p.adminGroupIds.length > 0
-    || Object.values(p.byBusinessCompany).some((g) => g.length > 0);
+  // ★ 管理者グループが必須。ここを「事業会社の割当だけでも可」にしていたため、
+  //   管理者グループ未設定のまま継承を解除し、**管理者に権限が付かない**
+  //   アイテムができていた (実際に踏んだ)。
+  return p.adminGroupIds.length > 0;
 }
 
 /** 一括登録された事業会社 (割当の有無を問わない)。画面の一覧に出す順。 */

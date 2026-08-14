@@ -632,14 +632,22 @@ export class SpRepository implements Repository {
       .sort((a: { title: string }, b: { title: string }) => a.title.localeCompare(b.title, 'ja'));
   }
 
-  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string }[]> {
-    const out: { id: number; businessCompany: string }[] = [];
+  async listVulnResponsePermTargets(): Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]> {
+    const out: { id: number; businessCompany: string; hasUniquePerms: boolean }[] = [];
+    // ★ HasUniqueRoleAssignments も取る。false = まだ継承のまま = 権限未適用。
+    //   反映のたびに全件へ付け直すのは重い (1 件あたり 4〜6 リクエスト) ので、
+    //   未適用のものだけを対象にできるようにする。
     let url: string | null =
-      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items?$select=Id,BusinessCompany&$top=5000`;
+      `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
+      + '?$select=Id,BusinessCompany,HasUniqueRoleAssignments&$top=5000';
     while (url) {
       const j: any = await this.spGet(url);
-      for (const r of j.d.results as { Id: number; BusinessCompany?: string }[]) {
-        out.push({ id: r.Id, businessCompany: r.BusinessCompany ?? '' });
+      for (const r of j.d.results as
+        { Id: number; BusinessCompany?: string; HasUniqueRoleAssignments?: boolean }[]) {
+        out.push({
+          id: r.Id, businessCompany: r.BusinessCompany ?? '',
+          hasUniquePerms: !!r.HasUniqueRoleAssignments,
+        });
       }
       url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
     }

@@ -37,8 +37,14 @@ describe('hasAnyPerms: 未設定なら権限適用そのものを行わない', 
   it('管理者だけでも設定済み', () => {
     expect(hasAnyPerms(normalizePerms({ adminGroupIds: [1] }))).toBe(true);
   });
-  it('割当だけでも設定済み', () => {
-    expect(hasAnyPerms(normalizePerms({ byBusinessCompany: { A: [2] } }))).toBe(true);
+  it('★ 事業会社の割当だけでは未設定扱い (管理者グループが要る)', () => {
+    // ここを true にしていたため、管理者グループ未設定のまま継承を解除し、
+    // 管理者に権限が付かないアイテムができていた。
+    expect(hasAnyPerms(normalizePerms({ byBusinessCompany: { A: [2] } }))).toBe(false);
+  });
+
+  it('管理者グループがあれば、割当が無くても設定済み', () => {
+    expect(hasAnyPerms(normalizePerms({ adminGroupIds: [11], byBusinessCompany: {} }))).toBe(true);
   });
 
   it('★ 事業会社を登録しただけ (割当なし) では未設定扱い', () => {
@@ -163,5 +169,28 @@ describe('事業会社の一括登録 (WebReg の一括入力と同じ形)', () 
   it('registeredCompanies は割当の有無を問わず並べる', () => {
     const p = normalizePerms({ byBusinessCompany: { 'モビリティ事業': [], 'エナジー事業': [12] } });
     expect(registeredCompanies(p)).toEqual(['エナジー事業', 'モビリティ事業']);
+  });
+});
+
+describe('管理者グループが必ず付くこと', () => {
+  it('★ どのアイテムにも管理者グループがフルコントロールで入る', () => {
+    const p = normalizePerms({ adminGroupIds: [11, 21], byBusinessCompany: { A: [12] } });
+    for (const plan of buildItemPermPlan(
+      [{ id: 1, businessCompany: 'A' }, { id: 2, businessCompany: '' },
+        { id: 3, businessCompany: '未登録' }], p)) {
+      expect(plan.full, `#${plan.id}`).toEqual([11, 21]);
+    }
+  });
+
+  it('★ 管理者グループが無ければ、そもそも適用しない (継承を解除しない)', () => {
+    // 継承を解除したうえで管理者に権限を付けないと、誰も直せないアイテムになる。
+    expect(hasAnyPerms(normalizePerms({ adminGroupIds: [], byBusinessCompany: { A: [12] } }))).toBe(false);
+  });
+
+  it('管理者グループは事業会社の割当より先に付ける想定 (full が先)', () => {
+    const p = normalizePerms({ adminGroupIds: [11], byBusinessCompany: { A: [12] } });
+    const plan = buildItemPermPlan([{ id: 1, businessCompany: 'A' }], p)[0]!;
+    expect(plan.full).toEqual([11]);
+    expect(plan.edit).toEqual([12]);
   });
 });
