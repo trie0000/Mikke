@@ -37,8 +37,8 @@ export const LABEL = {
   responseRemarks: '備考',
 
   // ── Mikke だけの項目 (連携用リストには出ない) ──
-  /** ★「備考」(資産管理者が書く欄) と紛らわしいので、Mikke 側は「社内メモ」と呼ぶ。 */
-  mgmtNote: '社内メモ',
+  /** ★「備考」(資産管理者が書く欄) と紛らわしいので、Mikke 側は「内部メモ」と呼ぶ。 */
+  mgmtNote: '内部メモ',
 } as const;
 
 export type LabelKey = keyof typeof LABEL;
