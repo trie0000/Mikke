@@ -20,6 +20,11 @@ export interface Repository {
   /** 設定の取得 / 保存。 */
   getSettings(): Promise<MikkeSettings>;
   saveSettings(s: MikkeSettings): Promise<void>;
+  /** ★ 別サイトの設定・グループ (開発 ↔ 本番 の持ち運び用)。
+   *  同一テナント内 (同一オリジン) のときだけ使える。別オリジンは呼ぶ前に弾く。 */
+  getSettingsAt(siteUrl: string): Promise<MikkeSettings>;
+  saveSettingsAt(siteUrl: string, s: MikkeSettings): Promise<void>;
+  listSiteGroupsAt(siteUrl: string): Promise<{ id: number; title: string }[]>;
   /** ログインユーザー。 */
   getCurrentUser(): Promise<SiteUser | null>;
   /** メールアドレスから利用者を引く (移行データの担当者解決)。見つからなければ null。 */

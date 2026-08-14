@@ -93,7 +93,9 @@ export class SpRepository implements Repository {
   /** リスト名 → ListItemEntityTypeFullName のキャッシュ (POST の __metadata.type 用)。 */
   private entityTypeCache = new Map<string, string>();
 
-  constructor() {
+  constructor(siteUrl?: string) {
+    // ★ siteUrl を渡すとそのサイトを見る (開発 ↔ 本番 の設定コピー用)。
+    if (siteUrl) { this.webUrl = normalizeWebUrl(siteUrl); return; }
     // 選択済みサイト URL があればそれを、なければ現在ページのサイトを使う。
     // ★ 必ずサイトのルートに正規化する。ライブラリのページ URL のままだと
     //   `…/AllItems.aspx/_api/web/…` を叩いて HTML が返る (実機で発生)。
@@ -999,6 +1001,21 @@ export class SpRepository implements Repository {
       if (row?.SettingsJson) return { ...def, ...JSON.parse(row.SettingsJson) };
     } catch { /* noop */ }
     return def;
+  }
+
+  /** 別サイトの設定を読む (同一テナント内)。 */
+  async getSettingsAt(siteUrl: string): Promise<MikkeSettings> {
+    return new SpRepository(siteUrl).getSettings();
+  }
+
+  /** 別サイトへ設定を書く (同一テナント内)。 */
+  async saveSettingsAt(siteUrl: string, s: MikkeSettings): Promise<void> {
+    await new SpRepository(siteUrl).saveSettings(s);
+  }
+
+  /** 別サイトの SharePoint グループ一覧 (グループ名 → ID の引き直しに使う)。 */
+  async listSiteGroupsAt(siteUrl: string): Promise<{ id: number; title: string }[]> {
+    return new SpRepository(siteUrl).listSiteGroups();
   }
 
   async saveSettings(s: MikkeSettings): Promise<void> {

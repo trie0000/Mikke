@@ -335,6 +335,33 @@ export class MockRepository implements Repository {
 
   async getSettings(): Promise<MikkeSettings> { return { ...this.settings }; }
 
+  // ── 環境間コピー (mock はサイト URL をキーに localStorage へ分けて持つ) ──
+  private siteKey(siteUrl: string): string {
+    return `mikke.mock.settings@${String(siteUrl ?? '').replace(/\/+$/, '')}`;
+  }
+
+  async getSettingsAt(siteUrl: string): Promise<MikkeSettings> {
+    const def: MikkeSettings = { managedColumns: [], matchConditions: null, individualIds: [] };
+    try {
+      const raw = localStorage.getItem(this.siteKey(siteUrl));
+      return raw ? { ...def, ...JSON.parse(raw) } : def;
+    } catch { return def; }
+  }
+
+  async saveSettingsAt(siteUrl: string, s: MikkeSettings): Promise<void> {
+    try { localStorage.setItem(this.siteKey(siteUrl), JSON.stringify(s)); } catch { /* noop */ }
+  }
+
+  async listSiteGroupsAt(siteUrl: string): Promise<{ id: number; title: string }[]> {
+    // mock はサイトごとに **わざと違う ID** を返す (ID をそのまま写すと事故る、を再現)。
+    const base = [...String(siteUrl ?? '')].reduce((a, c) => a + c.charCodeAt(0), 0) % 50;
+    return [
+      { id: base + 1, title: 'Mikke 管理者' },
+      { id: base + 2, title: 'エナジー事業 資産管理者' },
+      { id: base + 3, title: 'モビリティ事業 資産管理者' },
+    ];
+  }
+
   async saveSettings(s: MikkeSettings): Promise<void> {
     this.settings = { ...s };
     save(LS_SETTINGS, this.settings);
