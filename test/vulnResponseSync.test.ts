@@ -467,22 +467,19 @@ describe('資産管理者の記入欄を上書きするかの選択', () => {
     expect(Object.values(VULNRESPONSE_COLUMN)).not.toContain('Responder');
   });
 
-  it('★ 上書きを選ぶと記入欄 8 項目すべてが載る', () => {
+  it('★ 上書きを選ぶと記入欄 6 項目が載る (対応者を除く)', () => {
     const f = toVulnResponseFields(issue({
       mgmtStatus: '対応済み', dueDate: '2026-09-30T00:00:00Z', extConnAppId: 'EXT-1',
-      responsePlan: '9 月中に閉塞', completionReason: '恒久対処済み', noAppReason: '社内閉域',
-      responseNote: '<p>対処しました</p>', responseRemarks: '特記なし',
+      responsePlan: '9 月中に閉塞。完了。', noAppReason: '社内閉域', responseRemarks: '特記なし',
     }), keysOf(), ASSETS, true);
     expect({
       responseStatus: f.responseStatus, responseDueDate: f.responseDueDate,
       extConnAppId: f.extConnAppId, responsePlan: f.responsePlan,
-      completionReason: f.completionReason, noAppReason: f.noAppReason,
-      responseNote: f.responseNote, responseRemarks: f.responseRemarks,
+      noAppReason: f.noAppReason, responseRemarks: f.responseRemarks,
     }).toEqual({
       responseStatus: '対応済み', responseDueDate: '2026-09-30T00:00:00Z',
-      extConnAppId: 'EXT-1', responsePlan: '9 月中に閉塞',
-      completionReason: '恒久対処済み', noAppReason: '社内閉域',
-      responseNote: '<p>対処しました</p>', responseRemarks: '特記なし',
+      extConnAppId: 'EXT-1', responsePlan: '9 月中に閉塞。完了。',
+      noAppReason: '社内閉域', responseRemarks: '特記なし',
     });
   });
 });
@@ -507,10 +504,10 @@ describe('項目名の一本化', () => {
     expect(nameOf('ExtConnAppId')).toBe(LABEL.extConnAppId);
     expect(nameOf('IdentifyEvidence')).toBe(LABEL.identifyEvidence);
     expect(nameOf('ReportUrl')).toBe(LABEL.report);
-    expect(nameOf('ResponseStatus')).toBe(LABEL.responseStatus);
+    expect(nameOf('ResponseStatus')).toBe(LABEL.mgmtStatus);
     expect(nameOf('Responder')).toBe(LABEL.responder);
     expect(nameOf('DueDate')).toBe(LABEL.responseDueDate);
-    expect(nameOf('ResponseNote')).toBe(LABEL.responseNote);
+    expect(nameOf('ResponsePlan')).toBe(LABEL.responsePlan);
     expect(nameOf('Remarks')).toBe(LABEL.responseRemarks);
   });
 
@@ -523,11 +520,8 @@ describe('項目名の一本化', () => {
     expect(LABEL.assetMgmtId).toBe('WebMAPS管理ID'); // 「Web資産管理ID」ではない
   });
 
-  it('資産管理者が記入する欄は 5 項目', () => {
-    // 明細の「資産管理者の記入」タブに出す並びと同じ。
-    expect([LABEL.responseStatus, LABEL.responder, LABEL.responseDueDate,
-      LABEL.responseNote, LABEL.responseRemarks])
-      .toEqual(['対応状況', '対応者', '対応期日', '対応経緯', '備考']);
+  it('事業会社が記入する欄は 7 項目', () => {
+    expect(RESPONSE_FIELD_ORDER).toHaveLength(7);
   });
 });
 
@@ -535,8 +529,8 @@ describe('事業会社記入欄の並び', () => {
   it('★ 明細タブ・編集モーダル・連携用リストで同じ順に並べる', () => {
     // 画面ごとに順が違うと記入漏れの原因になる。並びは 1 か所で決める。
     expect(RESPONSE_FIELD_ORDER.map((k) => LABEL[k])).toEqual([
-      '対応状況', '対応者', '外部接続申請ID', '外部接続申請不要の理由', '対応期日',
-      '対応計画', '対応経緯', '完了理由', '備考',
+      'ステータス', '対応者', '外部接続申請ID', '外部接続申請不要の理由', '対応期日',
+      '対応状況', '備考',
     ]);
   });
 

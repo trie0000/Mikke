@@ -352,6 +352,18 @@ export function detectVulnType(title: string, rules: VulnTypeRules): VulnType {
   return '脆弱性';
 }
 
+/**
+ * 「対応状況」に寄せる複数列を 1 つの本文にまとめる。
+ * ★ 元がどの列だったか分からなくなると読めないので、見出しを付けて連結する。
+ *   中身が空の列は出さない。全部空なら空文字。
+ */
+export function mergeResponseDetail(parts: [string, string][]): string {
+  return parts
+    .filter(([, v]) => text(v))
+    .map(([label, v]) => `【${label}】\n${text(v)}`)
+    .join('\n\n');
+}
+
 // ── 1 行 → 管理対象 ─────────────────────────────────────────────────────────
 
 export interface MigrationRowResult {
@@ -455,12 +467,14 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     webMapsId,
     identifyEvidence: get(MIG_COL.identifyEvidence),
     lastSeen: lastSeen ?? '',
-    responsePlan: get(MIG_COL.responsePlan),
     extConnAppId: get(MIG_COL.extConnAppId),
     noAppReason: get(MIG_COL.noAppReason),
-    // ★ 連携用リスト由来の responseNote / responseRemarks には入れない。
-    //   あちらは資産管理者の記入欄の写しで、連携内容の取込のたびに上書きされる。
-    completionReason: get(MIG_COL.responseNote),
+    // ★ 対応計画・完了理由は 1 つの「対応状況」にまとめる (画面も連携用リストも 1 本)。
+    //   どちらの列から来たか分かるように見出しを付けて連結する。
+    responsePlan: mergeResponseDetail([
+      [MIG_COL.responsePlan, get(MIG_COL.responsePlan)],
+      [MIG_COL.responseNote, get(MIG_COL.responseNote)],
+    ]),
     mgmtNote: get(MIG_COL.remarks),
     vulnType: detectVulnType(title, ctx.vulnTypeRules),
     addedReason: '個別指定',

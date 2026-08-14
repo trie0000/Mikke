@@ -170,20 +170,30 @@ describe('1 行の移行', () => {
     expect(i.affiliateCompany).toBe('ABC株式会社');
     expect(i.webMapsId).toBe('A123456');
     expect(i.identifyEvidence).toBe('FQDN 一致');
-    expect(i.responsePlan).toBe('9 月中に閉塞');
     expect(i.extConnAppId).toBe('EXT-2026-045');
     expect(i.noAppReason).toBe('社内閉域のため');
-    expect(i.completionReason).toBe('対処済み');
+    // 対応計画 + 完了理由 は「対応状況」に 1 本化される (見出し付きで連結)。
+    expect(i.responsePlan).toBe(
+      `【${MIG_COL.responsePlan}】\n9 月中に閉塞\n\n【${MIG_COL.responseNote}】\n対処済み`);
     expect(i.mgmtNote).toBe('特記なし');
     expect(i.vulnType).toBe('ポート');
   });
 
-  it('★ 完了理由と特記事項は連携用リスト由来の項目には入れない', () => {
-    // responseNote / responseRemarks は資産管理者の記入欄の写しで、
+  it('★ 特記事項は連携用リスト由来の項目には入れない', () => {
+    // responseRemarks は事業会社の記入欄 (備考) の写しで、
     // 連携内容の取込のたびに上書きされる。移行データを置くと消える。
-    const i = migrateRow(row, ctx).issue!;
-    expect(i.responseNote).toBeUndefined();
-    expect(i.responseRemarks).toBeUndefined();
+    expect(migrateRow(row, ctx).issue!.responseRemarks).toBeUndefined();
+  });
+
+  it('★ 片方だけ埋まっていれば、その 1 件だけを入れる', () => {
+    const only = migrateRow({ ...row, [MIG_COL.responseNote]: '' }, ctx).issue!;
+    expect(only.responsePlan).toBe(`【${MIG_COL.responsePlan}】\n9 月中に閉塞`);
+  });
+
+  it('両方空なら対応状況も空', () => {
+    const none = migrateRow(
+      { ...row, [MIG_COL.responsePlan]: '', [MIG_COL.responseNote]: '' }, ctx).issue!;
+    expect(none.responsePlan).toBe('');
   });
 
   it('IP は Asset IP、参考情報は同名の Scan_ 列に入る', () => {
@@ -519,7 +529,8 @@ describe('列の探し方 (完全一致 / 部分一致)', () => {
       '一ヶ月を目処に早めにご計画ください': '2026-09 までに対応',
     }], PERMS, {}, '2026-08-14T00:00:00Z');
     expect(plan.rows[0]!.issue!.extConnAppId).toBe('EXT-999');
-    expect(plan.rows[0]!.issue!.responsePlan).toBe('2026-09 までに対応');
+    expect(plan.rows[0]!.issue!.responsePlan)
+      .toBe(`【${MIG_COL.responsePlan}】\n2026-09 までに対応`);
     expect(plan.missingColumns).not.toContain(MIG_COL.extConnAppId);
     expect(plan.missingColumns).not.toContain(MIG_COL.responsePlan);
   });

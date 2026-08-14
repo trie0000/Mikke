@@ -38,14 +38,10 @@ export interface VulnResponseFields {
   responseDueDate?: string;
   /** 外部接続申請ID。 */
   extConnAppId?: string;
-  /** 対応計画。 */
+  /** 対応状況 (自由記入。旧 対応計画/対応経緯/完了理由)。 */
   responsePlan?: string;
-  /** 完了理由。 */
-  completionReason?: string;
-  /** 申請不要理由。 */
+  /** 外部接続申請不要の理由。 */
   noAppReason?: string;
-  /** 対応経緯 (リッチテキスト HTML)。 */
-  responseNote?: string;
   /** 備考。 */
   responseRemarks?: string;
 }
@@ -75,9 +71,7 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   responseDueDate: 'DueDate',
   extConnAppId: 'ExtConnAppId',
   responsePlan: 'ResponsePlan',
-  completionReason: 'CompletionReason',
   noAppReason: 'NoAppReason',
-  responseNote: 'ResponseNote',
   responseRemarks: 'Remarks',
 };
 
@@ -115,8 +109,7 @@ export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note'
   relatedAssets: 'note', identifyEvidence: 'note',
   reportUrl: 'url',
   responseStatus: 'text', responseDueDate: 'date', extConnAppId: 'text',
-  responsePlan: 'note', completionReason: 'note', noAppReason: 'note',
-  responseNote: 'note', responseRemarks: 'note',
+  responsePlan: 'note', noAppReason: 'note', responseRemarks: 'note',
 };
 
 /**
@@ -239,9 +232,7 @@ export function toVulnResponseFields(
       responseDueDate: jstDateOnly(issue.dueDate),
       extConnAppId: text(issue.extConnAppId),
       responsePlan: text(issue.responsePlan),
-      completionReason: text(issue.completionReason),
       noAppReason: text(issue.noAppReason),
-      responseNote: text(issue.responseNote),
       responseRemarks: text(issue.responseRemarks),
     } : {}),
   };

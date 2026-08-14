@@ -85,9 +85,10 @@ export interface ManagedIssue {
   webMapsId?: string;
   /** 事業会社特定の根拠。 */
   identifyEvidence?: string;
-  /** 対応計画。 */
+  /** 対応状況 (自由記入)。事業会社が書く欄。
+   *  ★ 旧「対応計画」「対応経緯」「完了理由」をここに 1 本化した。 */
   responsePlan?: string;
-  /** 申請不要理由。 */
+  /** 外部接続申請不要の理由。 */
   noAppReason?: string;
   /** 脆弱性タイプ。Title から自動判定する (設定の判定条件)。 */
   vulnType?: VulnType;
@@ -114,12 +115,6 @@ export interface ManagedIssue {
   reportAt?: string;
   /** SharePoint 上の最終更新日時 (ISO)。連携用リストとの差分判定に使う。 */
   updatedAt?: string;
-  /** 対応状況を「完了」にした理由。移行データの「本課題の…理由をご記入ください。」列。
-   *  ★ 連携用リストの対応経緯 (responseNote) とは別。あちらは資産管理者が書く欄で、
-   *    連携内容の取込のたびに上書きされるため、移行データを置く先にできない。 */
-  completionReason?: string;
-  /** 連携用リストで資産管理者が書いた対応経緯 (HTML)。Mikke 側のメモとは別に保持する。 */
-  responseNote?: string;
   /** 連携用リストで資産管理者が書いた備考。 */
   responseRemarks?: string;
   /** 連携用リストの内容を取り込んだ日時 (ISO)。 */

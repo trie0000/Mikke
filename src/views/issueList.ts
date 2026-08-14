@@ -1,6 +1,6 @@
 // F4: 管理対象脆弱性の一覧画面。subbar → toolbar → table の順 (UI ルール §1.2)。
 // 表本体 (列フィルタ/全文表示/仮想スクロール/列リサイズ/列ドラッグ) は DataTable に委譲。
-import { LABEL } from '../lib/fieldLabels';
+import { LABEL, RESPONSE_FIELD_ORDER } from '../lib/fieldLabels';
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
@@ -360,9 +360,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
             el('span', {}, [
               el('div', {}, ['資産管理者が記入する欄を Mikke の値で上書きする']),
               el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [
-                `上書きする項目: ${[LABEL.responseStatus, LABEL.responseDueDate, LABEL.extConnAppId,
-                  LABEL.responsePlan, LABEL.completionReason, LABEL.noAppReason,
-                  LABEL.responseNote, LABEL.responseRemarks].join(' / ')}`,
+                `上書きする項目: ${RESPONSE_FIELD_ORDER.filter((k) => k !== 'responder')
+                  .map((k) => LABEL[k]).join(' / ')}`,
                 el('br'),
                 'Excel から移行した内容をリスト側へ載せるときに使います。',
                 el('br'),
@@ -597,7 +596,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       { id: 'title', label: LABEL.title, width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
       { id: 'detection', label: LABEL.detectionStatus, width: 110, text: (i) => i.detectionStatus,
         sortValue: (i) => DETECTION_ORDER[i.detectionStatus] ?? 0, render: (i) => detectionBadge(i.detectionStatus) },
-      { id: 'mgmt', label: LABEL.responseStatus, width: 110, text: (i) => i.mgmtStatus,
+      { id: 'mgmt', label: LABEL.mgmtStatus, width: 110, text: (i) => i.mgmtStatus,
         sortValue: (i) => MGMT_ORDER[i.mgmtStatus] ?? 0, render: (i) => mgmtBadge(i.mgmtStatus) },
       // 連携用リストと比べた通知の状態。判定は notifyStatus.ts (更新時刻の比較)。
       { id: 'notify', label: '通知', width: 100,
@@ -635,16 +634,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       //   今までの見た目を変えず、「列」ボタンから出せるようにする。
       { id: 'responsePlan', label: LABEL.responsePlan, width: 200, defaultHidden: true,
         text: (i) => i.responsePlan ?? '' },
-      { id: 'completionReason', label: LABEL.completionReason, width: 200, defaultHidden: true,
-        text: (i) => i.completionReason ?? '' },
       { id: 'noAppReason', label: LABEL.noAppReason, width: 200, defaultHidden: true,
         text: (i) => i.noAppReason ?? '' },
       { id: 'outOfScopeReason', label: '対象外の理由', width: 200, defaultHidden: true,
         text: (i) => i.outOfScopeReason ?? '' },
       { id: 'mgmtNote', label: LABEL.mgmtNote, width: 220, defaultHidden: true,
         text: (i) => stripHtml(i.mgmtNote ?? '') },
-      { id: 'responseNote', label: LABEL.responseNote, width: 220, defaultHidden: true,
-        text: (i) => stripHtml(i.responseNote ?? '') },
       { id: 'responseRemarks', label: LABEL.responseRemarks, width: 200, defaultHidden: true,
         text: (i) => i.responseRemarks ?? '' },
       { id: 'addedReason', label: '取込経緯', width: 110, defaultHidden: true,

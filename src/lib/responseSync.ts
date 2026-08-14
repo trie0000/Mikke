@@ -1,13 +1,13 @@
 // 連携用リスト (資産管理者が記入) → Mikke の管理対象一覧 への取り込み。
 //
-// 資産管理者が書き換えられるのは 対応状況 / 対応者 / 対応期日 / 外部接続申請ID /
-// 対応計画 / 完了理由 / 申請不要理由 / 対応経緯 / 備考 の 9 つ。
+// 事業会社が書き換えられるのは ステータス / 対応者 / 対応期日 / 外部接続申請ID /
+// 外部接続申請不要の理由 / 対応状況 / 備考 の 7 つ。
 // これらを管理対象へ反映する計画をここで組み立てる (UI 非依存の純関数)。
 //
 // ★ 方針
 //   - 実際に値が変わるものだけを patch にする (毎回全件書き込まない)。
-//   - 対応経緯・備考は Mikke 側の「内部メモ」とは別のフィールドに入れる。
-//     管理者が書いた内部メモを資産管理者の入力で消さないため。
+//   - 対応状況・備考は Mikke 側の「内部メモ」とは別のフィールドに入れる。
+//     管理者が書いた内部メモを事業会社の入力で消さないため。
 //   - 対応状況は Mikke の対応ステータスへそのまま入れる (値が 1:1 で対応する)。
 //     対応表に無い値は無視する (SharePoint 側で選択肢が増えても壊れないように)。
 import type { ManagedIssue, MgmtStatus, FieldChange } from '../types';
@@ -23,16 +23,12 @@ export interface VulnResponseItem {
   responderName?: string;
   /** 対応期日 (ISO)。 */
   dueDate?: string;
-  /** 対応経緯 (リッチテキスト HTML)。 */
-  responseNote?: string;
   /** 備考。 */
   remarks?: string;
   /** 外部接続申請ID。 */
   extConnAppId?: string;
   /** 対応計画。 */
   responsePlan?: string;
-  /** 完了理由。 */
-  completionReason?: string;
   /** 申請不要理由。 */
   noAppReason?: string;
 }
@@ -101,28 +97,22 @@ export function buildResponseSyncPlan(
     const st = toMgmtStatus(r.responseStatus);
     if (st) put('対応ステータス', issue.mgmtStatus, st, () => { patch.mgmtStatus = st; });
 
-    put('担当者', text(issue.assignee), text(r.responderName),
+    put(LABEL.responder, text(issue.assignee), text(r.responderName),
       () => { patch.assignee = text(r.responderName); });
 
-    put('対応期限', dayOf(issue.dueDate), dayOf(r.dueDate),
+    put(LABEL.responseDueDate, dayOf(issue.dueDate), dayOf(r.dueDate),
       () => { patch.dueDate = text(r.dueDate); });
 
-    put('対応経緯 (連携)', text(issue.responseNote), text(r.responseNote),
-      () => { patch.responseNote = text(r.responseNote); });
-
-    put('備考 (連携)', text(issue.responseRemarks), text(r.remarks),
+    put(LABEL.responseRemarks, text(issue.responseRemarks), text(r.remarks),
       () => { patch.responseRemarks = text(r.remarks); });
 
     // ★ ここも資産管理者が書く欄。書いてもらった内容が Mikke に返ってこないと
     //   一覧で状況が追えない。
-    put('外部接続申請ID', text(issue.extConnAppId), text(r.extConnAppId),
+    put(LABEL.extConnAppId, text(issue.extConnAppId), text(r.extConnAppId),
       () => { patch.extConnAppId = text(r.extConnAppId); });
 
-    put('対応計画', text(issue.responsePlan), text(r.responsePlan),
+    put(LABEL.responsePlan, text(issue.responsePlan), text(r.responsePlan),
       () => { patch.responsePlan = text(r.responsePlan); });
-
-    put('完了理由', text(issue.completionReason), text(r.completionReason),
-      () => { patch.completionReason = text(r.completionReason); });
 
     put(LABEL.noAppReason, text(issue.noAppReason), text(r.noAppReason),
       () => { patch.noAppReason = text(r.noAppReason); });

@@ -158,7 +158,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         [LABEL.detectionStatus, null, detectionBadge(i.detectionStatus)],
         ['脆弱性タイプ', i.vulnType || '—'],
         // 通知 = 連携用リストとの同期状態 (対応状況とは別軸)。
-        [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
+        [LABEL.mgmtStatus, null, mgmtBadge(i.mgmtStatus)],
         ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
         ['取込経緯', i.addedReason || '—'],
         // 一覧の「レポート」列と同じもの。明細から直接開けるようにする。
@@ -221,20 +221,15 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       //   全項目が「連携内容を取込」で相手の記入内容として入ってくる。
       // ★ 並びは RESPONSE_FIELD_ORDER に合わせる (明細・編集モーダル・連携用リストで同じ順)。
       body.appendChild(metaGrid([
-        [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
+        [LABEL.mgmtStatus, null, mgmtBadge(i.mgmtStatus)],
         [LABEL.responder, i.assignee || '—'],
         [LABEL.extConnAppId, i.extConnAppId || '—'],
         [LABEL.noAppReason, i.noAppReason || '—'],
         [LABEL.responseDueDate, fmtDate(i.dueDate, false) || '—'],
-        [LABEL.responsePlan, i.responsePlan || '—'],
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
-        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseNote]),
-        noteBlock(i.responseNote, '（記入なし）'),
-      ]));
-      body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
-        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.completionReason]),
-        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.completionReason || '（記入なし）']),
+        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responsePlan]),
+        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.responsePlan || '（記入なし）']),
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseRemarks]),
@@ -600,15 +595,6 @@ function toLocalDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return '';
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-/** リッチテキスト (対応経緯) の表示。HTML が入るので必ずサニタイズしてから出す。 */
-function noteBlock(html: string | undefined, empty: string): HTMLElement {
-  const v = (html ?? '').trim();
-  if (!v) return el('div', { style: 'color:var(--ink-3)' }, [empty]);
-  const box = el('div', { style: 'color:var(--ink);line-height:1.8' });
-  box.innerHTML = sanitizeNoteHtml(v);
-  return box;
 }
 
 /** 個別レポートを開くリンク。一覧の「レポート」列と同じ振る舞いにする

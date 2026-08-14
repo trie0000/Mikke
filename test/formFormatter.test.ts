@@ -108,9 +108,9 @@ describe('schema: 連携用リストの列定義', () => {
     }
   });
 
-  it('資産管理者の入力欄には表示条件を付けない (常に出す)', () => {
+  it('事業会社の入力欄には表示条件を付けない (常に出す)', () => {
     for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
-                        'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks']) {
+                        'ResponsePlan', 'NoAppReason', 'Remarks']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBeUndefined();
     }
   });
@@ -122,12 +122,12 @@ describe('schema: 連携用リストの列定義', () => {
     }
   });
 
-  it('★ 本体に出る入力欄は資産管理者が記入する 9 項目だけ、定義順に並ぶ', () => {
+  it('★ 本体に出る入力欄は事業会社が記入する 7 項目だけ、定義順に並ぶ', () => {
     // 外部接続申請ID・対応計画・完了理由・申請不要理由も資産管理者が書く欄。
     // 読み取り専用にしていると運用が回らない。
     const visible = specs.filter((f) => !f.conditionalFormula).map((f) => f.name);
     expect(visible).toEqual(['ResponseStatus', 'Responder', 'ExtConnAppId', 'NoAppReason',
-      'DueDate', 'ResponsePlan', 'ResponseNote', 'CompletionReason', 'Remarks']);
+      'DueDate', 'ResponsePlan', 'Remarks']);
   });
 
   it('旧レイアウトの列は定義に残っていない (削除対象)', () => {
@@ -136,7 +136,8 @@ describe('schema: 連携用リストの列定義', () => {
     }
   });
 
-  it('リッチテキストは RichTextMode=FullHtml を SchemaXml で入れる', () => {
+  it.skip('リッチテキストは RichTextMode=FullHtml を SchemaXml で入れる', () => {
+    // 対応経緯 (ResponseNote) は「対応状況」に 1 本化したため、この列は無くなった。
     expect(specs.find((f) => f.name === 'ResponseNote')?.schemaXmlAttributes)
       .toEqual({ RichTextMode: 'FullHtml' });
   });
@@ -193,7 +194,7 @@ describe('読み取り専用カードと入力欄の重複', () => {
 
   it('★ カードに出すのは、資産管理者が編集しない項目だけ', () => {
     const editable = ['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
-      'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks'];
+      'ResponsePlan', 'NoAppReason', 'Remarks'];
     for (const n of editable) expect(json, n).not.toContain(`[$${n}]`);
   });
 

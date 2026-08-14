@@ -61,18 +61,10 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
   const area = (v: string, ph = ''): HTMLTextAreaElement =>
     el('textarea', { style: 'min-height:72px', ...(ph ? { placeholder: ph } : {}) }, [v]) as HTMLTextAreaElement;
   const noAppReason = area(issue.noAppReason ?? '');
-  const responsePlan = area(issue.responsePlan ?? '');
-  const completionReason = area(issue.completionReason ?? '');
+  // 旧「対応計画 / 対応経緯 / 完了理由」を 1 本化した自由記入欄。
+  const responsePlan = el('textarea', { style: 'min-height:160px' },
+    [issue.responsePlan ?? '']) as HTMLTextAreaElement;
   const responseRemarks = area(issue.responseRemarks ?? '');
-  // ★ 対応経緯は連携用リストではリッチテキスト。ここは素のテキストで編集する。
-  //   タグを見せないよう本文だけ出し、**書き換えたときだけ** 保存する
-  //   (開いて閉じただけで相手の書式を平文に潰さないため)。
-  const noteHtml = issue.responseNote ?? '';
-  const notePlain = noteHtml
-    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-    .replace(/\n{3,}/g, '\n\n').trim();
-  const responseNote = area(notePlain);
 
   // 対象外チェックと MgmtStatus=対象外 を連動
   oosCheck.addEventListener('change', () => {
@@ -99,14 +91,12 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
 
     // ★ 並びは明細の「事業会社記入欄」タブと同じ。
     head(RESPONSE_SECTION, '連携用リストで事業会社が記入する項目です。ここで直すと次の反映で上書きできます。'),
-    field(LABEL.responseStatus, statusSel),
+    field(LABEL.mgmtStatus, statusSel),
     field(LABEL.responder, assignee),
     field(LABEL.extConnAppId, extConnAppId),
     field(LABEL.noAppReason, noAppReason),
     field(LABEL.responseDueDate, due),
     field(LABEL.responsePlan, responsePlan),
-    field(LABEL.responseNote, responseNote),
-    field(LABEL.completionReason, completionReason),
     field(LABEL.responseRemarks, responseRemarks),
 
     head('管理情報', 'Mikke の中だけで使う項目です。連携用リストには出ません。'),
@@ -143,12 +133,8 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
         mgmtNote: note.value,
         noAppReason: noAppReason.value.trim(),
         responsePlan: responsePlan.value.trim(),
-        completionReason: completionReason.value.trim(),
         responseRemarks: responseRemarks.value.trim(),
       };
-      // ★ 対応経緯は書き換えたときだけ送る。開いて閉じただけで、
-      //   相手が書いたリッチテキストを平文に潰さないため。
-      if (responseNote.value.trim() !== notePlain) patch.responseNote = responseNote.value.trim();
       if (isOos && !patch.outOfScopeReason) {
         toast(root, '対象外にする場合は理由を入力してください', 'warn');
         throw new Error('reason required');

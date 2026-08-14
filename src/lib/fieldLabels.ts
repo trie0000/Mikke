@@ -25,15 +25,16 @@ export const LABEL = {
   identifyEvidence: '事業会社特定の根拠',
   report: 'レポート',
 
-  // ── 資産管理者が記入する欄 (連携用リストの記入欄と 1:1) ──
-  responseStatus: '対応状況',
+  // ── 事業会社が記入する欄 (連携用リストの記入欄と 1:1) ──
+  /** 選択肢 (未着手 / 対応中 / 対応済み / リスク受容 / 過検出 / 対象外)。
+   *  ★ 自由記入の「対応状況」と名前が衝突するので、こちらは「ステータス」と呼ぶ。 */
+  mgmtStatus: 'ステータス',
   responder: '対応者',
   responseDueDate: '対応期日',
   extConnAppId: '外部接続申請ID',
-  responsePlan: '対応計画',
-  completionReason: '完了理由',
   noAppReason: '外部接続申請不要の理由',
-  responseNote: '対応経緯',
+  /** 自由記入。旧「対応計画」「対応経緯」「完了理由」をここに 1 本化した。 */
+  responsePlan: '対応状況',
   responseRemarks: '備考',
 
   // ── Mikke だけの項目 (連携用リストには出ない) ──
@@ -48,6 +49,6 @@ export const RESPONSE_SECTION = '事業会社記入欄';
 
 /** 事業会社記入欄の並び (画面をまたいで同じ順にするための単一の出どころ)。 */
 export const RESPONSE_FIELD_ORDER = [
-  'responseStatus', 'responder', 'extConnAppId', 'noAppReason', 'responseDueDate',
-  'responsePlan', 'responseNote', 'completionReason', 'responseRemarks',
+  'mgmtStatus', 'responder', 'extConnAppId', 'noAppReason', 'responseDueDate',
+  'responsePlan', 'responseRemarks',
 ] as const satisfies readonly LabelKey[];

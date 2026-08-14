@@ -123,8 +123,6 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'IdentifyEvidence', type: 'Note' },
     { name: 'ResponsePlan', type: 'Note' },
     { name: 'NoAppReason', type: 'Note' },
-    // 対応状況を「完了」にした理由 (移行データ由来。連携用リストの対応経緯とは別物)。
-    { name: 'CompletionReason', type: 'Note' },
     { name: 'VulnType', type: 'Choice', choices: [...VULN_TYPES] },
     // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
     //   移行期間中は参考情報として管理リスト・連携用リストの双方で見せる。
@@ -143,8 +141,7 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'ReportUrl', type: 'Note' },
     { name: 'ReportName', type: 'Text' },
     { name: 'ReportAt', type: 'DateTime' },
-    // 連携用リストから取り込んだ資産管理者の記入内容 (Mikke 側のメモとは別に保持)。
-    { name: 'ResponseNote', type: 'NoteRich', schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
+    // 連携用リストから取り込んだ事業会社の記入内容 (Mikke 側の内部メモとは別に保持)。
     { name: 'ResponseRemarks', type: 'Note' },
     { name: 'ResponseSyncedAt', type: 'DateTime' },
     // ★ 検査ツール由来の全項目 (Scan_*) は個別列にせず、この 1 列へ JSON で集約する。
@@ -285,7 +282,7 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('ReportUrl', LABEL.report, { type: 'Url' }),
 
     // ── 対応 (資産管理者が記入。conditionalFormula を付けない = フォームで入力できる) ──
-    { name: 'ResponseStatus', type: 'Choice', displayName: LABEL.responseStatus,
+    { name: 'ResponseStatus', type: 'Choice', displayName: LABEL.mgmtStatus,
       choices: [...RESPONSE_STATUS_CHOICES], indexed: true },
     { name: 'Responder', type: 'User', displayName: LABEL.responder },
     // ★ 外部接続申請ID・申請不要理由・対応計画・完了理由も事業会社が書く欄。
@@ -295,9 +292,6 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     { name: 'NoAppReason', type: 'Note', displayName: LABEL.noAppReason },
     { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: LABEL.responseDueDate },
     { name: 'ResponsePlan', type: 'Note', displayName: LABEL.responsePlan },
-    { name: 'ResponseNote', type: 'NoteRich', displayName: LABEL.responseNote,
-      schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
-    { name: 'CompletionReason', type: 'Note', displayName: LABEL.completionReason },
     { name: 'Remarks', type: 'Note', displayName: LABEL.responseRemarks },
   ];
 }
@@ -311,6 +305,9 @@ export const VULNRESPONSE_OBSOLETE_FIELDS = [
   'TargetAsset',     // 対象資産 (IP / FQDN に分割)
   'MgmtNumber',      // 管理番号 → 旧管理番号 (LegacyMgmtNumber) に一本化
   'IssueInstanceId', // 突合キーは組込みの Title に移した (同じ値の列が 2 本になるため)
+  // 対応計画 / 対応経緯 / 完了理由 は「対応状況」(ResponsePlan) に 1 本化した。
+  'ResponseNote',
+  'CompletionReason',
 ];
 
 /**

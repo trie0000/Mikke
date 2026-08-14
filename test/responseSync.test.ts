@@ -54,24 +54,24 @@ describe('buildResponseSyncPlan: 連携用リスト → 管理対象への取り
     expect(plan.notLinked).toBe(1);
   });
 
-  it('対応者・対応期日・対応経緯・備考を取り込む', () => {
+  it('対応者・対応期日・対応状況・備考を取り込む', () => {
     const plan = buildResponseSyncPlan([issue()], [res({
       responderName: '佐藤', dueDate: '2026-09-30T00:00:00Z',
-      responseNote: '<p>ベンダーに問い合わせ中</p>', remarks: '再検査は10月',
+      responsePlan: 'ベンダーに問い合わせ中', remarks: '再検査は10月',
     })], NOW);
     const p = plan.patches[0]!.patch;
     expect(p.assignee).toBe('佐藤');
     expect(p.dueDate).toBe('2026-09-30T00:00:00Z');
-    expect(p.responseNote).toBe('<p>ベンダーに問い合わせ中</p>');
+    expect(p.responsePlan).toBe('ベンダーに問い合わせ中');
     expect(p.responseRemarks).toBe('再検査は10月');
   });
 
-  it('対応経緯・備考は Mikke 側のメモを上書きしない (別フィールドに入れる)', () => {
+  it('対応状況・備考は Mikke 側の内部メモを上書きしない (別フィールドに入れる)', () => {
     const plan = buildResponseSyncPlan(
       [issue({ mgmtNote: '管理者のメモ' })],
-      [res({ responseNote: '資産管理者の記入' })], NOW);
+      [res({ responsePlan: '事業会社の記入' })], NOW);
     const p = plan.patches[0]!.patch;
-    expect(p.responseNote).toBe('資産管理者の記入');
+    expect(p.responsePlan).toBe('事業会社の記入');
     expect(p.mgmtNote).toBeUndefined();
   });
 
