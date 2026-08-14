@@ -334,6 +334,47 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
    *   ★ 範囲外の既存アイテムには触らない (絞ったまま全件突合すると、選択していない
    *     アイテムが「管理対象に無い」と判定されてリストが消える)。
    */
+  /**
+   * 反映の前に「資産管理者の記入欄を上書きするか」を訊く。
+   * ★ 既定は OFF。通常は相手が書いた内容を消さないのが正しい。
+   *   Excel から移行した対応状況をリスト側へ載せるときだけ ON にする。
+   */
+  function askPushOptions(onlySelected: boolean, count: number): Promise<boolean | null> {
+    return new Promise((resolve) => {
+      const check = el('input', { type: 'checkbox' }) as HTMLInputElement;
+      let done = false;
+      openModal(rootEl, {
+        title: onlySelected ? `選択 ${count} 件を連携リストへ反映` : '連携リストへ反映（全件）',
+        body: el('div', { style: 'line-height:1.8' }, [
+          el('p', { style: 'margin:0 0 var(--s-4)' }, [
+            '脆弱性・資産の情報を連携用リストへ書き込みます。',
+            el('br'),
+            '通常は資産管理者が記入した欄（対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考）には触れません。',
+          ]),
+          el('label', {
+            style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
+              + 'padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
+          }, [
+            check,
+            el('span', {}, [
+              el('div', {}, ['資産管理者が記入した「対応状況」「対応期日」を Mikke の値で上書きする']),
+              el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [
+                'Excel から移行した対応状況をリスト側へ載せるときに使います。',
+                el('br'),
+                '相手が既に記入していた内容は消えます。戻せません。',
+                el('br'),
+                '「対応者」「対応経緯」「備考」は、この指定でも上書きしません。',
+              ]),
+            ]),
+          ]),
+        ]),
+        primaryLabel: '反映する',
+        onPrimary: () => { done = true; resolve(check.checked); },
+        onClose: () => { if (!done) resolve(null); },
+      });
+    });
+  }
+
   async function pushToVulnResponse(onlySelected = false): Promise<void> {
     if (bulkBusy) return;
     const targets = onlySelected ? cache.filter((i) => selected.has(i.id)) : cache;
@@ -341,6 +382,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       toast(rootEl, '脆弱性が選択されていません。', 'warn');
       return;
     }
+    const overwriteResponse = await askPushOptions(onlySelected, targets.length);
+    if (overwriteResponse === null) return;   // 閉じた = 何もしない
     const scope = onlySelected
       ? new Set(targets.map((i) => (i.issueInstanceId ?? '').trim()).filter(Boolean))
       : undefined;
@@ -371,8 +414,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         }
         return [...set];
       };
-      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing, scope);
-      const label = onlySelected ? `選択 ${targets.length} 件の反映` : '連携リストへの反映';
+      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing, scope, overwriteResponse);
+      const label = (onlySelected ? `選択 ${targets.length} 件の反映` : '連携リストへの反映')
+        + (overwriteResponse ? '（対応状況も上書き）' : '');
       const total = plan.creates.length + plan.updates.length + plan.deletes.length;
       if (!total) {
         toast(rootEl, `${label}: 変更はありません（一致 ${plan.unchanged} 件）。`, 'ok', 6000);

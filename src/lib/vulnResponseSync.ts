@@ -28,6 +28,15 @@ export interface VulnResponseFields {
   identifyEvidence: string;
   /** 脆弱性レポート (PDF) の SP 上のサーバ相対 URL。空なら未取得。 */
   reportUrl: string;
+
+  // ── 資産管理者が記入する欄 (既定では書かない) ──────────────────────────────
+  // ★ この 2 つだけ任意にしてある。値が入っているときだけ body に載るので、
+  //   上書きを選ばなければ今までどおり資産管理者の記入内容には触れない。
+  //   Excel から移行した対応状況をリスト側へ載せたいときに使う。
+  /** 対応状況 (Mikke 側の mgmtStatus)。 */
+  responseStatus?: string;
+  /** 対応期日 (Mikke 側の dueDate)。 */
+  responseDueDate?: string;
 }
 
 /** VulnResponseFields のキー → 連携用リストの SP 列名 (内部名)。
@@ -52,6 +61,8 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   relatedAssets: 'RelatedAssets',
   identifyEvidence: 'IdentifyEvidence',
   reportUrl: 'ReportUrl',
+  responseStatus: 'ResponseStatus',
+  responseDueDate: 'DueDate',
 };
 
 /**
@@ -76,7 +87,7 @@ export function jstDateOnly(iso?: string): string {
 }
 
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
-export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
+export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen', 'responseDueDate'];
 
 /** 列の種類。sp/schema.ts の vulnResponseFieldSpecs() と一致させること
  *  (ズレは test/vulnResponseSync.test.ts で検査)。 */
@@ -87,6 +98,7 @@ export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note'
   businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text', extConnAppId: 'text',
   relatedAssets: 'note', identifyEvidence: 'note',
   reportUrl: 'url',
+  responseStatus: 'text', responseDueDate: 'date',
 };
 
 /**
@@ -167,6 +179,8 @@ export function toVulnResponseFields(
   issue: ManagedIssue,
   assetKeys: string[],
   assetsByKey: Map<string, ManagedAsset>,
+  /** true なら資産管理者の記入欄 (対応状況 / 対応期日) も Mikke の値で上書きする。 */
+  overwriteResponse = false,
 ): VulnResponseFields {
   const ips = assetKeys.filter(isIpKey);
   const fqdns = assetKeys.filter((k) => !isIpKey(k));
@@ -202,11 +216,16 @@ export function toVulnResponseFields(
     // ★ レポートは「情報更新」で取得したときに管理対象へ記録される。ここでは
     //   その URL をそのまま渡すだけ (未取得なら空 = 列も空になる)。
     reportUrl: text(issue.reportUrl),
+    // ★ 既定では入れない (undefined = body に載らない = 記入内容に触れない)。
+    ...(overwriteResponse ? {
+      responseStatus: text(issue.mgmtStatus),
+      responseDueDate: jstDateOnly(issue.dueDate),
+    } : {}),
   };
   // 単一行テキスト列は 255 文字・改行なしに収める (超えると SP が 500 を返す)。
   const out = { ...raw };
   for (const k of Object.keys(out) as (keyof VulnResponseFields)[]) {
-    if (VULNRESPONSE_KIND[k] === 'text') out[k] = fitSingleLine(out[k]);
+    if (VULNRESPONSE_KIND[k] === 'text') out[k] = fitSingleLine(out[k] ?? '');
   }
   return out;
 }
@@ -223,7 +242,7 @@ export function overlongTextFields(f: VulnResponseFields): { field: keyof VulnRe
 }
 
 /** 日付として比べる項目 (他は文字列として比べる)。 */
-const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen'];
+const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen', 'responseDueDate'];
 
 /**
  * 管理対象一覧と連携用リストを突合し、追加 / 更新 / 削除の計画を組み立てる。
@@ -239,6 +258,8 @@ export function buildVulnResponsePlan(
   assetKeysOf: (issue: ManagedIssue) => string[],
   existing: VulnResponseRow[],
   scope?: Set<string>,
+  /** true なら資産管理者の記入欄 (対応状況 / 対応期日) も上書きする。 */
+  overwriteResponse = false,
 ): VulnResponsePlan {
   if (scope) {
     issues = issues.filter((i) => scope.has(text(i.issueInstanceId)));
@@ -260,7 +281,7 @@ export function buildVulnResponsePlan(
       continue;
     }
 
-    const fields = toVulnResponseFields(issue, assetKeysOf(issue), assetsByKey);
+    const fields = toVulnResponseFields(issue, assetKeysOf(issue), assetsByKey, overwriteResponse);
     if (!row) { plan.creates.push(fields); continue; }
 
     const diff: Partial<VulnResponseFields> = {};

@@ -518,7 +518,10 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
       + '?$select=Id,Title,VulnTitle,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
       + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
-      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence,ReportUrl&$top=5000';
+      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence,ReportUrl,'
+      // 資産管理者の記入欄。上書きを選んだときに「変わった分だけ書く」ための比較に使う
+      // (毎回書くと相手の更新時刻が動いて「通知」列の判定が濁る)。
+      + 'ResponseStatus,DueDate&$top=5000';
     try {
       while (url) {
         const j: any = await this.spGet(url);
@@ -542,6 +545,8 @@ export class SpRepository implements Repository {
             identifyEvidence: r.IdentifyEvidence ?? '',
             // URL 列は {Url, Description} で返る。差分は Url だけで比べる。
             reportUrl: r.ReportUrl?.Url ?? '',
+            responseStatus: r.ResponseStatus ?? '',
+            responseDueDate: r.DueDate ?? '',
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;

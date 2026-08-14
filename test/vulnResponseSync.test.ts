@@ -389,3 +389,78 @@ describe('検知日は JST の暦日で登録する', () => {
     expect(VULNRESPONSE_VIEW_FIELDS).toContain('LastSeen');
   });
 });
+
+describe('資産管理者の記入欄を上書きするかの選択', () => {
+  const keysOf = (): string[] => ['web01.example.com'];
+  const row = (over: Partial<VulnResponseRow> = {}): VulnResponseRow => ({
+    id: 10, issueInstanceId: 'IID-1', title: 'TLS 1.0 が有効', legacyMgmtNumber: '',
+    detectionStatus: '継続', firstSeen: jstDateOnly('2026-05-01T00:00:00Z'),
+    lastSeen: jstDateOnly('2026-07-30T00:00:00Z'),
+    assetIp: '', assetFqdn: 'web01.example.com', assetType: 'FQDN',
+    businessCompany: 'エナジー事業', affiliateCompany: 'ABC株式会社', assetMgmtId: 'W-0001',
+    extConnAppId: '', relatedAssets: '', identifyEvidence: 'FQDN一致', reportUrl: '',
+    ...over,
+  } as VulnResponseRow);
+
+  it('★ 既定では対応状況・対応期日を body に載せない (相手の記入に触れない)', () => {
+    const f = toVulnResponseFields(issue({ mgmtStatus: '対応済み', dueDate: '2026-09-30T00:00:00Z' }),
+      keysOf(), ASSETS);
+    expect(f.responseStatus).toBeUndefined();
+    expect(f.responseDueDate).toBeUndefined();
+  });
+
+  it('★ 上書きを選ぶと Mikke の対応状況・期限が載る', () => {
+    const f = toVulnResponseFields(issue({ mgmtStatus: '対応済み', dueDate: '2026-09-30T00:00:00Z' }),
+      keysOf(), ASSETS, true);
+    expect(f.responseStatus).toBe('対応済み');
+    expect(f.responseDueDate).toBe('2026-09-30T00:00:00Z');   // JST の暦日
+  });
+
+  it('★ 上書きを選ばない限り、既存アイテムの対応状況は差分に出ない', () => {
+    // リスト側が「対応中」、Mikke 側が「対応済み」でも触らない。
+    const plan = buildVulnResponsePlan(
+      [issue({ mgmtStatus: '対応済み' })], ASSETS, keysOf,
+      [row({ responseStatus: '対応中' })]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('★ 上書きを選ぶと、違っている対応状況だけが差分に出る', () => {
+    const plan = buildVulnResponsePlan(
+      [issue({ mgmtStatus: '対応済み' })], ASSETS, keysOf,
+      [row({ responseStatus: '対応中' })], undefined, true);
+    expect(plan.updates).toHaveLength(1);
+    expect(plan.updates[0]!.fields.responseStatus).toBe('対応済み');
+  });
+
+  it('★ 同じ値なら上書きを選んでも書かない (相手の更新時刻を動かさない)', () => {
+    // 毎回書くと「通知」列の判定が濁る。
+    const plan = buildVulnResponsePlan(
+      [issue({ mgmtStatus: '対応中' })], ASSETS, keysOf,
+      [row({ responseStatus: '対応中' })], undefined, true);
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('新規追加でも上書きの指定が効く', () => {
+    const plan = buildVulnResponsePlan(
+      [issue({ mgmtStatus: 'リスク受容' })], ASSETS, keysOf, [], undefined, true);
+    expect(plan.creates[0]!.responseStatus).toBe('リスク受容');
+  });
+
+  it('選択分の反映 (scope) と併用できる', () => {
+    const plan = buildVulnResponsePlan(
+      [issue({ mgmtStatus: '対応済み' }), issue({ id: 2, issueInstanceId: 'IID-2' })],
+      ASSETS, keysOf, [row({ responseStatus: '対応中' })], new Set(['IID-1']), true);
+    expect(plan.updates.map((u) => u.issueInstanceId)).toEqual(['IID-1']);
+    expect(plan.creates).toEqual([]);      // 範囲外の IID-2 は追加もしない
+    expect(plan.deletes).toEqual([]);
+  });
+
+  it('対応者・対応経緯・備考には触れない (列そのものを持たない)', () => {
+    const cols = Object.values(VULNRESPONSE_COLUMN);
+    expect(cols).not.toContain('Responder');
+    expect(cols).not.toContain('ResponseNote');
+    expect(cols).not.toContain('Remarks');
+  });
+});
