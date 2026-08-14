@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeAsset, isIp, assetTypeOf, splitAssetCell, extractAssets, countIssuesByAsset,
-  joinFqdn, dataRowsOfDeptCsv, buildAssetDirectory, matchAssets,
+  joinFqdn, dataRowsOfDeptCsv, buildAssetDirectory, matchAssets, assetSourceColumns,
 } from '../src/lib/assets';
 import { parseCsv } from '../src/lib/csv';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
@@ -194,5 +194,18 @@ describe('matchAssets', () => {
     expect(byId[1]!.patch.mgmtNumber).toBe('W-0001');
     expect(byId[2]!.patch.mgmtNumber).toBe('W-0002');
     expect(byId[2]!.via).toBe('direct');
+  });
+});
+
+describe('移行データの資産列', () => {
+  it('★ 設定の資産列に無くても、移行が書く列は必ず見る', () => {
+    // 移行しかしていない環境では設定の列 (検査ツール CSV の列名) が 1 つも
+    // 一致せず、連携用リストの IP / FQDN が空のままになっていた。
+    expect(assetSourceColumns(['Asset'])).toEqual(['Asset', 'Asset IP', 'Asset Domain']);
+  });
+
+  it('重複は増やさない', () => {
+    expect(assetSourceColumns(['Asset Domain', 'Asset IP']))
+      .toEqual(['Asset Domain', 'Asset IP']);
   });
 });

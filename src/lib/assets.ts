@@ -10,6 +10,19 @@ import { resolveScanValue } from './scanName';
 /** 既定の資産列名 (脆弱性 CSV 内で FQDN/IP が入っている列)。 */
 export const DEFAULT_ASSET_COLUMN = 'Asset';
 
+/**
+ * Excel からの移行が資産を書き込む列。
+ * ★ 移行は IP/URL 列の値をここへ入れる (lib/migration.ts)。設定の資産列は
+ *   検査ツール CSV の列名なので、移行しかしていない環境では 1 つも一致せず、
+ *   **連携用リストの IP / FQDN が空のまま**になっていた。設定に関係なく必ず見る。
+ */
+export const MIGRATION_ASSET_COLUMNS = ['Asset IP', 'Asset Domain'];
+
+/** 設定の資産列 + 移行が書く列 (重複なし)。資産キーの取り出しはここを見る。 */
+export function assetSourceColumns(configured: string[]): string[] {
+  return [...new Set([...configured, ...MIGRATION_ASSET_COLUMNS])];
+}
+
 /** IPv4 か (簡易判定。各オクテット 0-255)。 */
 export function isIp(s: string): boolean {
   const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -43,7 +56,7 @@ export function splitAssetCell(cell: string): string[] {
 /** 1 脆弱性・指定列群から資産キー集合 (この脆弱性に紐づく資産) を取り出す。 */
 function assetKeysOfIssue(issue: ManagedIssue, columns: string[]): string[] {
   const set = new Set<string>();
-  for (const col of columns) {
+  for (const col of assetSourceColumns(columns)) {
     const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
     const cell = resolveScanValue(issue.scanFields, key, []) ?? '';
     for (const k of splitAssetCell(cell)) set.add(k);

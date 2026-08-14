@@ -8,7 +8,7 @@ import { getRepo, getRepoMode } from '../api/repo';
 import { isUndetected, nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { detectionBadge, mgmtBadge, notifyBadge } from './badges';
 import { resolveScanValue } from '../lib/scanName';
-import { splitAssetCell, DEFAULT_ASSET_COLUMN } from '../lib/assets';
+import { splitAssetCell, DEFAULT_ASSET_COLUMN, assetSourceColumns } from '../lib/assets';
 import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
@@ -415,7 +415,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       const assetsByKey = new Map(assets.map((a) => [a.assetKey, a]));
       const keysOf = (i: ManagedIssue): string[] => {
         const set = new Set<string>();
-        for (const col of assetColumns) {
+        // ★ 設定の資産列に加えて、移行が書く列 (Asset IP / Asset Domain) も必ず見る。
+        for (const col of assetSourceColumns(assetColumns)) {
           const key = col.startsWith('Scan_') ? col : `Scan_${col}`;
           for (const k of splitAssetCell(resolveScanValue(i.scanFields, key, csvHeaders) ?? '')) set.add(k);
         }

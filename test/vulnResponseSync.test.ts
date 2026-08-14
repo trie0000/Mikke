@@ -553,3 +553,39 @@ describe('事業会社記入欄の並び', () => {
     expect(RESPONSE_SECTION).toBe('事業会社記入欄');
   });
 });
+
+describe('移行データの値を連携用リストへ渡す', () => {
+  const keysOf = (): string[] => ['web01.example.com'];
+
+  it('★ WebMAPS管理ID は管理対象の値を優先する (資産リストからしか引いていなかった)', () => {
+    const f = toVulnResponseFields(issue({ webMapsId: 'A1234567 | BW7654321' }), keysOf(), ASSETS);
+    expect(f.assetMgmtId).toBe('A1234567 | BW7654321');
+  });
+
+  it('管理対象に無ければ資産リストから引く', () => {
+    expect(toVulnResponseFields(issue(), keysOf(), ASSETS).assetMgmtId).toBe('W-0001');
+  });
+
+  it('★ 事業会社特定の根拠も管理対象の値を優先する', () => {
+    const f = toVulnResponseFields(issue({ identifyEvidence: '移行データの根拠' }), keysOf(), ASSETS);
+    expect(f.identifyEvidence).toBe('移行データの根拠');
+  });
+
+  it('★ 改行を含む複数行はそのまま渡す (1 行に潰さない)', () => {
+    // Excel の「その他の参考情報」は複数行で書かれている。
+    // 単一行テキスト列なら 255 文字・改行なしに丸めるが、この列は Note。
+    const ev = '同一FQDNで名寄せ\nWebMAPS A1234567 と一致\n2024-06 の申請書に記載あり';
+    const f = toVulnResponseFields(issue({ identifyEvidence: ev }), keysOf(), ASSETS);
+    expect(f.identifyEvidence).toBe(ev);
+    expect(f.identifyEvidence.split('\n')).toHaveLength(3);
+    expect(VULNRESPONSE_KIND.identifyEvidence).toBe('note');
+  });
+
+  it('★ 255 文字を超えても切らない (Note なので制限が無い)', () => {
+    const long = 'あ'.repeat(400);
+    expect(toVulnResponseFields(issue({ identifyEvidence: long }), keysOf(), ASSETS).identifyEvidence)
+      .toHaveLength(400);
+    expect(overlongTextFields(toVulnResponseFields(issue({ identifyEvidence: long }), keysOf(), ASSETS)))
+      .toEqual([]);
+  });
+});

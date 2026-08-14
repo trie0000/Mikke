@@ -220,9 +220,13 @@ export function toVulnResponseFields(
     //   事業会社はアクセス権の割当キーなので、脆弱性ごとに直したいことがある。
     businessCompany: text(issue.businessCompany) || pick((a) => a.businessCompany),
     affiliateCompany: text(issue.affiliateCompany) || pick((a) => a.affiliateCompany),
-    assetMgmtId: pick((a) => a.mgmtNumber),
+    // ★ WebMAPS管理ID と 事業会社特定の根拠 も、管理対象に直接入れた値を優先する。
+    //   資産リストからしか引いていなかったため、Excel から移行した値
+    //   (WebMAPS登録情報 / その他の参考情報) が連携用リストに出なかった。
+    assetMgmtId: text(issue.webMapsId) || pick((a) => a.mgmtNumber),
     relatedAssets: related.join(' | '),
-    identifyEvidence: pick((a) => a.identifyEvidence),
+    // 改行を含む複数行がそのまま入る (この列は Note なので 1 行に潰さない)。
+    identifyEvidence: text(issue.identifyEvidence) || pick((a) => a.identifyEvidence),
     // ★ レポートは「情報更新」で取得したときに管理対象へ記録される。ここでは
     //   その URL をそのまま渡すだけ (未取得なら空 = 列も空になる)。
     reportUrl: text(issue.reportUrl),
