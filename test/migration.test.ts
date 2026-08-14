@@ -4,7 +4,8 @@ import {
   buildAliasIndex, resolveCompany, detectVulnType, normalizeVulnTypeRules,
   migrateRow, buildMigrationPlan, MIG_COL, isExcelError,
   normalizeAliasRemap, buildRemapIndex, applyAliasRemap, remapConflicts, OTHER_COMPANY,
-  resolveMigColumns,
+  resolveMigColumns, indexByIssueInstanceId, splitMigrationWrites,
+  type MigrationRowResult,
 } from '../src/lib/migration';
 import { normalizePerms, groupIdsFor } from '../src/lib/itemPerms';
 
@@ -549,5 +550,80 @@ describe('事業会社列に新旧の略称が混じっている場合', () => {
       PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ENG', from: ['ENG', 'ENERGY'] }]);
     expect(plan.rows[0]!.issue!.businessCompany).toBe('エナジー事業');
     expect(plan.remapped).toEqual([]);
+  });
+});
+
+describe('同じ Issue Instance ID を 2 回読んでも増やさない', () => {
+  const rowsOf = (...ids: string[]): MigrationRowResult[] =>
+    buildMigrationPlan(ids.map((id) => ({ [MIG_COL.issueInstanceId]: id })),
+      PERMS, {}, '2026-08-14T00:00:00Z').rows;
+
+  it('既存の管理対象を Issue Instance ID で引ける形にする', () => {
+    const idx = indexByIssueInstanceId([
+      { id: 5, issueInstanceId: 'IID-1' },
+      { id: 3, issueInstanceId: 'IID-1' },
+      { id: 9, issueInstanceId: 'IID-2' },
+      { id: 7, issueInstanceId: '' },        // ID 無しは入れない
+      { id: 8 },
+    ]);
+    expect(idx.get('IID-1')).toEqual([3, 5]);   // ID 昇順
+    expect(idx.get('IID-2')).toEqual([9]);
+    expect(idx.size).toBe(2);
+  });
+
+  it('★ 既にある ID は上書き、無い ID だけ追加する', () => {
+    const split = splitMigrationWrites(rowsOf('IID-1', 'IID-2', 'IID-3'),
+      indexByIssueInstanceId([{ id: 100, issueInstanceId: 'IID-2' }]));
+    expect(split.adds.map((r) => r.issue!.issueInstanceId)).toEqual(['IID-1', 'IID-3']);
+    expect(split.updates).toEqual([{ row: expect.anything(), id: 100 }]);
+    expect(split.updates[0]!.row.issue!.issueInstanceId).toBe('IID-2');
+  });
+
+  it('★ 同じファイルを 2 回読んでも増えない (全件が上書きになる)', () => {
+    const rows = rowsOf('IID-1', 'IID-2');
+    // 1 回目: 全部が新規
+    const first = splitMigrationWrites(rows, new Map());
+    expect(first.adds).toHaveLength(2);
+    expect(first.updates).toHaveLength(0);
+    // 1 回目の結果が管理対象に入った状態で、同じファイルをもう一度
+    const second = splitMigrationWrites(rows, indexByIssueInstanceId([
+      { id: 1, issueInstanceId: 'IID-1' }, { id: 2, issueInstanceId: 'IID-2' },
+    ]));
+    expect(second.adds).toHaveLength(0);
+    expect(second.updates.map((u) => u.id)).toEqual([1, 2]);
+  });
+
+  it('★ Excel の中で ID が重複していたら後の行を採用する (1 回の取込でも増やさない)', () => {
+    const rows = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.title]: '古い方' },
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.title]: '新しい方' },
+    ], PERMS, {}, '2026-08-14T00:00:00Z').rows;
+    const split = splitMigrationWrites(rows, new Map());
+    expect(split.adds).toHaveLength(1);
+    expect(split.adds[0]!.issue!.title).toBe('新しい方');
+    expect(split.dupInFile).toEqual([{ issueInstanceId: 'IID-1', count: 2 }]);
+  });
+
+  it('★ 管理対象に既に重複があるときは、いちばん古い 1 件だけ上書きして名指しする', () => {
+    const split = splitMigrationWrites(rowsOf('IID-1'),
+      indexByIssueInstanceId([
+        { id: 50, issueInstanceId: 'IID-1' }, { id: 12, issueInstanceId: 'IID-1' },
+      ]));
+    expect(split.updates.map((u) => u.id)).toEqual([12]);
+    expect(split.dupInList).toEqual([{ issueInstanceId: 'IID-1', count: 2 }]);
+  });
+
+  it('重複が無ければ dupInFile / dupInList は空', () => {
+    const split = splitMigrationWrites(rowsOf('IID-1', 'IID-2'), new Map());
+    expect(split.dupInFile).toEqual([]);
+    expect(split.dupInList).toEqual([]);
+  });
+
+  it('Issue ID が空で取り込めない行は振り分けに入らない', () => {
+    const rows = buildMigrationPlan([{ [MIG_COL.issueInstanceId]: '' }],
+      PERMS, {}, '2026-08-14T00:00:00Z').rows;
+    const split = splitMigrationWrites(rows, new Map());
+    expect(split.adds).toHaveLength(0);
+    expect(split.updates).toHaveLength(0);
   });
 });

@@ -383,6 +383,75 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
   };
 }
 
+// ── 書き込み先の振り分け ──────────────────────────────────────────────────
+// ★ 同じ Issue Instance ID を 2 回読んでも増えないようにする。既にある行は
+//   上書きし、無い行だけ追加する。
+
+/** 既存の管理対象を Issue Instance ID で引ける形にする (同じ ID が複数あれば ID 昇順)。 */
+export function indexByIssueInstanceId(
+  issues: { id: number; issueInstanceId?: string }[],
+): Map<string, number[]> {
+  const idx = new Map<string, number[]>();
+  for (const i of issues) {
+    const k = text(i.issueInstanceId);
+    if (!k) continue;
+    const hit = idx.get(k);
+    if (hit) hit.push(i.id); else idx.set(k, [i.id]);
+  }
+  for (const ids of idx.values()) ids.sort((a, b) => a - b);
+  return idx;
+}
+
+export interface MigrationWriteSplit {
+  /** 新規に追加する行。 */
+  adds: MigrationRowResult[];
+  /** 既存を上書きする行 (上書き先のアイテム ID 付き)。 */
+  updates: { row: MigrationRowResult; id: number }[];
+  /** Excel の中で Issue Instance ID が重複していた分 (後の行を採用した)。 */
+  dupInFile: { issueInstanceId: string; count: number }[];
+  /** 管理対象に同じ Issue Instance ID が複数ある分 (いちばん小さい ID を上書きする)。 */
+  dupInList: { issueInstanceId: string; count: number }[];
+}
+
+/**
+ * 取り込む行を「追加」と「上書き」に振り分ける。
+ * ★ Excel の中で同じ Issue Instance ID が複数あったら **後の行を採用** する
+ *   (1 回の取り込みで同じ ID を 2 行書くと、それ自体が二重登録になる)。
+ */
+export function splitMigrationWrites(
+  rows: MigrationRowResult[],
+  existing: Map<string, number[]>,
+): MigrationWriteSplit {
+  // ファイル内の重複を後勝ちでまとめる。
+  const byId = new Map<string, MigrationRowResult>();
+  const seen = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.issue) continue;
+    const k = r.issue.issueInstanceId;
+    byId.set(k, r);
+    seen.set(k, (seen.get(k) ?? 0) + 1);
+  }
+  const adds: MigrationRowResult[] = [];
+  const updates: { row: MigrationRowResult; id: number }[] = [];
+  const dupInList: { issueInstanceId: string; count: number }[] = [];
+  for (const [k, r] of byId) {
+    const ids = existing.get(k);
+    if (ids?.length) {
+      updates.push({ row: r, id: ids[0]! });
+      if (ids.length > 1) dupInList.push({ issueInstanceId: k, count: ids.length });
+    } else {
+      adds.push(r);
+    }
+  }
+  return {
+    adds,
+    updates,
+    dupInFile: [...seen.entries()].filter(([, n]) => n > 1)
+      .map(([issueInstanceId, count]) => ({ issueInstanceId, count })),
+    dupInList,
+  };
+}
+
 export interface MigrationPlan {
   rows: MigrationRowResult[];
   /** 取り込める件数。 */

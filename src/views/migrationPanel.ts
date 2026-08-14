@@ -11,7 +11,8 @@ import { toast } from '../components/toast';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import {
   buildMigrationPlan, normalizeAliasRemap, remapConflicts, OTHER_COMPANY,
-  type AliasRemapRow, type MigrationPlan,
+  indexByIssueInstanceId, splitMigrationWrites,
+  type AliasRemapRow, type MigrationPlan, type MigrationWriteSplit,
 } from '../lib/migration';
 import { normalizePerms, registeredCompanies, aliasesFor, parseAliases } from '../lib/itemPerms';
 import type { MikkeSettings } from '../types';
@@ -27,6 +28,10 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
   let fileName = '';
   /** 読み込んだシート。読み替え表を直したら、選び直さずに作り直せるようにしておく。 */
   let sheet: { headers: string[]; rows: Record<string, string>[] } | null = null;
+  /** 既にある Issue Instance ID → アイテム ID。ファイルを読むたびに取り直す。 */
+  let existingIdx = new Map<string, number[]>();
+  /** 追加と上書きの振り分け。 */
+  let split: MigrationWriteSplit | null = null;
 
   const result = el('div', { style: 'margin-top:var(--s-4)' });
   const runBtn = el('button', {
@@ -115,6 +120,7 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     if (!sheet) return;
     plan = buildMigrationPlan(sheet.rows, settings.vulnResponsePerms, settings.vulnTypeRules,
       new Date().toISOString(), collectRemap(), sheet.headers);
+    split = splitMigrationWrites(plan.rows, existingIdx);
     paintPreview();
     if (plan.ready) runBtn.removeAttribute('disabled');
     else runBtn.setAttribute('disabled', '');
@@ -140,6 +146,9 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
         ]));
         return;
       }
+      // 既にある Issue Instance ID を引けるようにしてから振り分ける
+      // (同じ ID を 2 回読んでも増やさず、上書きにするため)。
+      existingIdx = indexByIssueInstanceId(await getRepo().listIssues());
       sheet = parsed;
       rebuildPlan();
     } catch (e) {
@@ -155,9 +164,26 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     const missing = plan.missingColumns;
     result.append(
       el('div', { class: 'mikke-note' }, [
-        `${fileName} / シート「${SHEET_NAME}」: 取り込める ${plan.ready} 件`
+        `${fileName} / シート「${SHEET_NAME}」: `
+        + (split
+          ? `新規 ${split.adds.length} 件 / 既存を上書き ${split.updates.length} 件`
+          : `取り込める ${plan.ready} 件`)
         + (plan.skipped ? ` / Issue ID が空で取り込めない ${plan.skipped} 件` : ''),
       ]),
+      ...(split?.dupInFile.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
+        `Excel の中で Issue Instance ID が重複しています (${split.dupInFile.length} 件): `
+        + `${split.dupInFile.slice(0, 10).map((d) => `${d.issueInstanceId} × ${d.count}`).join(' / ')}`
+        + (split.dupInFile.length > 10 ? ' …' : ''),
+        el('br'),
+        '重複した ID は、シートで後ろにある行の内容で登録します。',
+      ])] : []),
+      ...(split?.dupInList.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
+        `管理対象に同じ Issue Instance ID が複数あります (${split.dupInList.length} 件): `
+        + `${split.dupInList.slice(0, 10).map((d) => `${d.issueInstanceId} × ${d.count}`).join(' / ')}`
+        + (split.dupInList.length > 10 ? ' …' : ''),
+        el('br'),
+        'いちばん古い 1 件だけを上書きします。残りは古い内容のまま残るので、管理対象一覧で消してください。',
+      ])] : []),
       ...(missing.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
         `見つからない列があります (この項目は空になります): ${missing.join(' / ')}`,
       ])] : []),
@@ -202,34 +228,46 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
   }
 
   runBtn.addEventListener('click', () => void (async () => {
-    if (!plan) return;
+    if (!plan || !split) return;
     runBtn.setAttribute('disabled', '');
     const line = el('div', { class: 'mikke-note' }, ['登録しています…']);
     clear(result); result.appendChild(line);
-    let ok = 0; let fail = 0; let firstErr = '';
-    const targets = plan.rows.filter((r) => r.issue);
-    for (const [i, r] of targets.entries()) {
+    let added = 0; let updated = 0; let fail = 0; let firstErr = '';
+    // 既にある Issue Instance ID は上書き、無いものだけ追加する。
+    const targets = [
+      ...split.updates.map((u) => ({ row: u.row, id: u.id as number | null })),
+      ...split.adds.map((row) => ({ row, id: null as number | null })),
+    ];
+    for (const [i, t] of targets.entries()) {
       line.textContent = `登録しています… (${i + 1}/${targets.length})`;
       try {
         // 担当者はメールアドレスから引く。引けなければ氏名列をそのまま入れる。
-        let assignee = r.assigneeFallback;
-        if (r.assigneeEmail) {
-          const found = await getRepo().resolveUserByEmail(r.assigneeEmail).catch(() => null);
+        let assignee = t.row.assigneeFallback;
+        if (t.row.assigneeEmail) {
+          const found = await getRepo().resolveUserByEmail(t.row.assigneeEmail).catch(() => null);
           if (found?.displayName) assignee = found.displayName;
         }
-        await getRepo().createIssue({ ...r.issue!, assignee });
-        ok++;
+        if (t.id === null) {
+          await getRepo().createIssue({ ...t.row.issue!, assignee });
+          added++;
+        } else {
+          await getRepo().updateIssue(t.id, { ...t.row.issue!, assignee });
+          updated++;
+        }
       } catch (e) {
         fail++;
-        if (!firstErr) firstErr = `${r.issue!.issueInstanceId}: ${(e as Error).message}`;
+        if (!firstErr) firstErr = `${t.row.issue!.issueInstanceId}: ${(e as Error).message}`;
       }
     }
     clear(result);
     result.appendChild(el('div', { class: fail ? 'mikke-error' : 'mikke-note' }, [
-      `登録しました: ${ok} 件${fail ? ` / 失敗 ${fail} 件 — ${firstErr}` : ''}`,
+      `登録しました: 新規 ${added} 件 / 上書き ${updated} 件`
+      + (fail ? ` / 失敗 ${fail} 件 — ${firstErr}` : ''),
     ]));
-    toast(root, `移行データを登録しました (${ok} 件)`, fail ? 'warn' : 'ok');
+    toast(root, `移行データを登録しました (新規 ${added} / 上書き ${updated})`, fail ? 'warn' : 'ok');
     plan = null;
+    split = null;
+    sheet = null;
     file.value = '';
   })());
 
@@ -246,7 +284,7 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
       el('li', {}, ['読み込んだ内容を確認してから登録します。読み込むだけでは何も書き込みません。']),
       el('li', {}, ['Issue ID が空の行は取り込みません。']),
-      el('li', {}, ['既にある Issue Instance ID でも新規として追加します (取込のような突合はしません)。']),
+      el('li', {}, ['既にある Issue Instance ID は上書きします (二重に増えません)。']),
       el('li', {}, ['脆弱性タイプは Title から自動判定します (判定条件は「脆弱性タイプの判定」で設定)。']),
       el('li', {}, ['組織再編前の古い略称は、下の「旧略称の読み替え」で現在の略称に寄せてから判定します。']),
       el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
