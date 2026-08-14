@@ -58,7 +58,7 @@ export const MIG_COL = {
  */
 const PARTIAL_MATCH: Record<string, string> = {
   [MIG_COL.extConnAppId]: '申請状況を選択ください',
-  [MIG_COL.responsePlan]: '目処に早めにご計画',
+  [MIG_COL.responsePlan]: '早めにご計画ください',
 };
 
 /** MIG_COL の列名 → シートにある実際の見出し。 */
