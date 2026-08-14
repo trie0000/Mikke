@@ -104,6 +104,14 @@ export class MockRepository implements Repository {
     save(LS_ISSUES, this.issues);
   }
 
+  async deleteAllIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
+    const n = this.issues.length;
+    this.issues = [];
+    save(LS_ISSUES, this.issues);
+    onProgress?.(n, n);
+    return { ok: n, fail: 0 };
+  }
+
   async deleteIssue(id: number): Promise<void> {
     const idx = this.issues.findIndex((i) => i.id === id);
     if (idx >= 0) { this.issues.splice(idx, 1); save(LS_ISSUES, this.issues); }

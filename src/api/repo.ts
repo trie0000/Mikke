@@ -17,6 +17,8 @@ export interface Repository {
   createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number>;
   /** 完全削除 (リストから行を消す。元に戻せない)。 */
   deleteIssue(id: number): Promise<void>;
+  /** 管理対象を全件削除する (リセット)。元に戻せない。 */
+  deleteAllIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
   /** 設定の取得 / 保存。 */
   getSettings(): Promise<MikkeSettings>;
   saveSettings(s: MikkeSettings): Promise<void>;

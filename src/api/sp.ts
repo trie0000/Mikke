@@ -881,6 +881,23 @@ export class SpRepository implements Repository {
     );
   }
 
+  /** 管理対象を全件削除する ($batch で 100 件ずつ)。元に戻せない。 */
+  async deleteAllIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
+    const ids: number[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items?$select=Id&$top=5000`;
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const r of j.d.results as { Id: number }[]) ids.push(r.Id);
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    if (!ids.length) return { ok: 0, fail: 0 };
+    // ★ 大きい ID から消す。SP はアイテム削除で ID を詰めないので順序は本質ではないが、
+    //   途中で止まったときに「どこまで消えたか」が分かりやすい。
+    ids.sort((a, b) => b - a);
+    return this.batchWrite(ids.map((id) => ({ kind: 'delete' as const, id, row: {} })), onProgress);
+  }
+
   async deleteIssue(id: number): Promise<void> {
     await this.spPost(
       `/_api/web/lists/getbytitle('${LIST_MANAGED}')/items(${id})`,
@@ -912,7 +929,7 @@ export class SpRepository implements Repository {
    *   SP が途中で切って HTTP 400 になる。TextEncoder().encode(body).length を使う。
    */
   async batchWrite(
-    ops: { kind: 'add' | 'update'; id?: number; row: Record<string, unknown> }[],
+    ops: { kind: 'add' | 'update' | 'delete'; id?: number; row: Record<string, unknown> }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }> {
     const BATCH_CHUNK = 100;
@@ -929,12 +946,19 @@ export class SpRepository implements Repository {
       const cg = `changeset_${i}_${chunk.length}`;
       let cs = '';
       for (const op of chunk) {
-        const target = op.kind === 'update' && op.id != null ? `${listUrl}(${op.id})` : listUrl;
-        const method = op.kind === 'update' ? 'MERGE' : 'POST';
+        const hasId = op.id != null && (op.kind === 'update' || op.kind === 'delete');
+        const target = hasId ? `${listUrl}(${op.id})` : listUrl;
+        const method = op.kind === 'update' ? 'MERGE' : (op.kind === 'delete' ? 'DELETE' : 'POST');
+        cs += `--${cg}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\n`;
+        cs += `${method} ${target} HTTP/1.1\r\nAccept: ${V}\r\n`;
+        if (op.kind === 'delete') {
+          // ★ DELETE は body を付けない。Content-Type / Content-Length を書くと SP が 400 を返す。
+          cs += 'IF-MATCH: *\r\n\r\n';
+          continue;
+        }
         const body = JSON.stringify({ __metadata: { type: etype }, ...op.row });
         const blen = enc.encode(body).length; // ★ UTF-8 バイト長
-        cs += `--${cg}\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\n`;
-        cs += `${method} ${target} HTTP/1.1\r\nAccept: ${V}\r\nContent-Type: ${V}\r\n`;
+        cs += `Content-Type: ${V}\r\n`;
         if (op.kind === 'update') cs += 'IF-MATCH: *\r\n';
         cs += `Content-Length: ${blen}\r\n\r\n${body}\r\n`;
       }

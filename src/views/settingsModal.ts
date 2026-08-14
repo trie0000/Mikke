@@ -6,6 +6,7 @@ import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { renderMigrationPanel } from './migrationPanel';
 import { renderEnvTransferPanel } from './envTransferPanel';
+import { renderResetPanel } from './resetPanel';
 import { normalizeVulnTypeRules } from '../lib/migration';
 import { opsForType, opLabel, opNeedsValue2 } from '../lib/conditions';
 import { parseCsv } from '../lib/csv';
@@ -168,7 +169,9 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
         { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
         { title: '情報', items: [{ key: 'releaseNotes', label: '更新履歴', render: () => renderReleaseNotesPanel() }] },
         { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel(root) }] },
-
+        { title: '危険', items: [
+          { key: 'reset', label: '管理対象一覧のリセット', danger: true, render: () => renderResetPanel(root) },
+        ] },
       ],
     },
   ];
