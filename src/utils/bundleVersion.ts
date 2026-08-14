@@ -89,7 +89,7 @@ export async function fetchLatestBuildId(): Promise<string | null> {
  *   ホストページだけが読み直されて Mikke は消え、CDP ワンクリック起動では
  *   戻す手段が無かった (= 「更新したら画面が出ない」)。ローダと同じく
  *   バンドルを取り直して eval すれば、ページはそのままで新版に入れ替わる。
- *   main.ts は起動時に既存の #mikke-root を消すので、二重表示にはならない。
+ *   main.ts は起動時に既存の #mikke-host を消すので、二重表示にはならない。
  */
 export async function reloadBundleInPlace(): Promise<void> {
   const base = resolveBundleBase();

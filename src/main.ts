@@ -44,20 +44,47 @@ function showInvalidContextWarning(): void {
   document.body.appendChild(backdrop);
 }
 
+/** オーバーレイの容れ物 (Shadow DOM のホスト)。 */
+const HOST_ID = 'mikke-host';
+
+/**
+ * オーバーレイを差し込む場所を用意する。
+ *
+ * ★ Shadow DOM に入れる。ホストページ (SharePoint) の CSS は shadow 境界を越えない。
+ *   クラシックページの corev15.css は `button { background: … !important }` のような
+ *   素の要素セレクタを持っており、`#mikke-root` 配下でも **!important には勝てない**
+ *   (実測: ボタンの背景・枠・フォント、リンク色、th の余白と揃えが化けた)。
+ *   shadow に入れればセレクタ自体が届かないので、この種の崩れが原理的に起きない。
+ * ★ ホスト要素には `all: initial !important` を当てる。継承する性質 (font / color /
+ *   text-align / user-select 等) だけは shadow の中にも入ってくるため、ここで断つ。
+ * ★ attachShadow が使えない環境では今までどおり (機能は動く。見た目だけ host の
+ *   影響を受け得る)。
+ */
+function createMountPoint(): { host: HTMLElement; mount: ParentNode } {
+  document.getElementById(HOST_ID)?.remove();
+  document.getElementById('mikke-root')?.remove();   // 旧版 (shadow 無し) の残骸
+  document.getElementById('mikke-style')?.remove();
+
+  const host = document.createElement('div');
+  host.id = HOST_ID;
+  host.style.cssText = 'all: initial !important';
+  document.body.appendChild(host);
+
+  let mount: ParentNode = host;
+  try { mount = host.attachShadow({ mode: 'open' }); }
+  catch { /* 使えない環境は host 直下に置く (従来動作) */ }
+
+  const style = document.createElement('style');
+  style.id = 'mikke-style';
+  style.textContent = css;
+  mount.appendChild(style);
+  return { host, mount };
+}
+
 export async function mount(): Promise<void> {
-  // CSS 注入 (一度だけ)
-  if (!document.getElementById('mikke-style')) {
-    const style = document.createElement('style');
-    style.id = 'mikke-style';
-    style.textContent = css;
-    document.head.appendChild(style);
-  }
-
-  // 既存 overlay を除去 (二重起動防止)
-  document.getElementById('mikke-root')?.remove();
-
+  const { mount: at } = createMountPoint();
   const root = renderShell();
-  document.body.appendChild(root);
+  at.appendChild(root);
 
   // bootstrap (非同期)
   try {
