@@ -56,23 +56,27 @@ describe('対応状況の対応付け', () => {
 
 describe('WebMAPS 管理ID の抽出', () => {
   it('A/B + 数字6桁 (合計7文字) を説明文の中からでも拾う', () => {
-    expect(extractWebMapsIds('登録済み A123456 (2024年申請)')).toBe('A123456');
-    expect(extractWebMapsIds('B999888')).toBe('B999888');
+    expect(extractWebMapsIds('登録済み A1234567 (2024年申請)')).toBe('A1234567');
+    expect(extractWebMapsIds('BW9998887')).toBe('BW9998887');
   });
 
   it('複数あればすべて並べる (重複は除く)', () => {
-    expect(extractWebMapsIds('A123456 と B999888、再掲 A123456')).toBe('A123456 | B999888');
+    expect(extractWebMapsIds('A1234567 と BW9998887、再掲 A1234567')).toBe('A1234567 | BW9998887');
   });
 
-  it('桁数や接頭辞が違うものは拾わない', () => {
-    expect(extractWebMapsIds('C123456')).toBe('');
-    expect(extractWebMapsIds('A12345')).toBe('');
-    expect(extractWebMapsIds('A1234567')).toBe('');
+  it('★ 桁数や接頭辞が違うものは拾わない (半端に切り取ると別の ID になる)', () => {
+    expect(extractWebMapsIds('C1234567')).toBe('');     // 接頭辞違い
+    expect(extractWebMapsIds('B1234567')).toBe('');     // B 単独は対象外 (BW のみ)
+    expect(extractWebMapsIds('A123456')).toBe('');      // 6 桁
+    expect(extractWebMapsIds('A12345678')).toBe('');    // 8 桁
+    expect(extractWebMapsIds('BW123456')).toBe('');     // 6 桁
+    expect(extractWebMapsIds('BW12345678')).toBe('');   // 8 桁
     expect(extractWebMapsIds('未登録')).toBe('');
   });
 
   it('小文字でも拾う', () => {
-    expect(extractWebMapsIds('a123456')).toBe('A123456');
+    expect(extractWebMapsIds('a1234567')).toBe('A1234567');
+    expect(extractWebMapsIds('bw9998887')).toBe('BW9998887');
   });
 });
 
@@ -142,7 +146,7 @@ describe('1 行の移行', () => {
     [MIG_COL.detection]: '継続 / Continiously detected',
     [MIG_COL.businessCompany]: 'ENG',
     [MIG_COL.affiliateCompany]: 'ABC株式会社',
-    [MIG_COL.webMaps]: '登録済み A123456',
+    [MIG_COL.webMaps]: '登録済み A1234567',
     [MIG_COL.identifyEvidence]: 'FQDN 一致',
     [MIG_COL.ipOrUrl]: '203.0.113.10',
     [MIG_COL.dynamicIp]: 'Yes',
@@ -168,7 +172,7 @@ describe('1 行の移行', () => {
     expect(i.mgmtStatus).toBe('対応中');
     expect(i.businessCompany).toBe('エナジー事業');     // 略称から解決
     expect(i.affiliateCompany).toBe('ABC株式会社');
-    expect(i.webMapsId).toBe('A123456');
+    expect(i.webMapsId).toBe('A1234567');
     expect(i.identifyEvidence).toBe('FQDN 一致');
     expect(i.extConnAppId).toBe('EXT-2026-045');
     expect(i.noAppReason).toBe('社内閉域のため');

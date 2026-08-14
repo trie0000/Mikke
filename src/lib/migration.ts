@@ -126,11 +126,15 @@ export function toMgmtStatus(raw: string): MgmtStatus {
 // ── WebMAPS 管理ID ──────────────────────────────────────────────────────────
 /**
  * WebMAPS 登録情報から管理ID を抜き出す。
- * ★ A または B で始まり数字 6 桁が続く、合計 7 文字。周りに説明文が付いていても拾う。
+ *
+ * ★ 形式は 2 つ。周りに説明文が付いていても拾う。
+ *     A  + 数字 7 桁 (例 A1234567)
+ *     BW + 数字 7 桁 (例 BW1234567)
+ * ★ 桁数が多い/少ないものは拾わない (半端に切り取ると別の ID になる)。
  *   複数書かれている場合はすべて (重複は除く) を並べる。
  */
 export function extractWebMapsIds(raw: string): string {
-  const found = text(raw).toUpperCase().match(/\b[AB]\d{6}\b/g) ?? [];
+  const found = text(raw).toUpperCase().match(/\b(?:BW|A)\d{7}\b/g) ?? [];
   return [...new Set(found)].join(' | ');
 }
 
