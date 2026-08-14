@@ -3,14 +3,15 @@
 // ★ 元に戻せない操作なので、この画面は「消す前に見せる」ことに寄せている。
 //   1. いま何件あるかを出す
 //   2. 何を消すかを選ばせる (連携用リスト / 履歴は任意)
-//   3. 確認語をキーボードで打たせる (誤クリックで消えないように)
+//   3. チェックを入れさせてから実行する (誤クリックで消えないように)
 import { el, clear } from '../utils/dom';
 import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
 import { openModal } from '../components/modal';
+import { mapLimit } from '../lib/downloadFlow';
 
-/** 実行前に打ってもらう語。押し間違いでは通らない長さにする。 */
-const CONFIRM_WORD = 'リセット';
+/** 連携用リストの削除の並列数。多くすると SP が 429 を返しやすくなる。 */
+const DELETE_PARALLEL = 4;
 
 export interface ResetPanelParts { body: HTMLElement }
 
@@ -60,9 +61,10 @@ export function renderResetPanel(root: HTMLElement): ResetPanelParts {
       toast(root, '消すものがありません。', 'warn');
       return;
     }
-    const input = el('input', {
-      type: 'text', class: 'mikke-input', style: 'width:100%', placeholder: CONFIRM_WORD, spellcheck: 'false',
-    }) as HTMLInputElement;
+    // ★ 確認は「打たせる」ではなく「チェックさせる」。
+    //   打たせる方式は、環境によって入力欄で編集キーが効かないことがあり
+    //   (実際に BackSpace が効かないと報告された)、打ち直せず先へ進めなくなる。
+    const agree = el('input', { type: 'checkbox' }) as HTMLInputElement;
     const targets = [
       `管理対象一覧 ${issues} 件`,
       ...(withVulnResponse.checked ? [`連携用リスト ${linked} 件`] : []),
@@ -78,18 +80,21 @@ export function renderResetPanel(root: HTMLElement): ResetPanelParts {
           el('b', {}, ['元に戻せません。']),
           ' 設定 (管理項目・管理対象条件・アクセス権) は消えません。',
         ]),
-        el('div', { class: 'mikke-field' }, [
-          el('label', { class: 'mikke-field-label' }, [`確認のため「${CONFIRM_WORD}」と入力してください`]),
-          input,
-        ]),
+        el('label', {
+          style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
+            + 'padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
+        }, [agree, el('span', {}, ['上記を削除することを確認しました'])]),
       ]),
       primaryLabel: '削除する',
-      onPrimary: async () => {
-        if (input.value.trim() !== CONFIRM_WORD) {
-          toast(root, `「${CONFIRM_WORD}」と入力してください`, 'warn');
+      onPrimary: () => {
+        if (!agree.checked) {
+          toast(root, '「上記を削除することを確認しました」にチェックを入れてください', 'warn');
           throw new Error('confirm required');
         }
-        await run();
+        // ★ ここで await しない。削除は数分かかることがあり、モーダルを
+        //   開いたまま待たせると画面が固まったように見える (実際に報告された)。
+        //   モーダルは即座に閉じ、進捗はパネル側に出す。
+        void run();
       },
     });
   })());
@@ -110,22 +115,24 @@ export function renderResetPanel(root: HTMLElement): ResetPanelParts {
       if (withVulnResponse.checked) {
         const rows = await getRepo().listVulnResponseRows().catch(() => []);
         let n = 0;
-        for (const r of rows) {
+        let ng = 0;
+        await mapLimit(rows, DELETE_PARALLEL, async (r) => {
+          try { await getRepo().deleteVulnResponseItem(r.id); }
+          catch { ng++; failed.push(`連携用リスト #${r.id}`); }
           line.textContent = `連携用リストを削除しています… (${++n}/${rows.length})`;
-          try { await getRepo().deleteVulnResponseItem(r.id); } catch { failed.push(`連携用リスト #${r.id}`); }
-        }
-        done.push(`連携用リスト ${rows.length - failed.length} 件`);
+        });
+        done.push(`連携用リスト ${rows.length - ng} 件`);
       }
 
       if (iids.length) {
         let n = 0;
-        for (const iid of iids) {
-          line.textContent = `履歴を削除しています… (${++n}/${iids.length})`;
+        await mapLimit(iids, DELETE_PARALLEL, async (iid) => {
           try {
             for (const h of await getRepo().listHistory(iid)) await getRepo().deleteHistory(h.id);
             await getRepo().clearChangeLog(iid);
           } catch { failed.push(`履歴 ${iid}`); }
-        }
+          line.textContent = `履歴を削除しています… (${++n}/${iids.length})`;
+        });
         done.push(`履歴 ${iids.length} 件分`);
       }
 

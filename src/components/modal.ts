@@ -139,7 +139,11 @@ export function openModal(root: HTMLElement, opts: ModalOptions): ModalHandle {
       }
       const first = focusables[0]!;
       const last = focusables[focusables.length - 1]!;
-      const active = document.activeElement as HTMLElement | null;
+      // ★ Shadow DOM の中では document.activeElement は **ホスト要素** を返す。
+      //   そのまま使うと modal.contains(active) が常に false になり、
+      //   Shift+Tab のたびに焦点が飛ぶ。所属するツリーの activeElement を見る。
+      const rootNode = modal.getRootNode() as Document | ShadowRoot;
+      const active = (rootNode.activeElement ?? document.activeElement) as HTMLElement | null;
       if (e.shiftKey) {
         if (active === first || !modal.contains(active)) {
           e.preventDefault();
