@@ -181,37 +181,54 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   }
 
   // ── 一括更新: 検査ツールから全レポートを取得し、脆弱性レポートで反映 ──────────
-  function bulkUpdate(mode: ImportMode): void {
+  /**
+   * 情報更新のモーダル。
+   * @param mode fixed=固定 / add=追加
+   * @param onlySelected true なら選択中の脆弱性だけを対象にする (検査ツールへの
+   *   問い合わせを 1 件ずつ行う。全件はレポート一括ダウンロードから取り込む)。
+   */
+  function bulkUpdate(mode: ImportMode, onlySelected = false): void {
     if (bulkBusy) return;
+    if (onlySelected && !selected.size) { toast(rootEl, '脆弱性が選択されていません。', 'warn'); return; }
     const label = mode === 'fixed' ? '固定モード' : '追加モード';
     const desc = mode === 'fixed'
       ? '新規の脆弱性は追加しません。既存の検知中のステータスは据え置き、今回のデータで消えた検知系のみ「未検出(New)」に変更します。ステータス以外の項目は取得データで更新します。'
       : '新たに条件一致した脆弱性を追加し、既存のステータスも標準ルール（継続/再検知/未検出化）で更新します。';
     // 個別レポートの取得可否 (既定 ON)。件数が多いと時間がかかるので外せるようにする。
     const reportCheck = el('input', { type: 'checkbox', checked: 'checked' }) as HTMLInputElement;
+    // ★ レポートの zip 取得はここで選ぶ (専用ボタンは置かない)。
+    //   保存済みのレポートをまとめるだけで、検査ツールへは問い合わせない。
+    const zipCheck = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    const opt = (cb: HTMLInputElement, title: string, desc2: string): HTMLElement =>
+      el('label', {
+        style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
+          + 'padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2);margin-bottom:var(--s-2)',
+      }, [
+        cb,
+        el('span', {}, [
+          el('div', {}, [title]),
+          el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [desc2]),
+        ]),
+      ]);
     openModal(rootEl, {
-      title: `一括更新（${label}）`,
+      title: `情報更新（${onlySelected ? `選択 ${selected.size} 件` : '全件'}・${label}）`,
       body: el('div', { style: 'line-height:1.8' }, [
-        el('p', { style: 'margin:0 0 var(--s-3)' }, [
-          '検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得して「ダウンロードデータ」に保存し、',
-          'それらを突合した ', el('b', {}, ['マージ CSV']), ' を生成して取り込みます。',
-        ]),
+        el('p', { style: 'margin:0 0 var(--s-3)' }, onlySelected
+          ? ['選択中の脆弱性を ', el('b', {}, ['1 件ずつ検査ツールに問い合わせて']), ' 最新の内容に更新します。']
+          : ['検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得して「ダウンロードデータ」に保存し、',
+            'それらを突合した ', el('b', {}, ['マージ CSV']), ' を生成して取り込みます。']),
         el('p', { style: 'margin:0 0 var(--s-4);color:var(--ink-2)' }, [desc]),
-        el('label', {
-          style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
-            + 'padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
-        }, [
-          reportCheck,
-          el('span', {}, [
-            el('div', {}, ['取り込んだ脆弱性の個別レポートも新しく取得する']),
-            el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [
-              `1 件ずつ検査ツールから取得し (${REFRESH_PARALLEL} 件並列)、SharePoint に保存して連携用リストへ添付します。件数が多いと時間がかかります。`,
-            ]),
-          ]),
-        ]),
+        opt(reportCheck, '個別レポートも新しく取得する',
+          `1 件ずつ検査ツールから取得し (${REFRESH_PARALLEL} 件並列)、SharePoint に保存して連携リストへ添付します。件数が多いと時間がかかります。`),
+        opt(zipCheck, '保存済みレポートを zip でダウンロードする',
+          '検査ツールへは問い合わせません。すでに保存されているレポートを 1 つの zip にまとめて手元に落とします。'),
       ]),
       primaryLabel: '取得して更新',
-      onPrimary: async () => { await runBulkUpdate(mode, reportCheck.checked); },
+      onPrimary: async () => {
+        if (onlySelected) await bulkRefresh(mode, reportCheck.checked);
+        else await runBulkUpdate(mode, reportCheck.checked);
+        if (zipCheck.checked) await downloadSelectedReports(onlySelected);
+      },
     });
   }
 
@@ -278,18 +295,27 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
    * ★ 差分があるものだけ書き込み、更新履歴にも残す。
    * @param silent 自動実行。取り込む差分が無ければ何も表示しない。
    */
-  async function syncFromVulnResponse(silent: boolean): Promise<void> {
+  async function syncFromVulnResponse(silent: boolean, onlySelected = false): Promise<void> {
     if (bulkBusy) return;
+    // 選択分だけを取り込むときは、選択した Issue Instance ID に絞る。
+    const scope = onlySelected
+      ? new Set(cache.filter((i) => selected.has(i.id))
+        .map((i) => (i.issueInstanceId ?? '').trim()).filter(Boolean))
+      : null;
+    if (scope && !scope.size) { toast(rootEl, '脆弱性が選択されていません。', 'warn'); return; }
     bulkBusy = true;
     try {
-      const responses = await getRepo().listVulnResponses();
+      const all = await getRepo().listVulnResponses();
+      const responses = scope ? all.filter((r) => scope.has((r.issueInstanceId ?? '').trim())) : all;
       if (!responses.length) {
         if (!silent) {
           toast(rootEl, '連携用リストにアイテムがありません（まだ渡していない、またはリスト未作成）。', 'warn', 8000);
         }
         return;
       }
-      const plan = buildResponseSyncPlan(cache, responses, new Date().toISOString());
+      const plan = buildResponseSyncPlan(
+        scope ? cache.filter((i) => scope.has((i.issueInstanceId ?? '').trim())) : cache,
+        responses, new Date().toISOString());
       if (!plan.patches.length) {
         if (!silent) {
           toast(rootEl, `連携内容の取り込み: 変更はありません（照合 ${plan.unchanged} 件 / 連携用リストに無し ${plan.notLinked} 件）。`, 'ok', 6000);
@@ -699,34 +725,27 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       subbar.appendChild(el('span', { class: 'mikke-subbar-count' }, [`${lastFiltered.length} / ${cache.length} 件`]));
       return;
     }
-    const refreshBtn = el('button', {
-      class: 'mikke-btn mikke-btn--primary',
-      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
-      ...(bulkBusy ? { disabled: 'disabled' } : {}),
-      onclick: () => void bulkRefresh(refreshBtn),
-      html: icon('sync') + '<span>情報更新</span>',
-    });
-    const zipBtn = el('button', {
-      class: 'mikke-btn mikke-btn--secondary',
-      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
-      title: '選択中の脆弱性の保存済みレポートを 1 つの zip にまとめてダウンロードします（検査ツールへは問い合わせません）',
-      ...(bulkBusy ? { disabled: 'disabled' } : {}),
-      onclick: () => void downloadSelectedReports(),
-      html: icon('download') + '<span>レポートをZIP取得</span>',
-    }) as HTMLButtonElement;
-    const pushSelBtn = el('button', {
-      class: 'mikke-btn mikke-btn--secondary',
-      style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
-      title: '選択中の脆弱性だけを連携用リストへ反映します（選択していないアイテムには触れません）',
-      ...(bulkBusy ? { disabled: 'disabled' } : {}),
-      onclick: () => { void pushToVulnResponse(true); },
-      html: icon('upload') + '<span>選択分を連携リストへ</span>',
-    }) as HTMLButtonElement;
+    // ★ 並びも名前も全件のツールバーに合わせる (全件 → 選択 と読み替えるだけ)。
+    //   レポートの zip 取得は専用ボタンを置かず、情報更新のモーダルで選ぶ。
+    const selBtn = (title: string, ic: string, label: string, onclick: () => void): HTMLElement =>
+      el('button', {
+        class: 'mikke-btn mikke-btn--secondary',
+        style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
+        title,
+        ...(bulkBusy ? { disabled: 'disabled' } : {}),
+        onclick,
+        html: icon(ic) + `<span>${label}</span>`,
+      });
     subbar.append(
       el('span', { class: 'mikke-subbar-count', style: 'color:var(--accent-strong);font-weight:600' }, [`${sel} 件選択`]),
-      refreshBtn,
-      zipBtn,
-      pushSelBtn,
+      selBtn('選択中の脆弱性だけを連携リストへ反映します（選択していないアイテムには触れません）',
+        'upload', '連携リストへ反映(選択)', () => { void pushToVulnResponse(true); }),
+      selBtn('選択中の脆弱性について、連携リストで事業会社が記入した内容を取り込みます',
+        'sync', '連携リスト取り込み(選択)', () => { void syncFromVulnResponse(false, true); }),
+      selBtn('選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて更新します（固定モード）',
+        'download', '情報更新(選択・固定)', () => bulkUpdate('fixed', true)),
+      selBtn('選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて更新します（追加モード）',
+        'download', '情報更新(選択・追加)', () => bulkUpdate('add', true)),
       el('button', {
         class: 'mikke-btn mikke-btn--danger', style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
         ...(bulkBusy ? { disabled: 'disabled' } : {}), onclick: () => bulkExclude(),
@@ -792,7 +811,12 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     });
   }
 
-  async function bulkRefresh(btn: HTMLElement): Promise<void> {
+  /**
+   * 選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて更新する。
+   * @param mode fixed=検知中のステータスは据え置き / add=標準ルールで遷移
+   * @param withReport 個別レポートも取り直すか
+   */
+  async function bulkRefresh(mode: ImportMode = 'add', withReport = true): Promise<void> {
     const ids = [...selected];
     if (!ids.length || bulkBusy) return;
     // dev (mock) は relay を持たないので、ダウンロード取得と同じくサンプル応答で動かす。
@@ -836,8 +860,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           scannerStatus: res.scannerStatus, severity: res.severity, lastSeen: res.lastSeen,
           lastSyncedAt: new Date().toISOString(), scanFields: { ...issue.scanFields, ...(res.scanFields ?? {}) },
         };
+        // ★ 固定モードは検知中のステータスを据え置く (全件の固定モードと同じ考え方)。
+        //   消えたものだけ未検出化する。追加モードは標準ルールで遷移させる。
         if (res.detected === true) {
-          patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
+          if (mode !== 'fixed') patch.detectionStatus = nextDetectionWhenPresent(issue.detectionStatus);
         } else if (res.detected === false) {
           const nd = nextDetectionWhenAbsent(issue.detectionStatus);
           patch.detectionStatus = nd;
@@ -846,8 +872,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         if (res.reportSkipped) reportSkipped = true;
         if (res.reportError) { reportFail++; if (!firstReportErr) firstReportErr = res.reportError; }
         // レポートの保存・添付で失敗しても情報更新そのものは成功扱い (レポートは付随物)。
-        const rep = devMock ? await sampleIssueReport(issue)
-          : (res.report ? { fileName: res.report.fileName, bytes: base64ToBytes(res.report.contentBase64) } : null);
+        // レポートを取り直さない指定なら、保存も添付もしない。
+        const rep = !withReport ? null
+          : (devMock ? await sampleIssueReport(issue)
+            : (res.report ? { fileName: res.report.fileName, bytes: base64ToBytes(res.report.contentBase64) } : null));
         if (rep) {
           try {
             const r = await storeIssueReport(issue, rep, runFolder);
@@ -914,7 +942,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     toast(rootEl, parts.join(' / ') + (detail ? ` — ${detail}` : ''),
       fail ? 'error' : (reportFail || reportSkipped ? 'warn' : 'ok'), fail || reportFail ? 12000 : 6000);
     await load();
-    void btn;
   }
 
   // ── 描画 (toolbar + table) ────────────────────────────────────────────────
@@ -965,23 +992,23 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       title: '連携用リストで資産管理者が記入した内容 (対応状況・対応者・対応期日・対応経緯・備考) を取り込みます',
       ...(bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => { void syncFromVulnResponse(false); },
-      html: icon('sync') + '<span>連携内容を取込</span>',
+      html: icon('sync') + '<span>連携リスト取り込み(全件)</span>',
     });
     const bulkFixedBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '検査ツールから全レポートを取得し、固定モードで反映（新規は追加せず・検知中は据え置き）',
       ...(bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => bulkUpdate('fixed'),
-      html: icon('download') + '<span>一括更新(固定)</span>',
+      html: icon('download') + '<span>情報更新(全件・固定)</span>',
     });
     const bulkAddBtn = el('button', {
       // ★ ツールバーの primary は「全文表示」が ON 状態の表示に使っている。
-      //   一括更新(追加) を常時 primary にすると状態表示と紛らわしいので secondary に揃える。
+      //   情報更新(全件・追加) を常時 primary にすると状態表示と紛らわしいので secondary に揃える。
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '検査ツールから全レポートを取得し、追加モードで反映（新規追加＋全ステータス更新）',
       ...(bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => bulkUpdate('add'),
-      html: icon('download') + '<span>一括更新(追加)</span>',
+      html: icon('download') + '<span>情報更新(全件・追加)</span>',
     });
     toolbar.append(
       el('span', { html: icon('filter'), style: 'color:var(--ink-3);display:inline-flex' }),
@@ -1045,11 +1072,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
    *   取り直したいときは先に「情報更新」を使う (時間と負荷が段違いなため分けている)。
    * ★ zip 内の名前は取得順ではなく一覧の並び順で決める (実行のたびに連番が入れ替わらない)。
    */
-  async function downloadSelectedReports(): Promise<void> {
-    const targets = cache.filter((i) => selected.has(i.id));
+  async function downloadSelectedReports(onlySelected = true): Promise<void> {
+    const targets = onlySelected ? cache.filter((i) => selected.has(i.id)) : cache;
     const withReport = targets.filter((i) => i.reportUrl);
     if (!withReport.length) {
-      toast(rootEl, '選択した脆弱性に保存済みレポートがありません。先に「情報更新」で取得してください。', 'warn', 8000);
+      toast(rootEl, '保存済みレポートがありません。先に「情報更新」で取得してください。', 'warn', 8000);
       return;
     }
     bulkBusy = true;

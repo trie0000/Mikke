@@ -194,7 +194,11 @@
   display: flex; align-items: center; gap: var(--s-3);
   min-height: 42px; padding: var(--s-3) var(--gutter);
   border-bottom: 1px solid var(--line);
+  /* ★ ボタンが増えても見出しや件数を縦積みにしない。入り切らないときは折り返す。 */
+  flex-wrap: wrap;
 }
+/* ★ 見出し・件数・ボタンは文字を折り返さない。折り返すと 1 文字ずつ縦に並ぶ。 */
+#mikke-root .mikke-subbar > * { flex: 0 0 auto; white-space: nowrap; }
 #mikke-root .mikke-subbar-title { font-size: var(--fs-lg); font-weight: 600; }
 #mikke-root .mikke-subbar-count { color: var(--ink-3); font-size: var(--fs-sm); }
 #mikke-root .mikke-toolbar {
@@ -202,6 +206,7 @@
   min-height: var(--toolbar-h); padding: var(--s-2) var(--gutter);
   border-bottom: 1px solid var(--line); background: var(--paper);
 }
+#mikke-root .mikke-toolbar .mikke-btn { white-space: nowrap; }
 #mikke-root .mikke-input, #mikke-root .mikke-select {
   /* min-height にすることで、.mikke-field select の縦 padding と固定 height が
      衝突しても内容領域が潰れない (border-box で文字が縦に切れる不具合の修正)。 */

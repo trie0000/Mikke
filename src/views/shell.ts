@@ -251,7 +251,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
       onclick: () => setState({ view: view as ViewName, selectedIssueId: null }),
     }, [el('span', { html: icon(ic) }), el('span', {}, [label])]);
 
-  // 資産管理者への連携用リスト (SharePoint リスト) を別タブで開く外部リンク。
+  // 資産管理者への連携リスト (SharePoint リスト) を別タブで開く外部リンク。
   // Mikke の画面ではなく SP のリストを開くので、他の項目とは別扱い (is-active にしない)。
   const listLink = (): HTMLElement | null => {
     // 選択済みサイト、無ければ現在のページのサイト (リポジトリと同じ解決順)。
@@ -273,13 +273,13 @@ function renderSidebar(root: HTMLElement): HTMLElement {
           try { url = await getRepo().vulnResponseListUrl(); } catch { /* 下で案内する */ }
           if (url) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
           toast(root,
-            '連携用リストがまだありません。設定 → 共通設定 → 資産管理者向けリスト から作成してください。',
+            '連携リストがまだありません。設定 → 共通設定 → 資産管理者向けリスト から作成してください。',
             'warn', 8000);
         })();
       },
     }, [
       el('span', { html: icon('building') }),
-      el('span', {}, ['連携用リスト']),
+      el('span', {}, ['連携リスト']),
       el('span', { class: 'mikke-nav-ext', html: icon('external') }),
     ]);
   };
