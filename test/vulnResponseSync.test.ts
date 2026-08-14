@@ -5,7 +5,7 @@ import {
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
-import { LABEL } from '../src/lib/fieldLabels';
+import { LABEL, RESPONSE_SECTION, RESPONSE_FIELD_ORDER } from '../src/lib/fieldLabels';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
@@ -528,5 +528,34 @@ describe('項目名の一本化', () => {
     expect([LABEL.responseStatus, LABEL.responder, LABEL.responseDueDate,
       LABEL.responseNote, LABEL.responseRemarks])
       .toEqual(['対応状況', '対応者', '対応期日', '対応経緯', '備考']);
+  });
+});
+
+describe('事業会社記入欄の並び', () => {
+  it('★ 明細タブ・編集モーダル・連携用リストで同じ順に並べる', () => {
+    // 画面ごとに順が違うと記入漏れの原因になる。並びは 1 か所で決める。
+    expect(RESPONSE_FIELD_ORDER.map((k) => LABEL[k])).toEqual([
+      '対応状況', '対応者', '外部接続申請ID', '申請不要理由', '対応期日',
+      '対応計画', '対応経緯', '完了理由', '備考',
+    ]);
+  });
+
+  it('★ 並びの項目はすべて連携用リストに列がある', () => {
+    const byLabel = new Map(vulnResponseFieldSpecs().map((f) => [f.displayName, f.name]));
+    for (const k of RESPONSE_FIELD_ORDER) {
+      expect(byLabel.get(LABEL[k]), LABEL[k]).toBeTruthy();
+    }
+  });
+
+  it('★ 並びの項目はすべてフォーム本体に出る (読み取り専用にしない)', () => {
+    const specs = vulnResponseFieldSpecs();
+    const byLabel = new Map(specs.map((f) => [f.displayName, f]));
+    for (const k of RESPONSE_FIELD_ORDER) {
+      expect(byLabel.get(LABEL[k])?.conditionalFormula, LABEL[k]).toBeUndefined();
+    }
+  });
+
+  it('タブ名は「事業会社記入欄」', () => {
+    expect(RESPONSE_SECTION).toBe('事業会社記入欄');
   });
 });

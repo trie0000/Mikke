@@ -1,5 +1,5 @@
 // F5: 脆弱性詳細画面。タブストリップで複数 Issue を切替、4 タブ構成。
-import { LABEL } from '../lib/fieldLabels';
+import { LABEL, RESPONSE_SECTION } from '../lib/fieldLabels';
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState } from '../state';
@@ -120,7 +120,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       { key: 'overview', label: '概要' },
       { key: 'scanner', label: '検査ツール詳細' },
       { key: 'mgmt', label: '管理情報' },
-      { key: 'response', label: '資産管理者の記入' },
+      { key: 'response', label: RESPONSE_SECTION },
       { key: 'history', label: '対応履歴' },
       { key: 'changelog', label: '更新履歴' },
     ];
@@ -156,6 +156,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         // 深刻度は Mikke の項目としては表示しない (CSV に Severity 列があれば
         // 検査ツール詳細タブに原本のまま並ぶ)。
         [LABEL.detectionStatus, null, detectionBadge(i.detectionStatus)],
+        ['脆弱性タイプ', i.vulnType || '—'],
         // 通知 = 連携用リストとの同期状態 (対応状況とは別軸)。
         [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
         ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
@@ -204,7 +205,6 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         [LABEL.businessCompany, i.businessCompany || '—'],
         [LABEL.affiliateCompany, i.affiliateCompany || '—'],
         [LABEL.identifyEvidence, i.identifyEvidence || '—'],
-        ['脆弱性タイプ', i.vulnType || '—'],
         [LABEL.assetMgmtId, i.webMapsId || '—'],
         [LABEL.legacyMgmtNumber, i.legacyMgmtNumber || '—'],
       ]));
@@ -219,18 +219,22 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       // ★ 連携用リストで資産管理者が記入する欄。項目名は連携用リストと同じにしてある
       //   (同じ値を画面ごとに別の名前で呼ばない)。
       //   全項目が「連携内容を取込」で相手の記入内容として入ってくる。
+      // ★ 並びは RESPONSE_FIELD_ORDER に合わせる (明細・編集モーダル・連携用リストで同じ順)。
       body.appendChild(metaGrid([
         [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
         [LABEL.responder, i.assignee || '—'],
-        [LABEL.responseDueDate, fmtDate(i.dueDate, false) || '—'],
         [LABEL.extConnAppId, i.extConnAppId || '—'],
-        [LABEL.responsePlan, i.responsePlan || '—'],
-        [LABEL.completionReason, i.completionReason || '—'],
         [LABEL.noAppReason, i.noAppReason || '—'],
+        [LABEL.responseDueDate, fmtDate(i.dueDate, false) || '—'],
+        [LABEL.responsePlan, i.responsePlan || '—'],
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseNote]),
         noteBlock(i.responseNote, '（記入なし）'),
+      ]));
+      body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
+        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.completionReason]),
+        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.completionReason || '（記入なし）']),
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseRemarks]),
@@ -239,7 +243,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       body.appendChild(el('p', { style: 'margin-top:var(--s-6);color:var(--ink-4);font-size:var(--fs-sm);line-height:1.8' }, [
         `※ 連携用リストの記入内容を取り込んだ日時: ${fmtDate(i.responseSyncedAt) || '（未取込）'}`,
         el('br'),
-        '※ この画面は読み取り専用です。記入は連携用リスト側で行います。',
+        '※ 記入は連携用リスト側で行います（この画面では「編集」から直せます）。',
         el('br'),
         '※ 上の項目は「連携リストへ反映」で上書きを選んだときだけ Mikke から書き戻します（対応者を除く）。',
       ]));

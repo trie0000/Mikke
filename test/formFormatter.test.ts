@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildVulnResponseHeader, buildVulnResponseFormFormatter } from '../src/api/sp/formFormatter';
 import { vulnResponseFieldSpecs, HIDDEN_UNLESS_NEW, CONDITIONAL_FORMULA_PROPERTY, VULNRESPONSE_OBSOLETE_FIELDS, orderFieldLinks } from '../src/api/sp/schema';
+import { LABEL, RESPONSE_FIELD_ORDER } from '../src/lib/fieldLabels';
 
 /** ツリーを走査して txtContent / style の値 (文字列) を全部集める。 */
 function collectExpressions(node: unknown, out: string[] = []): string[] {
@@ -125,8 +126,8 @@ describe('schema: 連携用リストの列定義', () => {
     // 外部接続申請ID・対応計画・完了理由・申請不要理由も資産管理者が書く欄。
     // 読み取り専用にしていると運用が回らない。
     const visible = specs.filter((f) => !f.conditionalFormula).map((f) => f.name);
-    expect(visible).toEqual(['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
-      'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks']);
+    expect(visible).toEqual(['ResponseStatus', 'Responder', 'ExtConnAppId', 'NoAppReason',
+      'DueDate', 'ResponsePlan', 'ResponseNote', 'CompletionReason', 'Remarks']);
   });
 
   it('旧レイアウトの列は定義に残っていない (削除対象)', () => {
@@ -170,5 +171,14 @@ describe('orderFieldLinks: フォームの項目順', () => {
   it('既に定義順なら結果は変わらない (整形が毎回 skipped になる)', () => {
     const current = ['ContentType', ...specNames];
     expect(orderFieldLinks(current, specNames)).toEqual(current);
+  });
+});
+
+describe('フォームの並びと画面の並び', () => {
+  it('★ 連携用リストのフォーム順が RESPONSE_FIELD_ORDER と一致する', () => {
+    // 事業会社が見る順と、Mikke の明細・編集モーダルの順を揃える。
+    const specs = vulnResponseFieldSpecs();
+    const visible = specs.filter((f) => !f.conditionalFormula).map((f) => f.displayName);
+    expect(visible).toEqual(RESPONSE_FIELD_ORDER.map((k) => LABEL[k]));
   });
 });

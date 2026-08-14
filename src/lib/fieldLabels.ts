@@ -42,3 +42,12 @@ export const LABEL = {
 } as const;
 
 export type LabelKey = keyof typeof LABEL;
+
+/** 事業会社が記入する欄。明細のタブ・編集モーダル・連携用リストで **この順** に並べる。 */
+export const RESPONSE_SECTION = '事業会社記入欄';
+
+/** 事業会社記入欄の並び (画面をまたいで同じ順にするための単一の出どころ)。 */
+export const RESPONSE_FIELD_ORDER = [
+  'responseStatus', 'responder', 'extConnAppId', 'noAppReason', 'responseDueDate',
+  'responsePlan', 'responseNote', 'completionReason', 'responseRemarks',
+] as const satisfies readonly LabelKey[];

@@ -288,17 +288,16 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     { name: 'ResponseStatus', type: 'Choice', displayName: LABEL.responseStatus,
       choices: [...RESPONSE_STATUS_CHOICES], indexed: true },
     { name: 'Responder', type: 'User', displayName: LABEL.responder },
-    { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: LABEL.responseDueDate },
-    // ★ 外部接続申請ID・対応計画・完了理由・申請不要理由も資産管理者が書く欄。
+    // ★ 外部接続申請ID・申請不要理由・対応計画・完了理由も事業会社が書く欄。
     //   以前は脆弱性情報として読み取り専用にしていたが、記入できないと運用が回らない。
+    // ★ 並びは RESPONSE_FIELD_ORDER と同じ (明細タブ・編集モーダルと揃える)。
     { name: 'ExtConnAppId', type: 'Text', displayName: LABEL.extConnAppId, indexed: true },
-    { name: 'ResponsePlan', type: 'Note', displayName: LABEL.responsePlan },
-    { name: 'CompletionReason', type: 'Note', displayName: LABEL.completionReason },
     { name: 'NoAppReason', type: 'Note', displayName: LABEL.noAppReason },
+    { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: LABEL.responseDueDate },
+    { name: 'ResponsePlan', type: 'Note', displayName: LABEL.responsePlan },
     { name: 'ResponseNote', type: 'NoteRich', displayName: LABEL.responseNote,
       schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
-
-    // ── その他 ──
+    { name: 'CompletionReason', type: 'Note', displayName: LABEL.completionReason },
     { name: 'Remarks', type: 'Note', displayName: LABEL.responseRemarks },
   ];
 }
