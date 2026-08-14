@@ -134,6 +134,92 @@ export function extractWebMapsIds(raw: string): string {
   return [...new Set(found)].join(' | ');
 }
 
+// ── 日付 ────────────────────────────────────────────────────────────────────
+// 移行データの日付は表記がばらばら。Excel のシリアル値・英語の月名・ISO が混ざる。
+//
+// ★ 返すのは **UTC の ISO**。SP の日付列に入れる値であり、画面と連携用リストが
+//   そこから JST に直して見せる (取込の firstSeen/lastSeen と同じ扱い)。
+// ★ タイムゾーンを持たない表記 (Excel シリアル値・月名・YYYY-MM-DD) は、
+//   **JST の壁時計** とみなす。Excel に打たれた値は JST の日付そのものなので、
+//   UTC とみなすと 9 時間ずれて前日になる。
+
+/** Excel シリアル値の 0 日目。1900 年うるう年バグを含めてここが起点になる。 */
+const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
+/** 9999-12-31 のシリアル値。これを超える数値は日付ではない。 */
+const EXCEL_SERIAL_MAX = 2958465;
+
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** JST の壁時計を UTC の瞬間 (ISO) に直す。 */
+function fromJst(y: number, mo: number, d: number, hh = 0, mi = 0, se = 0): string | null {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mi > 59 || se > 59) return null;
+  const t = Date.UTC(y, mo - 1, d, hh, mi, se) - 9 * 60 * 60 * 1000;
+  const iso = new Date(t);
+  if (Number.isNaN(iso.getTime())) return null;
+  // 2 月 31 日のような存在しない日付は Date が繰り上げてしまうので弾く。
+  const back = new Date(t + 9 * 60 * 60 * 1000);
+  if (back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return null;
+  return iso.toISOString();
+}
+
+const MONTH_FIRST = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/i;
+const DAY_FIRST = /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/i;
+const NUMERIC = /^(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+
+/**
+ * 表記のばらばらな日付を UTC の ISO にする。読めなければ null。
+ *
+ * 対応する書き方:
+ *   - Excel のシリアル値      `44803.67673` / `44803`
+ *   - タイムゾーン付き ISO    `2025-11-26T16:40:13.045Z` / `2025-11-26T16:40+09:00`
+ *   - タイムゾーンなしの ISO  `2025-11-26 16:40:13` / `2025-11-26`
+ *   - 和式                    `2025/11/26` / `2025年11月26日`
+ *   - 英語の月名              `Nov 23rd 2022` / `November 23, 2022` / `23 Nov 2022`
+ */
+export function parseFlexibleDate(raw: string): string | null {
+  const v = text(raw);
+  if (!v) return null;
+
+  // Excel のシリアル値。日付部分を整数で持ってから時刻を足す (小数の誤差を日付に持ち込まない)。
+  if (/^\d+(\.\d+)?$/.test(v)) {
+    const n = Number(v);
+    if (!(n > 0) || n > EXCEL_SERIAL_MAX) return null;
+    const days = Math.floor(n);
+    const secs = Math.round((n - days) * 86400);
+    const d = new Date(EXCEL_EPOCH_UTC + days * 86400000 + secs * 1000);
+    return fromJst(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(),
+      d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+  }
+
+  // タイムゾーンが書いてあるものは、それだけで瞬間が決まる。
+  if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(v) && /(Z|[+-]\d{2}:?\d{2})$/.test(v)) {
+    const t = new Date(v.replace(' ', 'T'));
+    return Number.isNaN(t.getTime()) ? null : t.toISOString();
+  }
+
+  const num = NUMERIC.exec(v);
+  if (num) {
+    return fromJst(+num[1]!, +num[2]!, +num[3]!, +(num[4] ?? 0), +(num[5] ?? 0), +(num[6] ?? 0));
+  }
+
+  const mf = MONTH_FIRST.exec(v);
+  if (mf) {
+    const mo = MONTH_NAMES[mf[1]!.slice(0, 3).toLowerCase()];
+    if (mo) return fromJst(+mf[3]!, mo, +mf[2]!, +(mf[4] ?? 0), +(mf[5] ?? 0), +(mf[6] ?? 0));
+  }
+
+  const df = DAY_FIRST.exec(v);
+  if (df) {
+    const mo = MONTH_NAMES[df[2]!.slice(0, 3).toLowerCase()];
+    if (mo) return fromJst(+df[3]!, mo, +df[1]!, +(df[4] ?? 0), +(df[5] ?? 0), +(df[6] ?? 0));
+  }
+
+  return null;
+}
+
 // ── 資産 (IP / FQDN) ────────────────────────────────────────────────────────
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
@@ -348,6 +434,14 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     if (v) scanFields[`Scan_${c}`] = v;
   }
 
+  // 最終検知日は SP の日付列に入る。読めない値をそのまま送ると 1 行まるごと
+  // HTTP 400 になるので、読めたものだけ ISO で入れて、読めなければ警告に出す。
+  const lastSeenRaw = get(MIG_COL.lastSeen);
+  const lastSeen = parseFlexibleDate(lastSeenRaw);
+  if (lastSeenRaw && !lastSeen) {
+    warnings.push(`最終検知日「${lastSeenRaw}」を日付として読めないため空にしました`);
+  }
+
   const title = get(MIG_COL.title);
   const issue: Omit<ManagedIssue, 'id'> = {
     issueInstanceId,
@@ -360,7 +454,7 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     affiliateCompany: get(MIG_COL.affiliateCompany),
     webMapsId,
     identifyEvidence: get(MIG_COL.identifyEvidence),
-    lastSeen: get(MIG_COL.lastSeen),
+    lastSeen: lastSeen ?? '',
     responsePlan: get(MIG_COL.responsePlan),
     extConnAppId: get(MIG_COL.extConnAppId),
     noAppReason: get(MIG_COL.noAppReason),

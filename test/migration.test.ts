@@ -4,7 +4,7 @@ import {
   buildAliasIndex, resolveCompany, detectVulnType, normalizeVulnTypeRules,
   migrateRow, buildMigrationPlan, MIG_COL, isExcelError,
   normalizeAliasRemap, buildRemapIndex, applyAliasRemap, remapConflicts, OTHER_COMPANY,
-  resolveMigColumns, indexByIssueInstanceId, splitMigrationWrites,
+  resolveMigColumns, indexByIssueInstanceId, splitMigrationWrites, parseFlexibleDate,
   type MigrationRowResult,
 } from '../src/lib/migration';
 import { normalizePerms, groupIdsFor } from '../src/lib/itemPerms';
@@ -625,5 +625,81 @@ describe('同じ Issue Instance ID を 2 回読んでも増やさない', () => 
     const split = splitMigrationWrites(rows, new Map());
     expect(split.adds).toHaveLength(0);
     expect(split.updates).toHaveLength(0);
+  });
+});
+
+describe('表記のばらばらな日付を JST として読む', () => {
+  // ★ 返すのは UTC の ISO。画面と連携用リストがそこから JST に直して見せる。
+  //   タイムゾーンの無い書き方 (Excel シリアル値・月名・YYYY-MM-DD) は
+  //   **JST の壁時計** とみなす。UTC とみなすと 9 時間ずれて前日になる。
+  const jstDay = (iso: string): string =>
+    new Date(new Date(iso).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+
+  it('★ タイムゾーン付き ISO はその瞬間のまま', () => {
+    expect(parseFlexibleDate('2025-11-26T16:40:13.045Z')).toBe('2025-11-26T16:40:13.045Z');
+    // 16:40 UTC は JST では翌 27 日の 01:40。
+    expect(jstDay(parseFlexibleDate('2025-11-26T16:40:13.045Z')!)).toBe('2025-11-27');
+    expect(parseFlexibleDate('2025-11-26T16:40:13+09:00')).toBe('2025-11-26T07:40:13.000Z');
+  });
+
+  it('★ Excel のシリアル値 (44803.67673 = 2022-08-30 16:14 JST)', () => {
+    expect(parseFlexibleDate('44803.67673')).toBe('2022-08-30T07:14:29.000Z');
+    expect(jstDay(parseFlexibleDate('44803.67673')!)).toBe('2022-08-30');
+  });
+
+  it('★ 時刻の無いシリアル値は JST の 0 時', () => {
+    expect(parseFlexibleDate('44803')).toBe('2022-08-29T15:00:00.000Z');
+    expect(jstDay(parseFlexibleDate('44803')!)).toBe('2022-08-30');
+  });
+
+  it('★ 英語の月名 (Nov 23rd 2022)', () => {
+    for (const v of ['Nov 23rd 2022', 'November 23, 2022', 'Nov 23 2022', '23 Nov 2022', '23rd Nov 2022']) {
+      expect(jstDay(parseFlexibleDate(v)!), v).toBe('2022-11-23');
+    }
+    expect(parseFlexibleDate('Nov 23rd 2022')).toBe('2022-11-22T15:00:00.000Z');
+  });
+
+  it('月名に時刻が付いていても読む', () => {
+    expect(parseFlexibleDate('Nov 23rd 2022 16:40')).toBe('2022-11-23T07:40:00.000Z');
+  });
+
+  it('タイムゾーンなしの日付・和式は JST の壁時計とみなす', () => {
+    expect(parseFlexibleDate('2025-11-26')).toBe('2025-11-25T15:00:00.000Z');
+    expect(jstDay(parseFlexibleDate('2025-11-26')!)).toBe('2025-11-26');
+    expect(parseFlexibleDate('2025/11/26')).toBe('2025-11-25T15:00:00.000Z');
+    expect(parseFlexibleDate('2025年11月26日')).toBe('2025-11-25T15:00:00.000Z');
+    expect(parseFlexibleDate('2025-11-26 16:40:13')).toBe('2025-11-26T07:40:13.000Z');
+  });
+
+  it('大文字小文字・前後の空白は問わない', () => {
+    expect(parseFlexibleDate('  NOV 23RD 2022  ')).toBe('2022-11-22T15:00:00.000Z');
+  });
+
+  it('★ 読めない値は null (SP の日付列に入れると 1 行まるごと 400 になる)', () => {
+    for (const v of ['', '  ', '未検出', 'N/A', '2022-13-01', '2022-02-31', 'Foo 23rd 2022', '0']) {
+      expect(parseFlexibleDate(v), v).toBeNull();
+    }
+  });
+
+  it('★ 移行時に最終検知日が ISO で入り、読めない値は空にして警告する', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.lastSeen]: 'Nov 23rd 2022' },
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.lastSeen]: '44803.67673' },
+      { [MIG_COL.issueInstanceId]: 'IID-3', [MIG_COL.lastSeen]: '2025-11-26T16:40:13.045Z' },
+      { [MIG_COL.issueInstanceId]: 'IID-4', [MIG_COL.lastSeen]: 'いつか' },
+    ], PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows.map((r) => r.issue!.lastSeen)).toEqual([
+      '2022-11-22T15:00:00.000Z', '2022-08-30T07:14:29.000Z', '2025-11-26T16:40:13.045Z', '',
+    ]);
+    expect(plan.rows[3]!.warnings.join())
+      .toBe('最終検知日「いつか」を日付として読めないため空にしました');
+    expect(plan.rows[0]!.warnings).toEqual([]);
+  });
+
+  it('最終検知日が空の行は警告を出さない', () => {
+    const plan = buildMigrationPlan([{ [MIG_COL.issueInstanceId]: 'IID-1' }],
+      PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows[0]!.issue!.lastSeen).toBe('');
+    expect(plan.rows[0]!.warnings).toEqual([]);
   });
 });
