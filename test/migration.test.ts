@@ -3,9 +3,10 @@ import {
   toDetectionStatus, isRiskAccepted, toMgmtStatus, extractWebMapsIds, isIpAddress,
   buildAliasIndex, resolveCompany, detectVulnType, normalizeVulnTypeRules,
   migrateRow, buildMigrationPlan, MIG_COL, isExcelError,
-  normalizeAliasRemap, buildRemapIndex, applyAliasRemap, remapConflicts,
+  normalizeAliasRemap, buildRemapIndex, applyAliasRemap, remapConflicts, OTHER_COMPANY,
+  resolveMigColumns,
 } from '../src/lib/migration';
-import { normalizePerms } from '../src/lib/itemPerms';
+import { normalizePerms, groupIdsFor } from '../src/lib/itemPerms';
 
 const PERMS = normalizePerms({
   adminGroupIds: [11],
@@ -204,10 +205,17 @@ describe('1 行の移行', () => {
     expect(r.warnings[0]).toMatch(/Issue ID/);
   });
 
-  it('★ 未登録の略称は空にして警告する (黙って別会社に付けない)', () => {
+  it('★ 未登録の略称は「その他」に寄せて警告する (黙って別会社に付けない)', () => {
     const r = migrateRow({ ...row, [MIG_COL.businessCompany]: 'XYZ' }, ctx);
-    expect(r.issue!.businessCompany).toBe('');
+    expect(r.issue!.businessCompany).toBe(OTHER_COMPANY);
     expect(r.warnings.join()).toMatch(/XYZ/);
+    expect(r.warnings.join()).toMatch(/その他/);
+  });
+
+  it('★ 事業会社の欄が空の行は空欄のまま (寄せる元の組織が書かれていない)', () => {
+    const r = migrateRow({ ...row, [MIG_COL.businessCompany]: '' }, ctx);
+    expect(r.issue!.businessCompany).toBe('');
+    expect(r.warnings.join()).not.toMatch(/その他/);
   });
 
   it('未検出(リスク受容) は検知=未検出 / 対応=リスク受容', () => {
@@ -270,10 +278,13 @@ describe('数式セル (XLOOKUP) の扱い', () => {
       [MIG_COL.affiliateCompany]: '#REF!',
       [MIG_COL.title]: 'TLS 1.0',
     }, ctx);
-    expect(r.issue!.businessCompany).toBe('');
+    // 事業会社は「どの組織か決められなかった」ので その他 に寄せる。
+    // 管理会社はただの文字列なので空にするだけ。
+    expect(r.issue!.businessCompany).toBe(OTHER_COMPANY);
     expect(r.issue!.affiliateCompany).toBe('');
     const w = r.warnings.join(' ');
     expect(w).toMatch(/数式のエラー値を空にしました/);
+    expect(w).toMatch(/事業会社を決められないため「その他」にしました/);
     expect(w).toMatch(/事業会社=#N\/A/);
     expect(w).toMatch(/管理会社=#REF!/);
   });
@@ -392,9 +403,9 @@ describe('旧略称の読み替え (旧 N 件 : 現在 1 件)', () => {
     const plan = buildMigrationPlan(
       [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: '旧なんとか' }],
       PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ZZZ', from: ['旧なんとか'] }]);
-    expect(plan.rows[0]!.issue!.businessCompany).toBe('');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe(OTHER_COMPANY);
     expect(plan.rows[0]!.warnings[0])
-      .toBe('旧略称「旧なんとか」を「ZZZ」に読み替えましたが、対応する事業会社が未登録です');
+      .toBe('旧略称「旧なんとか」を「ZZZ」に読み替えましたが、対応する事業会社が未登録のため「その他」にしました');
     // 画面に出す未登録一覧は Excel に書かれている値 (探せる値) を出す。
     expect(plan.unknownAliases).toEqual(['旧なんとか']);
   });
@@ -414,5 +425,129 @@ describe('Excel の列名', () => {
     expect(MIG_COL.responsePlan).toBe('一カ月を目処に早めにご計画ください。');
     expect(MIG_COL.extConnAppId).toBe('※ 申請状況を選択ください。');
     expect(MIG_COL.responseNote).toBe('本課題の「対応状況」を「完了」にする場合、その理由をご記入ください。');
+  });
+});
+
+describe('事業会社を決められない行は「その他」に寄せる', () => {
+  it('★ 未登録の略称・読み替えても引けない略称・数式のエラー値をまとめて数える', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENG' },        // 引ける
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'ナゾ商事' },   // 未登録
+      { [MIG_COL.issueInstanceId]: 'IID-3', [MIG_COL.businessCompany]: '#N/A' },       // エラー値
+      { [MIG_COL.issueInstanceId]: 'IID-4', [MIG_COL.businessCompany]: '' },           // 空欄
+    ], PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows.map((r) => r.issue!.businessCompany))
+      .toEqual(['エナジー事業', OTHER_COMPANY, OTHER_COMPANY, '']);
+    expect(plan.otherCount).toBe(2);
+  });
+
+  it('全部引ければ その他 は 0 件', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'MOB' }],
+      PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.otherCount).toBe(0);
+  });
+
+  it('読み替えで引けた行は その他 に落ちない', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENERGY' }],
+      PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ENG', from: ['ENERGY'] }]);
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('エナジー事業');
+    expect(plan.otherCount).toBe(0);
+  });
+
+  it('★「その他」を事業会社として登録してあれば、そのままアクセス権のキーになる', () => {
+    // 移行後にアクセス権画面で「その他」を登録すれば、他の事業会社と同じ扱いで割当が付く。
+    const perms = normalizePerms({
+      adminGroupIds: [11], byBusinessCompany: { [OTHER_COMPANY]: [99] },
+    });
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ナゾ商事' }],
+      perms, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe(OTHER_COMPANY);
+    expect(groupIdsFor(plan.rows[0]!.issue!.businessCompany, perms)).toEqual([99]);
+  });
+});
+
+describe('列の探し方 (完全一致 / 部分一致)', () => {
+  const HEADS = ['Issue ID', '事業会社', '脆弱性'];
+
+  it('通常の列は完全一致で探す', () => {
+    const m = resolveMigColumns(HEADS);
+    expect(m.byCol[MIG_COL.issueInstanceId]).toBe('Issue ID');
+    expect(m.missing).toContain(MIG_COL.lastSeen);
+  });
+
+  it('★ 申請状況の列は「申請状況を選択ください」を含む見出しなら拾う', () => {
+    // 「※ 」の有無・末尾の「。」の有無が Excel 側で揺れる。
+    for (const h of [
+      '※ 申請状況を選択ください。', '※ 申請状況を選択ください', '申請状況を選択ください',
+      '外部接続申請 ※ 申請状況を選択ください。(必須)',
+    ]) {
+      expect(resolveMigColumns([h]).byCol[MIG_COL.extConnAppId]).toBe(h);
+    }
+  });
+
+  it('★ 対応計画の列は「目処に早めにご計画」を含む見出しなら拾う', () => {
+    for (const h of [
+      '一カ月を目処に早めにご計画ください。', '一ヶ月を目処に早めにご計画ください',
+      '1カ月を目処に早めにご計画ください。',
+    ]) {
+      expect(resolveMigColumns([h]).byCol[MIG_COL.responsePlan]).toBe(h);
+    }
+  });
+
+  it('部分一致の列も、無ければ見つからない列として挙げる', () => {
+    const m = resolveMigColumns(HEADS);
+    expect(m.missing).toContain(MIG_COL.extConnAppId);
+    expect(m.missing).toContain(MIG_COL.responsePlan);
+  });
+
+  it('★ 見出しが揺れていても値がちゃんと入る', () => {
+    const plan = buildMigrationPlan([{
+      'Issue ID': 'IID-1',
+      '申請状況を選択ください': 'EXT-999',
+      '一ヶ月を目処に早めにご計画ください': '2026-09 までに対応',
+    }], PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows[0]!.issue!.extConnAppId).toBe('EXT-999');
+    expect(plan.rows[0]!.issue!.responsePlan).toBe('2026-09 までに対応');
+    expect(plan.missingColumns).not.toContain(MIG_COL.extConnAppId);
+    expect(plan.missingColumns).not.toContain(MIG_COL.responsePlan);
+  });
+
+  it('見出しを渡さなくても行の鍵から拾う', () => {
+    const plan = buildMigrationPlan(
+      [{ 'Issue ID': 'IID-1', '※ 申請状況を選択ください': 'EXT-1' }],
+      PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows[0]!.issue!.extConnAppId).toBe('EXT-1');
+  });
+
+  it('1 行も無ければ、渡した見出しで判定する', () => {
+    const plan = buildMigrationPlan([], PERMS, {}, '2026-08-14T00:00:00Z', undefined,
+      ['Issue ID', '申請状況を選択ください。']);
+    expect(plan.missingColumns).not.toContain(MIG_COL.extConnAppId);
+    expect(plan.missingColumns).toContain(MIG_COL.lastSeen);
+  });
+});
+
+describe('事業会社列に新旧の略称が混じっている場合', () => {
+  it('★ 新組織の略称はそのまま引ける (読み替え表に書く必要はない)', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENG' },       // 新
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'ENERGY' },    // 旧
+      { [MIG_COL.issueInstanceId]: 'IID-3', [MIG_COL.businessCompany]: 'MOB' },       // 新
+    ], PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ENG', from: ['ENERGY'] }]);
+    expect(plan.rows.map((r) => r.issue!.businessCompany))
+      .toEqual(['エナジー事業', 'エナジー事業', 'モビリティ事業']);
+    expect(plan.remapped).toEqual([{ from: 'ENERGY', to: 'ENG', count: 1 }]);   // 新は読み替え対象外
+    expect(plan.otherCount).toBe(0);
+  });
+
+  it('新組織の略称を読み替え表の旧側に書いても、自分自身への読み替えは無視される', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENG' }],
+      PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ENG', from: ['ENG', 'ENERGY'] }]);
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('エナジー事業');
+    expect(plan.remapped).toEqual([]);
   });
 });

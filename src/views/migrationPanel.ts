@@ -10,7 +10,7 @@ import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import {
-  buildMigrationPlan, MIG_COL, normalizeAliasRemap, remapConflicts,
+  buildMigrationPlan, normalizeAliasRemap, remapConflicts, OTHER_COMPANY,
   type AliasRemapRow, type MigrationPlan,
 } from '../lib/migration';
 import { normalizePerms, registeredCompanies, aliasesFor, parseAliases } from '../lib/itemPerms';
@@ -114,8 +114,8 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
   function rebuildPlan(): void {
     if (!sheet) return;
     plan = buildMigrationPlan(sheet.rows, settings.vulnResponsePerms, settings.vulnTypeRules,
-      new Date().toISOString(), collectRemap());
-    paintPreview(sheet.headers);
+      new Date().toISOString(), collectRemap(), sheet.headers);
+    paintPreview();
     if (plan.ready) runBtn.removeAttribute('disabled');
     else runBtn.setAttribute('disabled', '');
   }
@@ -149,10 +149,10 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
   })());
 
   /** 取り込む前に中身を見せる。ここで気づけないと、入れてから直すことになる。 */
-  function paintPreview(headers: string[]): void {
+  function paintPreview(): void {
     if (!plan) return;
     clear(result);
-    const missing = Object.values(MIG_COL).filter((c) => !headers.includes(c));
+    const missing = plan.missingColumns;
     result.append(
       el('div', { class: 'mikke-note' }, [
         `${fileName} / シート「${SHEET_NAME}」: 取り込める ${plan.ready} 件`
@@ -164,11 +164,15 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
       ...(plan.remapped.length ? [el('div', { class: 'mikke-note', style: 'margin-top:var(--s-3)' }, [
         `旧略称を読み替えました: ${plan.remapped.map((r) => `${r.from} → ${r.to} (${r.count} 件)`).join('、')}`,
       ])] : []),
+      ...(plan.otherCount ? [el('div', { class: 'mikke-note', style: 'margin-top:var(--s-3)' }, [
+        `事業会社を決められない ${plan.otherCount} 件は「${OTHER_COMPANY}」で登録します。`,
+        `アクセス権を付けるには、アクセス権画面で「${OTHER_COMPANY}」を事業会社として登録してグループを割り当ててください。`,
+      ])] : []),
       ...(plan.unknownAliases.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
         `事業会社を判定できない略称が ${plan.unknownAliases.length} 件あります: ${plan.unknownAliases.join(' / ')}`,
         el('br'),
         '現在も使っている略称ならアクセス権画面で登録し、組織再編前の古い略称なら下の「旧略称の読み替え」に追加してください。',
-        'このまま登録すると、これらの行は事業会社が空になり、アクセス権も付きません。',
+        `このまま登録すると、これらの行は「${OTHER_COMPANY}」になります。`,
       ])] : []),
     );
     // 行ごとの気づき (先頭 20 件まで)
@@ -245,6 +249,7 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
       el('li', {}, ['既にある Issue Instance ID でも新規として追加します (取込のような突合はしません)。']),
       el('li', {}, ['脆弱性タイプは Title から自動判定します (判定条件は「脆弱性タイプの判定」で設定)。']),
       el('li', {}, ['組織再編前の古い略称は、下の「旧略称の読み替え」で現在の略称に寄せてから判定します。']),
+      el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
     ]),
     el('div', { class: 'mikke-field' }, [
       el('label', { class: 'mikke-field-label' }, ['移行元の Excel (.xlsx)']),

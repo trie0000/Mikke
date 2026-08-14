@@ -50,6 +50,39 @@ export const MIG_COL = {
   issueInstanceId: 'Issue ID',
 } as const;
 
+/**
+ * 見出しの一部だけで探す列。
+ * ★ この 2 列は Excel 側で句読点や前後の但し書きが揺れる (「※ 」の有無、末尾の
+ *   「。」の有無など)。完全一致で探すと丸ごと取りこぼすので、**必ず残る部分**だけ
+ *   で探す。ここに書いていない列は今までどおり完全一致。
+ */
+const PARTIAL_MATCH: Record<string, string> = {
+  [MIG_COL.extConnAppId]: '申請状況を選択ください',
+  [MIG_COL.responsePlan]: '目処に早めにご計画',
+};
+
+/** MIG_COL の列名 → シートにある実際の見出し。 */
+export interface ColumnMap {
+  byCol: Record<string, string>;
+  /** シートに見つからなかった列 (MIG_COL の列名)。 */
+  missing: string[];
+}
+
+/** シートの見出しから、どの列を使うかを決める。 */
+export function resolveMigColumns(headers: string[]): ColumnMap {
+  const byCol: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const col of Object.values(MIG_COL) as string[]) {
+    const needle = PARTIAL_MATCH[col];
+    const hit = needle
+      ? headers.find((h) => h.includes(needle))
+      : headers.find((h) => h === col);
+    if (hit === undefined) missing.push(col);
+    else byCol[col] = hit;
+  }
+  return { byCol, missing };
+}
+
 /** そのまま同名の Scan_ 列として持ち込むもの (検査ツール由来の参考情報)。 */
 const PASSTHROUGH_SCAN_COLUMNS = [
   MIG_COL.assetTitle, MIG_COL.assetMappedDomains, MIG_COL.assetHomepageUrl,
@@ -127,6 +160,13 @@ export function buildAliasIndex(perms: VulnResponsePerms): Map<string, string> {
   }
   return idx;
 }
+
+/**
+ * どの事業会社にも寄せられなかった行の行き先。
+ * ★ 空欄のまま入れると、後から「誰の担当か決まっていない行」を探せなくなる。
+ *   まとめてここに入れておけば、一覧で絞り込めるしアクセス権も付けられる。
+ */
+export const OTHER_COMPANY = 'その他';
 
 /** 略称から事業会社を決める。決まらなければ null (呼び出し側で警告する)。 */
 export function resolveCompany(alias: string, idx: Map<string, string>): string | null {
@@ -245,6 +285,9 @@ export interface MigrationContext {
   remapIndex: Map<string, string>;
   vulnTypeRules: VulnTypeRules;
   nowIso: string;
+  /** MIG_COL の列名 → シートの実際の見出し (部分一致で探した列があるため)。
+   *  省略したときは列名をそのまま鍵にする。 */
+  columns?: Record<string, string>;
 }
 
 /** Excel の 1 行を管理対象に変換する。 */
@@ -253,8 +296,10 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
   // ★ 数式セルは値 (キャッシュ結果) で読まれる。XLOOKUP が外れた行は #N/A などの
   //   エラー値になるので、そのまま保存せず空として扱い、気づけるよう警告に出す。
   const errorCells: string[] = [];
+  /** 列名 → シートの実際の見出しを引いてから値を読む (部分一致で探した列があるため)。 */
+  const cell = (col: string): string => text(row[ctx.columns?.[col] ?? col]);
   const get = (k: string): string => {
-    const v = text(row[k]);
+    const v = cell(k);
     if (isExcelError(v)) { errorCells.push(`${k}=${v}`); return ''; }
     return v;
   };
@@ -265,14 +310,20 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
   }
 
   // 事業会社は略称から引く。旧略称は現在の略称に読み替えてから引く。
-  // 引けなければ空 (アクセス権が付かないので警告する)。
+  // ★ 引けなかった行は空欄にせず「その他」へ寄せる。
+  //   Excel の欄自体が空の行は、寄せる元の組織が書かれていないので空欄のまま。
+  const companyCell = cell(MIG_COL.businessCompany);        // 数式のエラー値も含む生の値
   const rawCompany = get(MIG_COL.businessCompany);
   const usedAlias = applyAliasRemap(rawCompany, ctx.remapIndex);
-  const company = resolveCompany(usedAlias, ctx.aliasIndex);
-  if (rawCompany && !company) {
+  const resolved = resolveCompany(usedAlias, ctx.aliasIndex);
+  const company = resolved ?? (companyCell ? OTHER_COMPANY : '');
+  if (rawCompany && !resolved) {
     warnings.push(usedAlias === rawCompany
-      ? `事業会社の略称「${rawCompany}」に対応する事業会社が未登録です`
-      : `旧略称「${rawCompany}」を「${usedAlias}」に読み替えましたが、対応する事業会社が未登録です`);
+      ? `事業会社の略称「${rawCompany}」に対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`
+      : `旧略称「${rawCompany}」を「${usedAlias}」に読み替えましたが、対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`);
+  } else if (!rawCompany && companyCell) {
+    // 数式のエラー値だった行 (どの組織か書かれていない)。行き先を明示しておく。
+    warnings.push(`事業会社を決められないため「${OTHER_COMPANY}」にしました`);
   }
 
   const detectionRaw = get(MIG_COL.detection);
@@ -342,6 +393,10 @@ export interface MigrationPlan {
   unknownAliases: string[];
   /** 実際に読み替えが効いた件数 (設定どおりに当たっているか画面で確かめる)。 */
   remapped: { from: string; to: string; count: number }[];
+  /** 事業会社を決められず「その他」に寄せた件数。 */
+  otherCount: number;
+  /** シートに見つからなかった列 (画面に出す)。 */
+  missingColumns: string[];
 }
 
 /** シート全体の移行計画を組み立てる (書き込みは行わない)。 */
@@ -351,19 +406,25 @@ export function buildMigrationPlan(
   rules: unknown,
   nowIso: string,
   aliasRemap?: unknown,
+  headers?: string[],
 ): MigrationPlan {
   const remapRows = normalizeAliasRemap(aliasRemap);
+  // 見出しを渡されなければ行の鍵から拾う (1 行も無ければ空)。
+  const heads = headers ?? [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const cols = resolveMigColumns(heads);
   const ctx: MigrationContext = {
     aliasIndex: buildAliasIndex(normalizePerms(perms)),
     remapIndex: buildRemapIndex(remapRows),
     vulnTypeRules: normalizeVulnTypeRules(rules),
     nowIso,
+    columns: cols.byCol,
   };
   const results = rows.map((r) => migrateRow(r, ctx));
   const unknown = new Set<string>();
   const hits = new Map<string, { from: string; to: string; count: number }>();
+  const companyCol = cols.byCol[MIG_COL.businessCompany] ?? MIG_COL.businessCompany;
   for (const r of rows) {
-    const a = text(r[MIG_COL.businessCompany]);
+    const a = text(r[companyCol]);
     // 数式のエラー値は「未登録の略称」ではない (原因が別なので混ぜない)。
     if (!a || isExcelError(a)) continue;
     const mapped = applyAliasRemap(a, ctx.remapIndex);
@@ -382,5 +443,7 @@ export function buildMigrationPlan(
     skipped: results.filter((r) => !r.issue).length,
     unknownAliases: [...unknown].sort((a, b) => a.localeCompare(b, 'ja')),
     remapped: [...hits.values()].sort((a, b) => b.count - a.count || a.from.localeCompare(b.from, 'ja')),
+    otherCount: results.filter((r) => r.issue?.businessCompany === OTHER_COMPANY).length,
+    missingColumns: cols.missing,
   };
 }
