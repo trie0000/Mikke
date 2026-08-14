@@ -1450,6 +1450,7 @@ export class SpRepository implements Repository {
       reportAt: row.ReportAt ?? undefined,
       // SP の組み込み列。連携用リストとの新旧比較に使う (書き込みはしない)。
       updatedAt: row.Modified ?? undefined,
+      completionReason: row.CompletionReason ?? undefined,
       responseNote: row.ResponseNote ?? undefined,
       responseRemarks: row.ResponseRemarks ?? undefined,
       responseSyncedAt: row.ResponseSyncedAt ?? undefined,
@@ -1488,6 +1489,7 @@ export class SpRepository implements Repository {
     if (p.reportUrl !== undefined) row.ReportUrl = p.reportUrl;
     if (p.reportName !== undefined) row.ReportName = p.reportName;
     if (p.reportAt !== undefined) row.ReportAt = p.reportAt || null;
+    if (p.completionReason !== undefined) row.CompletionReason = p.completionReason;
     if (p.responseNote !== undefined) row.ResponseNote = p.responseNote;
     if (p.responseRemarks !== undefined) row.ResponseRemarks = p.responseRemarks;
     if (p.responseSyncedAt !== undefined) row.ResponseSyncedAt = p.responseSyncedAt || null;

@@ -122,6 +122,8 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'IdentifyEvidence', type: 'Note' },
     { name: 'ResponsePlan', type: 'Note' },
     { name: 'NoAppReason', type: 'Note' },
+    // 対応状況を「完了」にした理由 (移行データ由来。連携用リストの対応経緯とは別物)。
+    { name: 'CompletionReason', type: 'Note' },
     { name: 'VulnType', type: 'Choice', choices: [...VULN_TYPES] },
     // ★ Excel 運用時代の「事業会社名-YYMM-XX」。将来廃止する暫定 ID だが、
     //   移行期間中は参考情報として管理リスト・連携用リストの双方で見せる。

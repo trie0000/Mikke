@@ -16,6 +16,9 @@ export interface DataColumn<T> {
   render?: (row: T) => HTMLElement | string;
   cellStyle?: string;
   filterable?: boolean;
+  /** 初回だけ非表示にしておく列。ユーザーが一度でも表示に切り替えたら、以後は尊重する。
+   *  ★ 項目を増やしたときに既定の見た目を変えないための指定。 */
+  defaultHidden?: boolean;
 }
 
 export interface DataTableSelection<T> {
@@ -64,6 +67,8 @@ export class DataTable<T> {
   private colOrder: string[];
   /** 非表示にしている列 ID。端末ごとに保存する。 */
   private colHidden: string[];
+  /** defaultHidden をもう当てた列 ID (端末ごと)。 */
+  private colSeeded: string[];
   private wrapOn: boolean;
   private sortId: string | null;
   private sortDir: 'asc' | 'desc';
@@ -93,6 +98,7 @@ export class DataTable<T> {
     this.colExcluded = lsGet(`${k}.colFilters`, {} as Record<string, string[]>);
     this.colOrder = lsGet(`${k}.colOrder`, [] as string[]);
     this.colHidden = lsGet(`${k}.colHidden`, [] as string[]);
+    this.colSeeded = lsGet(`${k}.colSeeded`, [] as string[]);
     this.wrapOn = lsGet(`${k}.wrap`, false);
     const sort = lsGet<{ id: string | null; dir: 'asc' | 'desc' }>(`${k}.sort`, { id: null, dir: 'asc' });
     this.sortId = sort.id;
@@ -112,7 +118,31 @@ export class DataTable<T> {
 
   // ── 公開 API ────────────────────────────────────────────────────────────────
   setRows(rows: T[]): void { this.rows = rows; }
-  setColumns(cols: DataColumn<T>[]): void { this.opts.columns = cols; }
+  setColumns(cols: DataColumn<T>[]): void {
+    this.opts.columns = cols;
+    this.seedDefaultHidden();
+  }
+
+  /** defaultHidden の列を、初めて見たときだけ非表示に倒す。
+   *  ★ 「一度でも扱った列 ID」を別に持つ。これが無いと、ユーザーが表示に戻しても
+   *    次の描画でまた隠れてしまう。 */
+  private seedDefaultHidden(): void {
+    const seededKey = `${this.opts.storeKey}.colSeeded`;
+    const seeded = new Set(this.colSeeded);
+    const hidden = new Set(this.colHidden);
+    let changed = false;
+    for (const c of this.opts.columns) {
+      if (!c.defaultHidden || seeded.has(c.id)) continue;
+      seeded.add(c.id);
+      hidden.add(c.id);
+      changed = true;
+    }
+    if (!changed) return;
+    this.colSeeded = [...seeded];
+    this.colHidden = [...hidden];
+    lsSet(seededKey, this.colSeeded);
+    lsSet(`${this.opts.storeKey}.colHidden`, this.colHidden);
+  }
   getVisible(): T[] { return this.visible; }
   isWrap(): boolean { return this.wrapOn; }
   toggleWrap(): void { this.wrapOn = !this.wrapOn; lsSet(`${this.opts.storeKey}.wrap`, this.wrapOn); this.render(); }
@@ -141,6 +171,9 @@ export class DataTable<T> {
   /** すべての列を再表示する。 */
   showAllColumns(): void {
     this.colHidden = [];
+    // 「すべて表示」はユーザーの明示的な選択。既定非表示を後から当て直さない。
+    this.colSeeded = [...new Set([...this.colSeeded, ...this.opts.columns.map((c) => c.id)])];
+    lsSet(`${this.opts.storeKey}.colSeeded`, this.colSeeded);
     lsSet(`${this.opts.storeKey}.colHidden`, this.colHidden);
     this.render();
     this.opts.onColumnsChange?.();

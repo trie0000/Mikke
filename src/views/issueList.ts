@@ -43,6 +43,10 @@ const normScanCol = (c: string): string =>
  *    戻したら null に戻し、他の画面を経由したときに効かないようにする。 */
 let savedScroll: { top: number; left: number } | null = null;
 
+/** メモは HTML (リッチテキスト) で入ることがある。一覧のセルは 1 行なので素の文字にする。 */
+const stripHtml = (v: string): string =>
+  v.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
   '未着手': 6, '対応中': 5, '対応済み': 4, 'リスク受容': 3, '過検出': 2, '対象外': 1,
@@ -559,6 +563,25 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       // 「情報更新」で取得した個別レポート。形式は検査ツールが返したまま (現状 PDF) なので、
       // リンク表記もファイル名の拡張子から出す。行クリック (詳細を開く) と競合しないよう
       // リンク側で stopPropagation する。
+      // ★ Excel 取込の項目と明細の項目を一覧にも揃える。既定は非表示にして
+      //   今までの見た目を変えず、「列」ボタンから出せるようにする。
+      { id: 'responsePlan', label: '対応計画', width: 200, defaultHidden: true,
+        text: (i) => i.responsePlan ?? '' },
+      { id: 'completionReason', label: '完了理由', width: 200, defaultHidden: true,
+        text: (i) => i.completionReason ?? '' },
+      { id: 'noAppReason', label: '申請不要理由', width: 200, defaultHidden: true,
+        text: (i) => i.noAppReason ?? '' },
+      { id: 'outOfScopeReason', label: '対象外の理由', width: 200, defaultHidden: true,
+        text: (i) => i.outOfScopeReason ?? '' },
+      { id: 'mgmtNote', label: 'メモ', width: 220, defaultHidden: true,
+        text: (i) => stripHtml(i.mgmtNote ?? '') },
+      { id: 'addedReason', label: '取込経緯', width: 110, defaultHidden: true,
+        text: (i) => i.addedReason ?? '', cellStyle: 'color:var(--ink-3)' },
+      { id: 'scannerStatus', label: '検査ツールステータス', width: 160, defaultHidden: true,
+        text: (i) => i.scannerStatus ?? '', cellStyle: 'color:var(--ink-3)' },
+      { id: 'firstUndetectedAt', label: '未検出になった日', width: 150, defaultHidden: true,
+        text: (i) => fmtDate(i.firstUndetectedAt) || '',
+        sortValue: (i) => i.firstUndetectedAt ?? '', cellStyle: 'color:var(--ink-3)' },
       { id: 'report', label: 'レポート', width: 104,
         text: (i) => i.reportName ?? '',
         sortValue: (i) => i.reportAt ?? '',

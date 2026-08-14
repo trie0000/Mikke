@@ -114,6 +114,10 @@ export interface ManagedIssue {
   reportAt?: string;
   /** SharePoint 上の最終更新日時 (ISO)。連携用リストとの差分判定に使う。 */
   updatedAt?: string;
+  /** 対応状況を「完了」にした理由。移行データの「本課題の…理由をご記入ください。」列。
+   *  ★ 連携用リストの対応経緯 (responseNote) とは別。あちらは資産管理者が書く欄で、
+   *    連携内容の取込のたびに上書きされるため、移行データを置く先にできない。 */
+  completionReason?: string;
   /** 連携用リストで資産管理者が書いた対応経緯 (HTML)。Mikke 側のメモとは別に保持する。 */
   responseNote?: string;
   /** 連携用リストで資産管理者が書いた備考。 */

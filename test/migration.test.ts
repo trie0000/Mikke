@@ -173,9 +173,17 @@ describe('1 行の移行', () => {
     expect(i.responsePlan).toBe('9 月中に閉塞');
     expect(i.extConnAppId).toBe('EXT-2026-045');
     expect(i.noAppReason).toBe('社内閉域のため');
-    expect(i.responseNote).toBe('対処済み');
-    expect(i.responseRemarks).toBe('特記なし');
+    expect(i.completionReason).toBe('対処済み');
+    expect(i.mgmtNote).toBe('特記なし');
     expect(i.vulnType).toBe('ポート');
+  });
+
+  it('★ 完了理由と特記事項は連携用リスト由来の項目には入れない', () => {
+    // responseNote / responseRemarks は資産管理者の記入欄の写しで、
+    // 連携内容の取込のたびに上書きされる。移行データを置くと消える。
+    const i = migrateRow(row, ctx).issue!;
+    expect(i.responseNote).toBeUndefined();
+    expect(i.responseRemarks).toBeUndefined();
   });
 
   it('IP は Asset IP、参考情報は同名の Scan_ 列に入る', () => {

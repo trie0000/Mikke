@@ -12,6 +12,7 @@ import { scanDisplayMap, scanFieldName, decodeSpInternalName } from '../lib/scan
 import { nextDetectionWhenPresent, nextDetectionWhenAbsent } from '../lib/detection';
 import { openModal } from '../components/modal';
 import { sanitizeNoteHtml } from '../utils/sanitize';
+import { reportLinkLabel } from '../lib/reportFile';
 import {
   parseEml, parseMsgFile, parseOutlookDragText, looksLikeEml, looksLikeOutlookDrag,
   normalizeMailPlainText, splitQuotedReplyText, splitQuotedReplyHtml, stripHtml, type ParsedMail,
@@ -159,6 +160,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],
         ['取込経緯', i.addedReason || '—'],
+        // 一覧の「レポート」列と同じもの。明細から直接開けるようにする。
+        ['レポート', null, reportLink(i, rootEl)],
         ['最終同期', fmtDate(i.lastSyncedAt) || '—'],
       ]));
     } else if (activeTab === 'scanner') {
@@ -203,7 +206,11 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['事業会社特定の根拠', i.identifyEvidence || '—'],
         ['脆弱性タイプ', i.vulnType || '—'],
         ['WebMAPS管理ID', i.webMapsId || '—'],
+        ['外部接続申請ID', i.extConnAppId || '—'],
+        ['旧管理番号', i.legacyMgmtNumber || '—'],
         ['対応計画', i.responsePlan || '—'],
+        // 移行データの「本課題の…理由をご記入ください。」列。
+        ['完了理由', i.completionReason || '—'],
         ['申請不要理由', i.noAppReason || '—'],
         ['担当', i.assignee || '—'],
         ['期限', fmtDate(i.dueDate, false) || '—'],
@@ -565,6 +572,27 @@ function toLocalDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return '';
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 個別レポートを開くリンク。一覧の「レポート」列と同じ振る舞いにする
+ *  (クリックで SP 上のファイルを取得してダウンロード)。無ければ「—」。 */
+function reportLink(i: ManagedIssue, root: HTMLElement): HTMLElement {
+  if (!i.reportUrl) return el('span', {}, ['—']);
+  return el('a', {
+    href: '#', class: 'mikke-link',
+    title: `${i.reportName ?? ''}${i.reportAt ? ` (${fmtDate(i.reportAt)})` : ''}`,
+    onclick: (e: Event) => void (async () => {
+      e.preventDefault();
+      try {
+        const href = await getRepo().docFileHref(i.reportUrl!);
+        if (!href) { toast(root, 'レポートが見つかりません（削除済みの可能性）。', 'warn'); return; }
+        const a = el('a', { href, download: i.reportName || 'report', style: 'display:none' });
+        root.appendChild(a); a.click(); a.remove();
+      } catch (err) {
+        toast(root, `レポートの取得に失敗しました: ${(err as Error).message}`, 'error');
+      }
+    })(),
+  }, [reportLinkLabel(i.reportName)]);
 }
 
 function metaGrid(rows: ([string, string] | [string, null, HTMLElement])[]): HTMLElement {

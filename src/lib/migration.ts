@@ -458,8 +458,10 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     responsePlan: get(MIG_COL.responsePlan),
     extConnAppId: get(MIG_COL.extConnAppId),
     noAppReason: get(MIG_COL.noAppReason),
-    responseNote: get(MIG_COL.responseNote),
-    responseRemarks: get(MIG_COL.remarks),
+    // ★ 連携用リスト由来の responseNote / responseRemarks には入れない。
+    //   あちらは資産管理者の記入欄の写しで、連携内容の取込のたびに上書きされる。
+    completionReason: get(MIG_COL.responseNote),
+    mgmtNote: get(MIG_COL.remarks),
     vulnType: detectVulnType(title, ctx.vulnTypeRules),
     addedReason: '個別指定',
     lastSyncedAt: ctx.nowIso,
