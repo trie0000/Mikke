@@ -26,7 +26,7 @@ export const MIG_COL = {
   businessCompany: '事業会社',
   affiliateCompany: '管理会社',
   webMaps: 'WebMAPS登録情報',
-  identifyEvidence: 'その他参考情報',
+  identifyEvidence: 'その他の参考情報',
   ipOrUrl: 'IP/URL',
   dynamicIp: '動的IP',
   title: '脆弱性',
@@ -37,10 +37,10 @@ export const MIG_COL = {
   mgmtStatus: '対応状況',
   personName: '氏名',
   personEmail: 'Eメールアドレス',
-  responsePlan: '一ヶ月を目処に早めにご対応ください',
-  extConnAppId: '※ 申請状況を選択ください',
+  responsePlan: '一カ月を目処に早めにご計画ください。',
+  extConnAppId: '※ 申請状況を選択ください。',
   noAppReason: '備考2',
-  responseNote: '本課題の「対応状況」を「完了」にする場合、その理由をご記入ください',
+  responseNote: '本課題の「対応状況」を「完了」にする場合、その理由をご記入ください。',
   remarks: '特記事項',
   description: 'Description',
   remediationSteps: 'Remediation Steps',
@@ -135,6 +135,71 @@ export function resolveCompany(alias: string, idx: Map<string, string>): string 
   return idx.get(k) ?? null;
 }
 
+// ── 旧略称の読み替え ────────────────────────────────────────────────────────
+// 移行データには組織再編前の略称が書かれている行がある。現在の略称に読み替えて
+// から事業会社を引く。旧略称 N 件 → 現在の略称 1 件 (N:1)。
+
+/** 読み替え 1 行。`to` が現在の略称、`from` がそれに読み替える旧略称 (複数可)。 */
+export interface AliasRemapRow { to: string; from: string[] }
+
+/** 設定の保存値を安全な形に整える (壊れた値・空行・重複を落とす)。 */
+export function normalizeAliasRemap(v: unknown): AliasRemapRow[] {
+  if (!Array.isArray(v)) return [];
+  const out: AliasRemapRow[] = [];
+  for (const r of v) {
+    const o = (r ?? {}) as Record<string, unknown>;
+    const to = text(o.to);
+    if (!to) continue;                                  // 読み替え先が無い行は捨てる
+    const from = Array.isArray(o.from)
+      ? [...new Set(o.from.map((x) => text(x)).filter(Boolean))]
+      : [];
+    // ★ 自分自身への読み替えは意味がないので落とす (無限ループの元でもある)。
+    out.push({ to, from: from.filter((f) => f.toLowerCase() !== to.toLowerCase()) });
+  }
+  return out;
+}
+
+/**
+ * 旧略称 → 現在の略称 の逆引き表。比較は前後空白を落として小文字で行う。
+ * ★ 同じ旧略称が複数行に書かれていたら **先に書いた行が勝つ**
+ *   (後勝ちにすると、行を足しただけで既存の読み替え先が変わってしまう)。
+ */
+export function buildRemapIndex(rows: AliasRemapRow[]): Map<string, string> {
+  const idx = new Map<string, string>();
+  for (const r of rows) {
+    for (const f of r.from) {
+      const k = f.toLowerCase();
+      if (!idx.has(k)) idx.set(k, r.to);
+    }
+  }
+  return idx;
+}
+
+/** 同じ旧略称が複数の読み替え先に書かれている箇所を挙げる (画面で注意を出す)。 */
+export function remapConflicts(rows: AliasRemapRow[]): { from: string; to: string[] }[] {
+  const seen = new Map<string, { from: string; to: string[] }>();
+  for (const r of rows) {
+    for (const f of r.from) {
+      const k = f.toLowerCase();
+      const hit = seen.get(k);
+      if (hit) { if (!hit.to.includes(r.to)) hit.to.push(r.to); }
+      else seen.set(k, { from: f, to: [r.to] });
+    }
+  }
+  return [...seen.values()].filter((c) => c.to.length > 1);
+}
+
+/**
+ * 旧略称なら現在の略称に読み替える。当たらなければそのまま返す。
+ * ★ 読み替えは **1 段だけ**。A→B かつ B→C と書かれていても A は B で止める
+ *   (連鎖させると書き順で結果が変わり、循環すると止まらない)。
+ */
+export function applyAliasRemap(alias: string, idx: Map<string, string>): string {
+  const v = text(alias);
+  if (!v) return v;
+  return idx.get(v.toLowerCase()) ?? v;
+}
+
 // ── 脆弱性タイプ ────────────────────────────────────────────────────────────
 export interface VulnTypeRules { port: string[]; admin: string[] }
 export const DEFAULT_VULN_TYPE_RULES: VulnTypeRules = { port: [], admin: [] };
@@ -176,6 +241,8 @@ export interface MigrationRowResult {
 
 export interface MigrationContext {
   aliasIndex: Map<string, string>;
+  /** 旧略称 → 現在の略称 (buildRemapIndex の結果)。 */
+  remapIndex: Map<string, string>;
   vulnTypeRules: VulnTypeRules;
   nowIso: string;
 }
@@ -197,11 +264,15 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
     return { issue: null, assigneeEmail: '', assigneeFallback: '', warnings: ['Issue ID が空のため取り込めません'] };
   }
 
-  // 事業会社は略称から引く。引けなければ空 (アクセス権が付かないので警告する)。
+  // 事業会社は略称から引く。旧略称は現在の略称に読み替えてから引く。
+  // 引けなければ空 (アクセス権が付かないので警告する)。
   const rawCompany = get(MIG_COL.businessCompany);
-  const company = resolveCompany(rawCompany, ctx.aliasIndex);
+  const usedAlias = applyAliasRemap(rawCompany, ctx.remapIndex);
+  const company = resolveCompany(usedAlias, ctx.aliasIndex);
   if (rawCompany && !company) {
-    warnings.push(`事業会社の略称「${rawCompany}」に対応する事業会社が未登録です`);
+    warnings.push(usedAlias === rawCompany
+      ? `事業会社の略称「${rawCompany}」に対応する事業会社が未登録です`
+      : `旧略称「${rawCompany}」を「${usedAlias}」に読み替えましたが、対応する事業会社が未登録です`);
   }
 
   const detectionRaw = get(MIG_COL.detection);
@@ -267,8 +338,10 @@ export interface MigrationPlan {
   ready: number;
   /** Issue ID が無くて取り込めない件数。 */
   skipped: number;
-  /** 事業会社を引けなかった略称 (画面に出して登録を促す)。 */
+  /** 事業会社を引けなかった略称 (画面に出して登録を促す)。Excel に書かれている値。 */
   unknownAliases: string[];
+  /** 実際に読み替えが効いた件数 (設定どおりに当たっているか画面で確かめる)。 */
+  remapped: { from: string; to: string; count: number }[];
 }
 
 /** シート全体の移行計画を組み立てる (書き込みは行わない)。 */
@@ -277,23 +350,37 @@ export function buildMigrationPlan(
   perms: unknown,
   rules: unknown,
   nowIso: string,
+  aliasRemap?: unknown,
 ): MigrationPlan {
+  const remapRows = normalizeAliasRemap(aliasRemap);
   const ctx: MigrationContext = {
     aliasIndex: buildAliasIndex(normalizePerms(perms)),
+    remapIndex: buildRemapIndex(remapRows),
     vulnTypeRules: normalizeVulnTypeRules(rules),
     nowIso,
   };
   const results = rows.map((r) => migrateRow(r, ctx));
   const unknown = new Set<string>();
+  const hits = new Map<string, { from: string; to: string; count: number }>();
   for (const r of rows) {
     const a = text(r[MIG_COL.businessCompany]);
     // 数式のエラー値は「未登録の略称」ではない (原因が別なので混ぜない)。
-    if (a && !isExcelError(a) && !resolveCompany(a, ctx.aliasIndex)) unknown.add(a);
+    if (!a || isExcelError(a)) continue;
+    const mapped = applyAliasRemap(a, ctx.remapIndex);
+    if (mapped !== a) {
+      const key = `${a} ${mapped}`;
+      const hit = hits.get(key);
+      if (hit) hit.count++;
+      else hits.set(key, { from: a, to: mapped, count: 1 });
+    }
+    // 読み替え後も引けない値だけを「未登録」として挙げる。表示は Excel の値のまま。
+    if (!resolveCompany(mapped, ctx.aliasIndex)) unknown.add(a);
   }
   return {
     rows: results,
     ready: results.filter((r) => r.issue).length,
     skipped: results.filter((r) => !r.issue).length,
     unknownAliases: [...unknown].sort((a, b) => a.localeCompare(b, 'ja')),
+    remapped: [...hits.values()].sort((a, b) => b.count - a.count || a.from.localeCompare(b.from, 'ja')),
   };
 }

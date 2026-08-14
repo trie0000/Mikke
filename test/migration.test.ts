@@ -3,6 +3,7 @@ import {
   toDetectionStatus, isRiskAccepted, toMgmtStatus, extractWebMapsIds, isIpAddress,
   buildAliasIndex, resolveCompany, detectVulnType, normalizeVulnTypeRules,
   migrateRow, buildMigrationPlan, MIG_COL, isExcelError,
+  normalizeAliasRemap, buildRemapIndex, applyAliasRemap, remapConflicts,
 } from '../src/lib/migration';
 import { normalizePerms } from '../src/lib/itemPerms';
 
@@ -128,6 +129,7 @@ describe('脆弱性タイプの自動判定', () => {
 describe('1 行の移行', () => {
   const ctx = {
     aliasIndex: buildAliasIndex(PERMS),
+    remapIndex: new Map<string, string>(),
     vulnTypeRules: normalizeVulnTypeRules({ port: ['open port'], admin: ['管理画面'] }),
     nowIso: '2026-08-13T00:00:00Z',
   };
@@ -246,6 +248,7 @@ describe('数式セル (XLOOKUP) の扱い', () => {
   //   引き当たらなかった行は #N/A などのエラー値になるので、そのまま保存しない。
   const ctx = {
     aliasIndex: buildAliasIndex(PERMS),
+    remapIndex: new Map<string, string>(),
     vulnTypeRules: normalizeVulnTypeRules({}),
     nowIso: '2026-08-13T00:00:00Z',
   };
@@ -298,5 +301,118 @@ describe('未解決の略称の集計', () => {
       { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'XYZ' },
     ], PERMS, {}, '2026-08-14T00:00:00Z');
     expect(plan.unknownAliases).toEqual(['XYZ']);
+  });
+});
+
+describe('旧略称の読み替え (旧 N 件 : 現在 1 件)', () => {
+  const REMAP = [
+    { to: 'ENG', from: ['エナジー旧', 'ENERGY', 'ENG-OLD'] },   // N:1
+    { to: 'MOB', from: ['モビリティ旧'] },
+  ];
+
+  it('保存値を整える: 読み替え先が空の行は捨てる', () => {
+    expect(normalizeAliasRemap([{ to: '', from: ['A'] }, { to: 'ENG', from: ['B'] }]))
+      .toEqual([{ to: 'ENG', from: ['B'] }]);
+  });
+
+  it('★ 自分自身への読み替えは落とす (大文字小文字を問わず)', () => {
+    expect(normalizeAliasRemap([{ to: 'ENG', from: ['eng', 'ENERGY'] }]))
+      .toEqual([{ to: 'ENG', from: ['ENERGY'] }]);
+  });
+
+  it('壊れた保存値・空行・重複でも落ちない', () => {
+    expect(normalizeAliasRemap(undefined)).toEqual([]);
+    expect(normalizeAliasRemap('not-an-array')).toEqual([]);
+    expect(normalizeAliasRemap([{ to: ' ENG ', from: [' A ', 'A', '', null] }]))
+      .toEqual([{ to: 'ENG', from: ['A'] }]);
+    expect(normalizeAliasRemap([{ to: 'ENG' }])).toEqual([{ to: 'ENG', from: [] }]);
+  });
+
+  it('旧略称を現在の略称に読み替える。当たらなければそのまま', () => {
+    const idx = buildRemapIndex(normalizeAliasRemap(REMAP));
+    expect(applyAliasRemap('ENERGY', idx)).toBe('ENG');
+    expect(applyAliasRemap('  eng-old ', idx)).toBe('ENG');   // 前後空白・大小を問わない
+    expect(applyAliasRemap('MOB', idx)).toBe('MOB');
+    expect(applyAliasRemap('', idx)).toBe('');
+  });
+
+  it('★ 読み替えは 1 段だけ (A→B, B→C を書いても A は B で止まる)', () => {
+    // 連鎖させると書き順で結果が変わり、循環すると止まらない。
+    const idx = buildRemapIndex(normalizeAliasRemap([
+      { to: 'B', from: ['A'] }, { to: 'C', from: ['B'] },
+    ]));
+    expect(applyAliasRemap('A', idx)).toBe('B');
+  });
+
+  it('★ 循環していても止まる', () => {
+    const idx = buildRemapIndex(normalizeAliasRemap([
+      { to: 'B', from: ['A'] }, { to: 'A', from: ['B'] },
+    ]));
+    expect(applyAliasRemap('A', idx)).toBe('B');
+    expect(applyAliasRemap('B', idx)).toBe('A');
+  });
+
+  it('★ 同じ旧略称が複数行にあると先に書いた行が勝つ', () => {
+    // 後勝ちにすると、行を足しただけで既存の読み替え先が変わってしまう。
+    const rows = normalizeAliasRemap([{ to: 'ENG', from: ['X'] }, { to: 'MOB', from: ['X'] }]);
+    expect(applyAliasRemap('X', buildRemapIndex(rows))).toBe('ENG');
+    expect(remapConflicts(rows)).toEqual([{ from: 'X', to: ['ENG', 'MOB'] }]);
+  });
+
+  it('重複が無ければ conflicts は空', () => {
+    expect(remapConflicts(normalizeAliasRemap(REMAP))).toEqual([]);
+  });
+
+  it('旧略称の行でも事業会社が決まり、アクセス権のキーになる', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENERGY' },
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'ENG-OLD' },
+      { [MIG_COL.issueInstanceId]: 'IID-3', [MIG_COL.businessCompany]: 'モビリティ旧' },
+    ], PERMS, {}, '2026-08-14T00:00:00Z', REMAP);
+    expect(plan.rows.map((r) => r.issue!.businessCompany))
+      .toEqual(['エナジー事業', 'エナジー事業', 'モビリティ事業']);
+    expect(plan.rows.flatMap((r) => r.warnings)).toEqual([]);
+    expect(plan.unknownAliases).toEqual([]);
+  });
+
+  it('読み替えが効いた件数を数える (設定どおり当たっているか画面で確かめる)', () => {
+    const plan = buildMigrationPlan([
+      { [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENERGY' },
+      { [MIG_COL.issueInstanceId]: 'IID-2', [MIG_COL.businessCompany]: 'ENERGY' },
+      { [MIG_COL.issueInstanceId]: 'IID-3', [MIG_COL.businessCompany]: 'モビリティ旧' },
+      { [MIG_COL.issueInstanceId]: 'IID-4', [MIG_COL.businessCompany]: 'ENG' },  // 現行なので数えない
+    ], PERMS, {}, '2026-08-14T00:00:00Z', REMAP);
+    expect(plan.remapped).toEqual([
+      { from: 'ENERGY', to: 'ENG', count: 2 },
+      { from: 'モビリティ旧', to: 'MOB', count: 1 },
+    ]);
+  });
+
+  it('★ 読み替え先が未登録なら、読み替えたことが分かる警告を出す', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: '旧なんとか' }],
+      PERMS, {}, '2026-08-14T00:00:00Z', [{ to: 'ZZZ', from: ['旧なんとか'] }]);
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('');
+    expect(plan.rows[0]!.warnings[0])
+      .toBe('旧略称「旧なんとか」を「ZZZ」に読み替えましたが、対応する事業会社が未登録です');
+    // 画面に出す未登録一覧は Excel に書かれている値 (探せる値) を出す。
+    expect(plan.unknownAliases).toEqual(['旧なんとか']);
+  });
+
+  it('読み替え表を渡さなくても今までどおり動く', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ENG' }],
+      PERMS, {}, '2026-08-14T00:00:00Z');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('エナジー事業');
+    expect(plan.remapped).toEqual([]);
+  });
+});
+
+describe('Excel の列名', () => {
+  it('★ 実ファイルのヘッダと一字一句同じであること (違うと全列が「見つからない」になる)', () => {
+    expect(MIG_COL.identifyEvidence).toBe('その他の参考情報');
+    expect(MIG_COL.responsePlan).toBe('一カ月を目処に早めにご計画ください。');
+    expect(MIG_COL.extConnAppId).toBe('※ 申請状況を選択ください。');
+    expect(MIG_COL.responseNote).toBe('本課題の「対応状況」を「完了」にする場合、その理由をご記入ください。');
   });
 });

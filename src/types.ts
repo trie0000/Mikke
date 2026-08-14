@@ -183,6 +183,9 @@ export interface MikkeSettings {
   /** 脆弱性タイプの判定条件。Title に含まれる文字列で判定する (OR)。
    *  どれにも当たらなければ「脆弱性」。 */
   vulnTypeRules?: { port: string[]; admin: string[] };
+  /** データ移行: 旧事業会社略称 → 現在の略称 の読み替え (旧 N 件 : 現在 1 件)。
+   *  実体は lib/migration.ts の AliasRemapRow[]。 */
+  migrationAliasRemap?: { to: string; from: string[] }[];
 }
 
 /** 検査ツールから一括ダウンロードする対象の種別。
