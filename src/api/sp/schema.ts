@@ -1,5 +1,6 @@
 // SharePoint REST: スキーマ宣言 / FieldSpec → SP REST 型変換。
 // SpRepository.ensureLists から呼ばれる。
+import { LABEL } from '../../lib/fieldLabels';
 import { MGMT_STATUSES, VULN_TYPES } from '../../types';
 
 export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User' | 'Url';
@@ -252,16 +253,16 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     //   Title はビューの既定リンク列 (LinkTitle) なので、ここが ID になっていると
     //   一覧でそのままアイテムを識別できる。別に IssueInstanceId 列を持つと
     //   同じ値の列が 2 本並ぶので置き換えた (旧列は OBSOLETE で削除される)。
-    { name: 'Title', type: 'Text', displayName: 'Issue Instance ID', conditionalFormula: HIDDEN_UNLESS_NEW,
+    { name: 'Title', type: 'Text', displayName: LABEL.issueInstanceId, conditionalFormula: HIDDEN_UNLESS_NEW,
       required: false, indexed: true },
     // 脆弱性の名前。Title を ID にしたので独立した列で持つ。
-    pushed('VulnTitle', '脆弱性タイトル'),
+    pushed('VulnTitle', LABEL.title),
     // ★ Excel 運用時代の暫定 ID (事業会社名-YYMM-XX)。将来廃止するが、移行期間中は
     //   資産管理者にも見えるようにする。内部名は管理対象リスト側と揃えてある。
-    pushed('LegacyMgmtNumber', '旧管理番号'),
-    pushed('DetectionStatus', '検知状況'),
-    pushed('FirstSeen', '初回検知日', { type: 'DateTime', dateOnly: true }),
-    pushed('LastSeen', '最終検知日', { type: 'DateTime', dateOnly: true }),
+    pushed('LegacyMgmtNumber', LABEL.legacyMgmtNumber),
+    pushed('DetectionStatus', LABEL.detectionStatus),
+    pushed('FirstSeen', LABEL.firstSeen, { type: 'DateTime', dateOnly: true }),
+    pushed('LastSeen', LABEL.lastSeen, { type: 'DateTime', dateOnly: true }),
 
     // ── 資産情報 (ヘッダーカードで読み取り専用表示 / 本体では新規時のみ入力可) ──
     //   ※ SharePoint のフォーム本体はセクション見出ししか付けられず、カード化・段組が
@@ -272,28 +273,28 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('AssetIp', 'IP'),
     pushed('AssetFqdn', 'FQDN'),
     pushed('AssetType', '資産タイプ'),
-    pushed('BusinessCompany', '事業会社'),
-    pushed('AffiliateCompany', '管理会社'),
-    pushed('AssetMgmtId', 'Web資産管理ID', { indexed: true }),
-    pushed('ExtConnAppId', '外部接続申請ID'),
+    pushed('BusinessCompany', LABEL.businessCompany),
+    pushed('AffiliateCompany', LABEL.affiliateCompany),
+    pushed('AssetMgmtId', LABEL.assetMgmtId, { indexed: true }),
+    pushed('ExtConnAppId', LABEL.extConnAppId),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
-    pushed('IdentifyEvidence', '管理事業会社特定の根拠', { type: 'Note' }),
+    pushed('IdentifyEvidence', LABEL.identifyEvidence, { type: 'Note' }),
     // ★ 脆弱性レポート (PDF) へのリンク。資産管理者が一覧から 1 クリックで開ける
     //   ようにするための列。値は Mikke が保存した SP 上のファイルのサーバ相対 URL、
     //   表示テキストはファイル名。同じファイルはアイテムの添付にも付く (権限が
     //   ライブラリまで届かない利用者はそちらから開ける)。
-    pushed('ReportUrl', '脆弱性レポート', { type: 'Url' }),
+    pushed('ReportUrl', LABEL.report, { type: 'Url' }),
 
     // ── 対応 (資産管理者が記入) ──
-    { name: 'ResponseStatus', type: 'Choice', displayName: '対応状況',
+    { name: 'ResponseStatus', type: 'Choice', displayName: LABEL.responseStatus,
       choices: [...RESPONSE_STATUS_CHOICES], indexed: true },
-    { name: 'Responder', type: 'User', displayName: '対応者（AD情報）' },
-    { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: '対応期日' },
-    { name: 'ResponseNote', type: 'NoteRich', displayName: '対応経緯',
+    { name: 'Responder', type: 'User', displayName: LABEL.responder },
+    { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: LABEL.responseDueDate },
+    { name: 'ResponseNote', type: 'NoteRich', displayName: LABEL.responseNote,
       schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
 
     // ── その他 ──
-    { name: 'Remarks', type: 'Note', displayName: '備考' },
+    { name: 'Remarks', type: 'Note', displayName: LABEL.responseRemarks },
   ];
 }
 

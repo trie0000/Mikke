@@ -1,5 +1,6 @@
 // F4: 管理対象脆弱性の一覧画面。subbar → toolbar → table の順 (UI ルール §1.2)。
 // 表本体 (列フィルタ/全文表示/仮想スクロール/列リサイズ/列ドラッグ) は DataTable に委譲。
+import { LABEL } from '../lib/fieldLabels';
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
@@ -570,10 +571,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     const cols: DataColumn<ManagedIssue>[] = [
       // ★ ラベルは 'Title'。CSV の Title 列がそのまま入るので、管理列に Title を
       //   足すと同じ内容の列が 2 本並ぶ。重複は buildColumns の scanCols 側で外す。
-      { id: 'title', label: 'Title', width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
-      { id: 'detection', label: '検知', width: 96, text: (i) => i.detectionStatus,
+      { id: 'title', label: LABEL.title, width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
+      { id: 'detection', label: LABEL.detectionStatus, width: 110, text: (i) => i.detectionStatus,
         sortValue: (i) => DETECTION_ORDER[i.detectionStatus] ?? 0, render: (i) => detectionBadge(i.detectionStatus) },
-      { id: 'mgmt', label: '対応', width: 96, text: (i) => i.mgmtStatus,
+      { id: 'mgmt', label: LABEL.responseStatus, width: 110, text: (i) => i.mgmtStatus,
         sortValue: (i) => MGMT_ORDER[i.mgmtStatus] ?? 0, render: (i) => mgmtBadge(i.mgmtStatus) },
       // 連携用リストと比べた通知の状態。判定は notifyStatus.ts (更新時刻の比較)。
       { id: 'notify', label: '通知', width: 100,
@@ -585,24 +586,24 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       //   移行期間中だけ残す旧管理番号。
       // ★ ラベルは検査ツールの呼び名どおり 'Issue Instance ID'。CSV にも同名列が来るので、
       //   管理列に足しても重複表示しない (BUILTIN_SCAN_COLUMNS)。
-      { id: 'iid', label: 'Issue Instance ID', width: 170, text: (i) => i.issueInstanceId },
-      { id: 'assetMgmtId', label: 'WebMAPS管理ID', width: 150, text: (i) => assetMgmtIdOf(i) },
-      { id: 'extConnAppId', label: '外部接続申請ID', width: 140, text: (i) => i.extConnAppId ?? '' },
-      { id: 'legacyMgmtNumber', label: '旧管理番号', width: 140, text: (i) => i.legacyMgmtNumber ?? '',
+      { id: 'iid', label: LABEL.issueInstanceId, width: 170, text: (i) => i.issueInstanceId },
+      { id: 'assetMgmtId', label: LABEL.assetMgmtId, width: 150, text: (i) => assetMgmtIdOf(i) },
+      { id: 'extConnAppId', label: LABEL.extConnAppId, width: 140, text: (i) => i.extConnAppId ?? '' },
+      { id: 'legacyMgmtNumber', label: LABEL.legacyMgmtNumber, width: 140, text: (i) => i.legacyMgmtNumber ?? '',
         cellStyle: 'color:var(--ink-3)' },
       // 組織。管理対象に入れた値が優先、無ければ資産リストから引く。
-      { id: 'businessCompany', label: '事業会社', width: 150, text: (i) => companyOf(i, 'business') },
-      { id: 'affiliateCompany', label: '管理会社', width: 150, text: (i) => companyOf(i, 'affiliate') },
+      { id: 'businessCompany', label: LABEL.businessCompany, width: 150, text: (i) => companyOf(i, 'business') },
+      { id: 'affiliateCompany', label: LABEL.affiliateCompany, width: 150, text: (i) => companyOf(i, 'affiliate') },
       { id: 'vulnType', label: '脆弱性タイプ', width: 110, text: (i) => i.vulnType ?? '' },
-      { id: 'identifyEvidence', label: '事業会社特定の根拠', width: 200, text: (i) => i.identifyEvidence ?? '' },
-      { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
-      { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
+      { id: 'identifyEvidence', label: LABEL.identifyEvidence, width: 200, text: (i) => i.identifyEvidence ?? '' },
+      { id: 'assignee', label: LABEL.responder, width: 120, text: (i) => i.assignee ?? '' },
+      { id: 'due', label: LABEL.responseDueDate, width: 116, text: (i) => fmtDate(i.dueDate, false) || '' },
       // ★ 検知日は明細と同じ値 (i.lastSeen / i.firstSeen) を同じ表記で出す。
       //   CSV の 'Last Seen' / 'First Seen' 列は同じ内容なので出さない
       //   (BUILTIN_SCAN_COLUMNS)。あちらは原文のままで JST に直っていない。
-      { id: 'lastSeen', label: '最終検知日', width: 150, text: (i) => fmtDate(i.lastSeen) || '',
+      { id: 'lastSeen', label: LABEL.lastSeen, width: 150, text: (i) => fmtDate(i.lastSeen) || '',
         sortValue: (i) => i.lastSeen ?? '' },
-      { id: 'firstSeen', label: '初回検知日', width: 150, text: (i) => fmtDate(i.firstSeen) || '',
+      { id: 'firstSeen', label: LABEL.firstSeen, width: 150, text: (i) => fmtDate(i.firstSeen) || '',
         sortValue: (i) => i.firstSeen ?? '', cellStyle: 'color:var(--ink-3)' },
       // 「情報更新」で取得した個別レポート。形式は検査ツールが返したまま (現状 PDF) なので、
       // リンク表記もファイル名の拡張子から出す。行クリック (詳細を開く) と競合しないよう
@@ -626,7 +627,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       { id: 'firstUndetectedAt', label: '未検出になった日', width: 150, defaultHidden: true,
         text: (i) => fmtDate(i.firstUndetectedAt) || '',
         sortValue: (i) => i.firstUndetectedAt ?? '', cellStyle: 'color:var(--ink-3)' },
-      { id: 'report', label: 'レポート', width: 104,
+      { id: 'report', label: LABEL.report, width: 104,
         text: (i) => i.reportName ?? '',
         sortValue: (i) => i.reportAt ?? '',
         render: (i) => (i.reportUrl

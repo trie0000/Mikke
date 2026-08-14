@@ -1,4 +1,4 @@
-// F2: 既存管理対象の編集モーダル。MgmtStatus / 対象外 / 担当 / 期限 / メモ を編集。
+// F2: 既存管理対象の編集モーダル。対応状況 / 対象外 / 対応者 / 対応期日 / メモ を編集。
 // DetectionStatus は読み取り専用 (取込が管理)。
 import { el } from '../utils/dom';
 import { openModal } from '../components/modal';
@@ -7,6 +7,7 @@ import { getRepo } from '../api/repo';
 import { diffManagedIssue } from '../lib/issueChangeLog';
 import { MGMT_STATUSES } from '../types';
 import { normalizePerms, registeredCompanies } from '../lib/itemPerms';
+import { LABEL } from '../lib/fieldLabels';
 import type { ManagedIssue, MgmtStatus } from '../types';
 
 export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: () => void): void {
@@ -66,23 +67,23 @@ export function openEditModal(root: HTMLElement, issue: ManagedIssue, onSaved: (
 
   const body = el('div', {}, [
     el('div', { class: 'mikke-field' }, [
-      el('label', { class: 'mikke-field-label' }, ['検知ステータス (取込が自動管理 / 編集不可)']),
+      el('label', { class: 'mikke-field-label' }, [`${LABEL.detectionStatus} (取込が自動管理 / 編集不可)`]),
       el('div', {}, [issue.detectionStatus]),
     ]),
-    field('対応ステータス', statusSel),
+    field(LABEL.responseStatus, statusSel),
     el('div', { class: 'mikke-field' }, [
       el('label', { class: 'mikke-field-label' }, [
         oosCheck, el('span', { style: 'margin-left:6px' }, ['管理対象外にする']),
       ]),
     ]),
     field('対象外の理由', oosReason),
-    field('事業会社 (アクセス権画面で登録した一覧から選択)', bizSel),
-    field('管理会社', affiliateCompany),
-    field('外部接続申請ID', extConnAppId),
+    field(`${LABEL.businessCompany} (アクセス権画面で登録した一覧から選択)`, bizSel),
+    field(LABEL.affiliateCompany, affiliateCompany),
+    field(LABEL.extConnAppId, extConnAppId),
     // 移行期間中だけの参考情報。将来この列ごと廃止する。
-    field('旧管理番号 (Excel 運用時の暫定 ID。移行期間中のみ)', legacyMgmtNumber),
-    field('担当者', assignee),
-    field('対応期限', due),
+    field(`${LABEL.legacyMgmtNumber} (Excel 運用時の暫定 ID。移行期間中のみ)`, legacyMgmtNumber),
+    field(LABEL.responder, assignee),
+    field(LABEL.responseDueDate, due),
     field('メモ', note),
   ]);
 

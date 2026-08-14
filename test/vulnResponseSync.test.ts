@@ -5,6 +5,7 @@ import {
   type VulnResponseRow,
 } from '../src/lib/vulnResponseSync';
 import { vulnResponseFieldSpecs, toFieldSchema, spFieldTypeString, VULNRESPONSE_VIEW_FIELDS, VULNRESPONSE_OBSOLETE_FIELDS } from '../src/api/sp/schema';
+import { LABEL } from '../src/lib/fieldLabels';
 import type { ManagedIssue, ManagedAsset } from '../src/types';
 
 function issue(over: Partial<ManagedIssue> = {}): ManagedIssue {
@@ -279,7 +280,7 @@ describe('URL 列の作成スキーマ', () => {
   it('SP.FieldUrl / FieldTypeKind 11 / ハイパーリンク表示で作る', () => {
     const spec = vulnResponseFieldSpecs().find((f) => f.name === 'ReportUrl')!;
     expect(spec.type).toBe('Url');
-    expect(spec.displayName).toBe('脆弱性レポート');
+    expect(spec.displayName).toBe('レポート');
     expect(toFieldSchema(spec)).toEqual({
       __metadata: { type: 'SP.FieldUrl' }, FieldTypeKind: 11, Title: 'ReportUrl', DisplayFormat: 0,
     });
@@ -462,5 +463,49 @@ describe('資産管理者の記入欄を上書きするかの選択', () => {
     expect(cols).not.toContain('Responder');
     expect(cols).not.toContain('ResponseNote');
     expect(cols).not.toContain('Remarks');
+  });
+});
+
+describe('項目名の一本化', () => {
+  // ★ 同じ値を画面ごとに別の名前で呼ばないこと。実際に 8 箇所ずれていた
+  //   (Last Seen / 最終検出 / 最終検知日、WebMAPS管理ID / Web資産管理ID 等)。
+  //   連携用リストの表示名は src/lib/fieldLabels.ts の LABEL から取る。
+  const nameOf = (col: string): string | undefined =>
+    vulnResponseFieldSpecs().find((f) => f.name === col)?.displayName;
+
+  it('★ 連携用リストの列表示名が LABEL と一致する', () => {
+    expect(nameOf('Title')).toBe(LABEL.issueInstanceId);   // 突合キーは組込み Title 列
+    expect(nameOf('VulnTitle')).toBe(LABEL.title);
+    expect(nameOf('LegacyMgmtNumber')).toBe(LABEL.legacyMgmtNumber);
+    expect(nameOf('DetectionStatus')).toBe(LABEL.detectionStatus);
+    expect(nameOf('FirstSeen')).toBe(LABEL.firstSeen);
+    expect(nameOf('LastSeen')).toBe(LABEL.lastSeen);
+    expect(nameOf('BusinessCompany')).toBe(LABEL.businessCompany);
+    expect(nameOf('AffiliateCompany')).toBe(LABEL.affiliateCompany);
+    expect(nameOf('AssetMgmtId')).toBe(LABEL.assetMgmtId);
+    expect(nameOf('ExtConnAppId')).toBe(LABEL.extConnAppId);
+    expect(nameOf('IdentifyEvidence')).toBe(LABEL.identifyEvidence);
+    expect(nameOf('ReportUrl')).toBe(LABEL.report);
+    expect(nameOf('ResponseStatus')).toBe(LABEL.responseStatus);
+    expect(nameOf('Responder')).toBe(LABEL.responder);
+    expect(nameOf('DueDate')).toBe(LABEL.responseDueDate);
+    expect(nameOf('ResponseNote')).toBe(LABEL.responseNote);
+    expect(nameOf('Remarks')).toBe(LABEL.responseRemarks);
+  });
+
+  it('★ 過去にずれていた名前が復活していない', () => {
+    const names = vulnResponseFieldSpecs().map((f) => f.displayName);
+    for (const bad of ['Web資産管理ID', '管理事業会社特定の根拠', '脆弱性レポート', '対応者（AD情報）']) {
+      expect(names, bad).not.toContain(bad);
+    }
+    expect(LABEL.lastSeen).toBe('最終検知日');       // 「最終検出」「Last Seen」ではない
+    expect(LABEL.assetMgmtId).toBe('WebMAPS管理ID'); // 「Web資産管理ID」ではない
+  });
+
+  it('資産管理者が記入する欄は 5 項目', () => {
+    // 明細の「資産管理者の記入」タブに出す並びと同じ。
+    expect([LABEL.responseStatus, LABEL.responder, LABEL.responseDueDate,
+      LABEL.responseNote, LABEL.responseRemarks])
+      .toEqual(['対応状況', '対応者', '対応期日', '対応経緯', '備考']);
   });
 });

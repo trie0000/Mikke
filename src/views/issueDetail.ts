@@ -1,4 +1,5 @@
 // F5: 脆弱性詳細画面。タブストリップで複数 Issue を切替、4 タブ構成。
+import { LABEL } from '../lib/fieldLabels';
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState } from '../state';
@@ -19,7 +20,7 @@ import {
 } from '../lib/emlParser';
 import type { ManagedIssue, ResponseHistory, ChangeLogEntry, HistoryThread, HistorySource } from '../types';
 
-type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'history' | 'changelog';
+type DetailTab = 'overview' | 'scanner' | 'mgmt' | 'response' | 'history' | 'changelog';
 
 // 詳細タブのフォーカス履歴 (表示した順)。アクティブタブを閉じたとき
 // 「前回開いていたタブ」へ戻すために使う。モジュールスコープで再描画を跨いで保持。
@@ -119,6 +120,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       { key: 'overview', label: '概要' },
       { key: 'scanner', label: '検査ツール詳細' },
       { key: 'mgmt', label: '管理情報' },
+      { key: 'response', label: '資産管理者の記入' },
       { key: 'history', label: '対応履歴' },
       { key: 'changelog', label: '更新履歴' },
     ];
@@ -149,26 +151,24 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     if (activeTab === 'overview') {
       body.appendChild(metaGrid([
         ['ID', `#${i.id}`],
-        ['Issue Instance ID', i.issueInstanceId],
-        ['Title', i.title],
+        [LABEL.issueInstanceId, i.issueInstanceId],
+        [LABEL.title, i.title],
         // 深刻度は Mikke の項目としては表示しない (CSV に Severity 列があれば
         // 検査ツール詳細タブに原本のまま並ぶ)。
-        ['検知', null, detectionBadge(i.detectionStatus)],
-        // 一覧と同じ 2 項目に分ける: 対応 = Mikke 側の対応状況 / 通知 = 連携用リストとの同期状態。
-        ['対応', null, mgmtBadge(i.mgmtStatus)],
+        [LABEL.detectionStatus, null, detectionBadge(i.detectionStatus)],
+        // 通知 = 連携用リストとの同期状態 (対応状況とは別軸)。
+        [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
         ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
-        ['担当', i.assignee || '—'],
-        ['期限', fmtDate(i.dueDate, false) || '—'],
         ['取込経緯', i.addedReason || '—'],
         // 一覧の「レポート」列と同じもの。明細から直接開けるようにする。
-        ['レポート', null, reportLink(i, rootEl)],
+        [LABEL.report, null, reportLink(i, rootEl)],
         ['最終同期', fmtDate(i.lastSyncedAt) || '—'],
       ]));
     } else if (activeTab === 'scanner') {
       const rows: [string, string][] = [
         ['検査ツールステータス', i.scannerStatus || '—'],
-        ['初回検知日', fmtDate(i.firstSeen) || '—'],
-        ['最終検知日', fmtDate(i.lastSeen) || '—'],
+        [LABEL.firstSeen, fmtDate(i.firstSeen) || '—'],
+        [LABEL.lastSeen, fmtDate(i.lastSeen) || '—'],
         ['未検出になった日', fmtDate(i.firstUndetectedAt) || '—'],
       ];
       // CSV の全項目を「ヘッダの列順」で表示する。
@@ -197,27 +197,50 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       body.appendChild(el('p', { style: 'margin-top:var(--s-5);color:var(--ink-4);font-size:var(--fs-sm)' },
         ['※ 検査ツール由来の項目は読み取り専用です。']));
     } else if (activeTab === 'mgmt') {
+      // ★ 資産管理者が記入する項目 (対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考) は
+      //   「資産管理者の記入」タブに分けてある。ここは Mikke 側で管理する項目だけ。
       body.appendChild(metaGrid([
-        ['対応', null, mgmtBadge(i.mgmtStatus)],
-        ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
         ['対象外', i.isOutOfScope ? `はい — ${i.outOfScopeReason || ''}` : 'いいえ'],
-        ['事業会社', i.businessCompany || '—'],
-        ['管理会社', i.affiliateCompany || '—'],
-        ['事業会社特定の根拠', i.identifyEvidence || '—'],
+        [LABEL.businessCompany, i.businessCompany || '—'],
+        [LABEL.affiliateCompany, i.affiliateCompany || '—'],
+        [LABEL.identifyEvidence, i.identifyEvidence || '—'],
         ['脆弱性タイプ', i.vulnType || '—'],
-        ['WebMAPS管理ID', i.webMapsId || '—'],
-        ['外部接続申請ID', i.extConnAppId || '—'],
-        ['旧管理番号', i.legacyMgmtNumber || '—'],
+        [LABEL.assetMgmtId, i.webMapsId || '—'],
+        [LABEL.extConnAppId, i.extConnAppId || '—'],
+        [LABEL.legacyMgmtNumber, i.legacyMgmtNumber || '—'],
         ['対応計画', i.responsePlan || '—'],
         // 移行データの「本課題の…理由をご記入ください。」列。
         ['完了理由', i.completionReason || '—'],
         ['申請不要理由', i.noAppReason || '—'],
-        ['担当', i.assignee || '—'],
-        ['期限', fmtDate(i.dueDate, false) || '—'],
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, ['メモ']),
         el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.mgmtNote || '（メモなし）']),
+      ]));
+    } else if (activeTab === 'response') {
+      // ★ 連携用リストで資産管理者が記入する欄。項目名は連携用リストと同じにしてある
+      //   (同じ値を画面ごとに別の名前で呼ばない)。
+      //   対応状況 / 対応者 / 対応期日 は Mikke 側の項目と同じ実体で、
+      //   「連携内容を取込」で相手の記入内容が入ってくる。
+      body.appendChild(metaGrid([
+        [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
+        [LABEL.responder, i.assignee || '—'],
+        [LABEL.responseDueDate, fmtDate(i.dueDate, false) || '—'],
+      ]));
+      body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
+        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseNote]),
+        noteBlock(i.responseNote, '（記入なし）'),
+      ]));
+      body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
+        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseRemarks]),
+        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.responseRemarks || '（記入なし）']),
+      ]));
+      body.appendChild(el('p', { style: 'margin-top:var(--s-6);color:var(--ink-4);font-size:var(--fs-sm);line-height:1.8' }, [
+        `※ 連携用リストの記入内容を取り込んだ日時: ${fmtDate(i.responseSyncedAt) || '（未取込）'}`,
+        el('br'),
+        '※ この画面は読み取り専用です。記入は連携用リスト側で行います。',
+        el('br'),
+        '※ 対応状況・対応期日は「連携リストへ反映」で上書きを選んだときだけ Mikke から書き戻します。',
       ]));
     } else if (activeTab === 'history') {
       body.appendChild(renderHistory());
@@ -572,6 +595,15 @@ function toLocalDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return '';
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** リッチテキスト (対応経緯) の表示。HTML が入るので必ずサニタイズしてから出す。 */
+function noteBlock(html: string | undefined, empty: string): HTMLElement {
+  const v = (html ?? '').trim();
+  if (!v) return el('div', { style: 'color:var(--ink-3)' }, [empty]);
+  const box = el('div', { style: 'color:var(--ink);line-height:1.8' });
+  box.innerHTML = sanitizeNoteHtml(v);
+  return box;
 }
 
 /** 個別レポートを開くリンク。一覧の「レポート」列と同じ振る舞いにする
