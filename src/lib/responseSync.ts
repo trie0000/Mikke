@@ -95,7 +95,7 @@ export function buildResponseSyncPlan(
     };
 
     const st = toMgmtStatus(r.responseStatus);
-    if (st) put('対応ステータス', issue.mgmtStatus, st, () => { patch.mgmtStatus = st; });
+    if (st) put(LABEL.mgmtStatus, issue.mgmtStatus, st, () => { patch.mgmtStatus = st; });
 
     put(LABEL.responder, text(issue.assignee), text(r.responderName),
       () => { patch.assignee = text(r.responderName); });

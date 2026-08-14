@@ -262,7 +262,13 @@ export class MockRepository implements Repository {
 
   /** モックには連携用リストの実体が無いので、全件「未通知」になる。 */
   async vulnResponseUpdatedAt(): Promise<Map<string, string>> {
-    return new Map();
+    // mock でも「通知」列と「連携リスト更新」の表示を確認できるように、
+    // 保存してある連携用リストの行から updatedAt を返す。
+    const out = new Map<string, string>();
+    for (const r of load<(VulnResponseRow & { updatedAt?: string })[]>(LS_VULNRESPONSE, [])) {
+      if (r.issueInstanceId && r.updatedAt) out.set(r.issueInstanceId, r.updatedAt);
+    }
+    return out;
   }
 
   /** モックには連携用リストの実体が無いので、開く URL も無い (未作成扱い)。 */

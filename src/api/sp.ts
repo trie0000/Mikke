@@ -1511,6 +1511,7 @@ export class SpRepository implements Repository {
       // SP の組み込み列。連携用リストとの新旧比較に使う (書き込みはしない)。
       updatedAt: row.Modified ?? undefined,
       responseRemarks: row.ResponseRemarks ?? undefined,
+      responsePushedAt: row.ResponsePushedAt ?? undefined,
       responseSyncedAt: row.ResponseSyncedAt ?? undefined,
       scanFields,
     };
@@ -1548,6 +1549,7 @@ export class SpRepository implements Repository {
     if (p.reportName !== undefined) row.ReportName = p.reportName;
     if (p.reportAt !== undefined) row.ReportAt = p.reportAt || null;
     if (p.responseRemarks !== undefined) row.ResponseRemarks = p.responseRemarks;
+    if (p.responsePushedAt !== undefined) row.ResponsePushedAt = p.responsePushedAt || null;
     if (p.responseSyncedAt !== undefined) row.ResponseSyncedAt = p.responseSyncedAt || null;
     // ★ 検査ツール由来の全項目は個別列ではなく ScanData に JSON で集約する
     //   (SP の列数上限/行サイズ上限を回避)。キーは元の "Scan_<元名>" のまま保持し、

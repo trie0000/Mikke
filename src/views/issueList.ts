@@ -1,6 +1,7 @@
 // F4: 管理対象脆弱性の一覧画面。subbar → toolbar → table の順 (UI ルール §1.2)。
 // 表本体 (列フィルタ/全文表示/仮想スクロール/列リサイズ/列ドラッグ) は DataTable に委譲。
 import { LABEL, RESPONSE_FIELD_ORDER } from '../lib/fieldLabels';
+import { hasResponseUpdate } from '../lib/responseAlert';
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getState, setState, setFilter } from '../state';
@@ -39,6 +40,23 @@ const BUILTIN_SCAN_COLUMNS = new Set(['title', 'issueinstanceid', 'lastseen', 'f
 const normScanCol = (c: string): string =>
   c.replace(/^Scan_/, '').replace(/[\s\u3000_]+/g, '').toLowerCase();
 
+/** 明細を開いたときに覚えた「その時点の連携リスト更新時刻」 (Issue Instance ID → ISO)。
+ *  ★ これがあると「連携リスト更新」の表示を一度で消せる。端末ごとに持つ
+ *    (誰が見たかではなく、自分が見たかどうかの話なので SP には保存しない)。 */
+const LS_SEEN = 'mikke.seenResponseAt';
+const seenMap = (): Record<string, string> => {
+  try { return JSON.parse(localStorage.getItem(LS_SEEN) ?? '{}') as Record<string, string>; }
+  catch { return {}; }
+};
+const markSeen = (iid: string, at?: string): void => {
+  if (!iid || !at) return;
+  try {
+    const m = seenMap();
+    m[iid] = at;
+    localStorage.setItem(LS_SEEN, JSON.stringify(m));
+  } catch { /* noop */ }
+};
+
 /** 明細へ移る直前の一覧のスクロール位置 (縦・横)。
  *  ★ 一覧は明細から戻るたびに作り直されるので、関数の外に置いて持ち越す。
  *    戻したら null に戻し、他の画面を経由したときに効かないようにする。 */
@@ -65,6 +83,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let cache: ManagedIssue[] = [];
   /** 連携用リストの Issue Instance ID → 最終更新日時。通知ステータスの判定に使う。 */
   let vulnResponseUpdated = new Map<string, string>();
+  /** 明細を開いて確認済みの時刻 (端末ローカル)。読み込みのたびに取り直す。 */
+  let seen: Record<string, string> = seenMap();
   /** 資産キー → Web資産管理ID (資産リストの管理番号)。脆弱性から引くための対応表。 */
   let assetMgmtIdByKey = new Map<string, string>();
   /** 資産キー → 事業会社 / 管理会社。管理対象に直接入っていない場合の引き先。 */
@@ -95,6 +115,14 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     },
     onVisibleChange: (v) => { lastFiltered = v as ManagedIssue[]; updateSubbar(); },
     emptyText: '該当する管理対象がありません。',
+  });
+
+  /** その脆弱性に「連携リスト更新」を出すか。 */
+  const responseUpdated = (i: ManagedIssue): boolean => hasResponseUpdate({
+    linkedAt: vulnResponseUpdated.get(i.issueInstanceId),
+    pushedAt: i.responsePushedAt,
+    issueUpdatedAt: i.updatedAt,
+    seenAt: seen[i.issueInstanceId],
   });
 
   const notifyOf = (i: ManagedIssue): NotifyStatus =>
@@ -153,6 +181,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         getRepo().listAssets().catch(() => []),
       ]);
       vulnResponseUpdated = notified;
+      seen = seenMap();
       assetColumns = (settings.assetColumns && settings.assetColumns.length)
         ? settings.assetColumns
         : (settings.assetColumn ? [settings.assetColumn] : [DEFAULT_ASSET_COLUMN]);
@@ -543,6 +572,18 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           : ` / アクセス権の付与に失敗: ${(e as Error).message}`;
       }
 
+      // ★ 反映した日時を管理対象に残す (明細の「連携リスト反映」に出す)。
+      //   書き込みに成功した分だけを対象にする。
+      const pushedIids = new Set([
+        ...plan.creates.map((c) => c.issueInstanceId),
+        ...plan.updates.map((u) => u.issueInstanceId),
+      ]);
+      if (pushedIids.size && !fail) {
+        const now = new Date().toISOString();
+        await mapLimit(cache.filter((i) => pushedIids.has(i.issueInstanceId)), REFRESH_PARALLEL,
+          async (i) => { try { await getRepo().updateIssue(i.id, { responsePushedAt: now }); } catch { /* 反映自体は成功 */ } });
+      }
+
       const attMsg = att.ok || att.fail
         ? ` / レポート添付 ${att.ok} 件${att.fail ? ` (失敗 ${att.fail}: ${att.firstErr})` : ''}` : '';
       const summary = total
@@ -620,6 +661,20 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     const cols: DataColumn<ManagedIssue>[] = [
       // ★ ラベルは 'Title'。CSV の Title 列がそのまま入るので、管理列に Title を
       //   足すと同じ内容の列が 2 本並ぶ。重複は buildColumns の scanCols 側で外す。
+      // ★ 先頭の #No 列。連携リストで事業会社が書き換えたものはここで気づけるようにする。
+      //   明細を開いたら消える (開いた時点の更新時刻を覚えて突き合わせる)。
+      { id: 'no', label: '#No', width: 132, sortValue: (i) => i.id,
+        text: (i) => `#${i.id}${responseUpdated(i) ? ' 連携リスト更新' : ''}`,
+        render: (i) => (responseUpdated(i)
+          ? el('span', { style: 'display:inline-flex;align-items:center;gap:var(--s-2)' }, [
+            el('span', { style: 'color:var(--ink-3)' }, [`#${i.id}`]),
+            el('span', {
+              class: 'mikke-badge',
+              style: 'background:var(--accent-soft);color:var(--accent-strong);white-space:nowrap',
+              title: '連携リストで事業会社が記入内容を書き換えました。明細を開くと消えます。',
+            }, ['連携リスト更新']),
+          ])
+          : el('span', { style: 'color:var(--ink-3)' }, [`#${i.id}`])) },
       { id: 'title', label: LABEL.title, width: 260, text: (i) => i.title ?? '', render: (i) => i.title || '(無題)' },
       { id: 'detection', label: LABEL.detectionStatus, width: 110, text: (i) => i.detectionStatus,
         sortValue: (i) => DETECTION_ORDER[i.detectionStatus] ?? 0, render: (i) => detectionBadge(i.detectionStatus) },
@@ -693,7 +748,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       cols.push({ id: `scan:${c}`, label: c.replace(/^Scan_/, ''), width: 160,
         text: (i) => resolveScanValue(i.scanFields, c, csvHeaders) || '', cellStyle: 'color:var(--ink-2)' });
     }
-    cols.push({ id: 'synced', label: '最終同期', width: 150, text: (i) => fmtDate(i.lastSyncedAt) || '',
+    cols.push({ id: 'synced', label: '脆弱性ツール同期', width: 150, text: (i) => fmtDate(i.lastSyncedAt) || '',
       sortValue: (i) => i.lastSyncedAt ?? '', cellStyle: 'color:var(--ink-3)' });
     return cols;
   }
@@ -1141,6 +1196,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   }
 
   function openDetail(id: number): void {
+    // ★ 開いた時点の連携リストの更新時刻を覚える → 「連携リスト更新」が消える。
+    const target = cache.find((i) => i.id === id);
+    if (target) markSeen(target.issueInstanceId, vulnResponseUpdated.get(target.issueInstanceId));
     // ★ 明細へ移る前に一覧のスクロール位置を覚えておく (縦・横とも)。
     //   一覧は毎回作り直されるので、覚えておかないと先頭に戻ってしまう。
     savedScroll = { top: tableWrap.scrollTop, left: tableWrap.scrollLeft };

@@ -163,7 +163,10 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         ['取込経緯', i.addedReason || '—'],
         // 一覧の「レポート」列と同じもの。明細から直接開けるようにする。
         [LABEL.report, null, reportLink(i, rootEl)],
-        ['最終同期', fmtDate(i.lastSyncedAt) || '—'],
+        // ★ どの経路の時刻かが分かるよう 3 つに分ける (「最終同期」だけでは読めない)。
+        ['脆弱性ツール同期', fmtDate(i.lastSyncedAt) || '—'],
+        ['連携リスト反映', fmtDate(i.responsePushedAt) || '—'],
+        ['連携リスト取り込み', fmtDate(i.responseSyncedAt) || '—'],
       ]));
     } else if (activeTab === 'scanner') {
       const rows: [string, string][] = [

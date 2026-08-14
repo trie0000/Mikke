@@ -143,6 +143,7 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     { name: 'ReportAt', type: 'DateTime' },
     // 連携用リストから取り込んだ事業会社の記入内容 (Mikke 側の内部メモとは別に保持)。
     { name: 'ResponseRemarks', type: 'Note' },
+    { name: 'ResponsePushedAt', type: 'DateTime' },
     { name: 'ResponseSyncedAt', type: 'DateTime' },
     // ★ 検査ツール由来の全項目 (Scan_*) は個別列にせず、この 1 列へ JSON で集約する。
     //   個別列にすると SP の列数上限 (複数行テキストは 1 リスト約192列) と 1 行あたり

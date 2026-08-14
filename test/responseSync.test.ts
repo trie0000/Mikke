@@ -96,7 +96,7 @@ describe('buildResponseSyncPlan: 連携用リスト → 管理対象への取り
     const plan = buildResponseSyncPlan(
       [issue({ mgmtStatus: '未着手' })], [res({ responseStatus: '対応済み' })], NOW);
     expect(plan.patches[0]!.changes).toEqual([
-      { field: '対応ステータス', before: '未着手', after: '対応済み' },
+      { field: 'ステータス', before: '未着手', after: '対応済み' },
     ]);
   });
 

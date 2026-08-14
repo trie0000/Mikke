@@ -117,7 +117,9 @@ export interface ManagedIssue {
   updatedAt?: string;
   /** 連携用リストで資産管理者が書いた備考。 */
   responseRemarks?: string;
-  /** 連携用リストの内容を取り込んだ日時 (ISO)。 */
+  /** 連携リストへ反映した日時 (ISO)。Mikke → 連携リスト の向き。 */
+  responsePushedAt?: string;
+  /** 連携リストの内容を取り込んだ日時 (ISO)。連携リスト → Mikke の向き。 */
   responseSyncedAt?: string;
   /** 動的列 (F6 でチェックした検査ツール CSV 列。キー = Scan_<列名>)。 */
   scanFields: Record<string, string>;
