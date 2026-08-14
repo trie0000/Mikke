@@ -23,20 +23,31 @@ export interface VulnResponseFields {
   businessCompany: string;
   affiliateCompany: string;
   assetMgmtId: string;
-  extConnAppId: string;
   relatedAssets: string;
   identifyEvidence: string;
   /** 脆弱性レポート (PDF) の SP 上のサーバ相対 URL。空なら未取得。 */
   reportUrl: string;
 
   // ── 資産管理者が記入する欄 (既定では書かない) ──────────────────────────────
-  // ★ この 2 つだけ任意にしてある。値が入っているときだけ body に載るので、
-  //   上書きを選ばなければ今までどおり資産管理者の記入内容には触れない。
-  //   Excel から移行した対応状況をリスト側へ載せたいときに使う。
+  // ★ ここは全部 任意 (?) にしてある。値が入っているときだけ body に載るので、
+  //   上書きを選ばなければ資産管理者の記入内容には一切触れない。
+  //   Excel から移行した内容をリスト側へ載せたいときだけ ON にする。
   /** 対応状況 (Mikke 側の mgmtStatus)。 */
   responseStatus?: string;
   /** 対応期日 (Mikke 側の dueDate)。 */
   responseDueDate?: string;
+  /** 外部接続申請ID。 */
+  extConnAppId?: string;
+  /** 対応計画。 */
+  responsePlan?: string;
+  /** 完了理由。 */
+  completionReason?: string;
+  /** 申請不要理由。 */
+  noAppReason?: string;
+  /** 対応経緯 (リッチテキスト HTML)。 */
+  responseNote?: string;
+  /** 備考。 */
+  responseRemarks?: string;
 }
 
 /** VulnResponseFields のキー → 連携用リストの SP 列名 (内部名)。
@@ -57,12 +68,17 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   businessCompany: 'BusinessCompany',
   affiliateCompany: 'AffiliateCompany',
   assetMgmtId: 'AssetMgmtId',
-  extConnAppId: 'ExtConnAppId',
   relatedAssets: 'RelatedAssets',
   identifyEvidence: 'IdentifyEvidence',
   reportUrl: 'ReportUrl',
   responseStatus: 'ResponseStatus',
   responseDueDate: 'DueDate',
+  extConnAppId: 'ExtConnAppId',
+  responsePlan: 'ResponsePlan',
+  completionReason: 'CompletionReason',
+  noAppReason: 'NoAppReason',
+  responseNote: 'ResponseNote',
+  responseRemarks: 'Remarks',
 };
 
 /**
@@ -95,10 +111,12 @@ export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note'
   issueInstanceId: 'text', title: 'text', legacyMgmtNumber: 'text', detectionStatus: 'text',
   firstSeen: 'date', lastSeen: 'date',
   assetIp: 'text', assetFqdn: 'text', assetType: 'text',
-  businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text', extConnAppId: 'text',
+  businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text',
   relatedAssets: 'note', identifyEvidence: 'note',
   reportUrl: 'url',
-  responseStatus: 'text', responseDueDate: 'date',
+  responseStatus: 'text', responseDueDate: 'date', extConnAppId: 'text',
+  responsePlan: 'note', completionReason: 'note', noAppReason: 'note',
+  responseNote: 'note', responseRemarks: 'note',
 };
 
 /**
@@ -210,7 +228,6 @@ export function toVulnResponseFields(
     businessCompany: text(issue.businessCompany) || pick((a) => a.businessCompany),
     affiliateCompany: text(issue.affiliateCompany) || pick((a) => a.affiliateCompany),
     assetMgmtId: pick((a) => a.mgmtNumber),
-    extConnAppId: text(issue.extConnAppId),
     relatedAssets: related.join(' | '),
     identifyEvidence: pick((a) => a.identifyEvidence),
     // ★ レポートは「情報更新」で取得したときに管理対象へ記録される。ここでは
@@ -220,6 +237,12 @@ export function toVulnResponseFields(
     ...(overwriteResponse ? {
       responseStatus: text(issue.mgmtStatus),
       responseDueDate: jstDateOnly(issue.dueDate),
+      extConnAppId: text(issue.extConnAppId),
+      responsePlan: text(issue.responsePlan),
+      completionReason: text(issue.completionReason),
+      noAppReason: text(issue.noAppReason),
+      responseNote: text(issue.responseNote),
+      responseRemarks: text(issue.responseRemarks),
     } : {}),
   };
   // 単一行テキスト列は 255 文字・改行なしに収める (超えると SP が 500 を返す)。

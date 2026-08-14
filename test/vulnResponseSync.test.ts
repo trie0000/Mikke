@@ -59,11 +59,16 @@ describe('toVulnResponseFields: 連携用リストへ書く内容', () => {
     expect(f.assetFqdn).toBe('unknown.example.com');
   });
 
-  it('外部接続申請ID・旧管理番号は管理対象から渡す', () => {
-    const f = toVulnResponseFields(
-      issue({ extConnAppId: 'EXT-1', legacyMgmtNumber: 'AAA-2606-01' }), [], ASSETS);
-    expect(f.extConnAppId).toBe('EXT-1');
+  it('旧管理番号は管理対象から渡す', () => {
+    const f = toVulnResponseFields(issue({ legacyMgmtNumber: 'AAA-2606-01' }), [], ASSETS);
     expect(f.legacyMgmtNumber).toBe('AAA-2606-01');
+  });
+
+  it('★ 外部接続申請ID は資産管理者の記入欄なので、既定では書かない', () => {
+    const f = toVulnResponseFields(issue({ extConnAppId: 'EXT-1' }), [], ASSETS);
+    expect(f.extConnAppId).toBeUndefined();
+    expect(toVulnResponseFields(issue({ extConnAppId: 'EXT-1' }), [], ASSETS, true).extConnAppId)
+      .toBe('EXT-1');
   });
 });
 
@@ -458,11 +463,27 @@ describe('資産管理者の記入欄を上書きするかの選択', () => {
     expect(plan.deletes).toEqual([]);
   });
 
-  it('対応者・対応経緯・備考には触れない (列そのものを持たない)', () => {
-    const cols = Object.values(VULNRESPONSE_COLUMN);
-    expect(cols).not.toContain('Responder');
-    expect(cols).not.toContain('ResponseNote');
-    expect(cols).not.toContain('Remarks');
+  it('★ 対応者だけは書き込まない (SP のユーザー列。表示名からは引けない)', () => {
+    expect(Object.values(VULNRESPONSE_COLUMN)).not.toContain('Responder');
+  });
+
+  it('★ 上書きを選ぶと記入欄 8 項目すべてが載る', () => {
+    const f = toVulnResponseFields(issue({
+      mgmtStatus: '対応済み', dueDate: '2026-09-30T00:00:00Z', extConnAppId: 'EXT-1',
+      responsePlan: '9 月中に閉塞', completionReason: '恒久対処済み', noAppReason: '社内閉域',
+      responseNote: '<p>対処しました</p>', responseRemarks: '特記なし',
+    }), keysOf(), ASSETS, true);
+    expect({
+      responseStatus: f.responseStatus, responseDueDate: f.responseDueDate,
+      extConnAppId: f.extConnAppId, responsePlan: f.responsePlan,
+      completionReason: f.completionReason, noAppReason: f.noAppReason,
+      responseNote: f.responseNote, responseRemarks: f.responseRemarks,
+    }).toEqual({
+      responseStatus: '対応済み', responseDueDate: '2026-09-30T00:00:00Z',
+      extConnAppId: 'EXT-1', responsePlan: '9 月中に閉塞',
+      completionReason: '恒久対処済み', noAppReason: '社内閉域',
+      responseNote: '<p>対処しました</p>', responseRemarks: '特記なし',
+    });
   });
 });
 

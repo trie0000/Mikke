@@ -22,7 +22,6 @@ export const LABEL = {
   businessCompany: '事業会社',
   affiliateCompany: '管理会社',
   assetMgmtId: 'WebMAPS管理ID',
-  extConnAppId: '外部接続申請ID',
   identifyEvidence: '事業会社特定の根拠',
   report: 'レポート',
 
@@ -30,8 +29,16 @@ export const LABEL = {
   responseStatus: '対応状況',
   responder: '対応者',
   responseDueDate: '対応期日',
+  extConnAppId: '外部接続申請ID',
+  responsePlan: '対応計画',
+  completionReason: '完了理由',
+  noAppReason: '申請不要理由',
   responseNote: '対応経緯',
   responseRemarks: '備考',
+
+  // ── Mikke だけの項目 (連携用リストには出ない) ──
+  /** ★「備考」(資産管理者が書く欄) と紛らわしいので、Mikke 側は「社内メモ」と呼ぶ。 */
+  mgmtNote: '社内メモ',
 } as const;
 
 export type LabelKey = keyof typeof LABEL;

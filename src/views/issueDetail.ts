@@ -206,26 +206,27 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         [LABEL.identifyEvidence, i.identifyEvidence || '—'],
         ['脆弱性タイプ', i.vulnType || '—'],
         [LABEL.assetMgmtId, i.webMapsId || '—'],
-        [LABEL.extConnAppId, i.extConnAppId || '—'],
         [LABEL.legacyMgmtNumber, i.legacyMgmtNumber || '—'],
-        ['対応計画', i.responsePlan || '—'],
-        // 移行データの「本課題の…理由をご記入ください。」列。
-        ['完了理由', i.completionReason || '—'],
-        ['申請不要理由', i.noAppReason || '—'],
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
-        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, ['メモ']),
-        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.mgmtNote || '（メモなし）']),
+        el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.mgmtNote]),
+        el('div', { style: 'white-space:pre-wrap;color:var(--ink)' }, [i.mgmtNote || '（記入なし）']),
+        el('div', { style: 'margin-top:var(--s-2);color:var(--ink-4);font-size:var(--fs-sm)' }, [
+          '※ Mikke の中だけで使うメモです。連携用リストには出ません（資産管理者が書く欄は「備考」）。',
+        ]),
       ]));
     } else if (activeTab === 'response') {
       // ★ 連携用リストで資産管理者が記入する欄。項目名は連携用リストと同じにしてある
       //   (同じ値を画面ごとに別の名前で呼ばない)。
-      //   対応状況 / 対応者 / 対応期日 は Mikke 側の項目と同じ実体で、
-      //   「連携内容を取込」で相手の記入内容が入ってくる。
+      //   全項目が「連携内容を取込」で相手の記入内容として入ってくる。
       body.appendChild(metaGrid([
         [LABEL.responseStatus, null, mgmtBadge(i.mgmtStatus)],
         [LABEL.responder, i.assignee || '—'],
         [LABEL.responseDueDate, fmtDate(i.dueDate, false) || '—'],
+        [LABEL.extConnAppId, i.extConnAppId || '—'],
+        [LABEL.responsePlan, i.responsePlan || '—'],
+        [LABEL.completionReason, i.completionReason || '—'],
+        [LABEL.noAppReason, i.noAppReason || '—'],
       ]));
       body.appendChild(el('div', { style: 'margin-top:var(--s-6)' }, [
         el('div', { class: 'mikke-meta-label', style: 'margin-bottom:var(--s-2)' }, [LABEL.responseNote]),
@@ -240,7 +241,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
         el('br'),
         '※ この画面は読み取り専用です。記入は連携用リスト側で行います。',
         el('br'),
-        '※ 対応状況・対応期日は「連携リストへ反映」で上書きを選んだときだけ Mikke から書き戻します。',
+        '※ 上の項目は「連携リストへ反映」で上書きを選んだときだけ Mikke から書き戻します（対応者を除く）。',
       ]));
     } else if (activeTab === 'history') {
       body.appendChild(renderHistory());

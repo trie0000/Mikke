@@ -350,7 +350,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           el('p', { style: 'margin:0 0 var(--s-4)' }, [
             '脆弱性・資産の情報を連携用リストへ書き込みます。',
             el('br'),
-            '通常は資産管理者が記入した欄（対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考）には触れません。',
+            '通常は資産管理者が記入する欄には触れません。',
           ]),
           el('label', {
             style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;'
@@ -358,13 +358,20 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           }, [
             check,
             el('span', {}, [
-              el('div', {}, ['資産管理者が記入した「対応状況」「対応期日」を Mikke の値で上書きする']),
+              el('div', {}, ['資産管理者が記入する欄を Mikke の値で上書きする']),
               el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1)' }, [
-                'Excel から移行した対応状況をリスト側へ載せるときに使います。',
+                `上書きする項目: ${[LABEL.responseStatus, LABEL.responseDueDate, LABEL.extConnAppId,
+                  LABEL.responsePlan, LABEL.completionReason, LABEL.noAppReason,
+                  LABEL.responseNote, LABEL.responseRemarks].join(' / ')}`,
                 el('br'),
-                '相手が既に記入していた内容は消えます。戻せません。',
+                'Excel から移行した内容をリスト側へ載せるときに使います。',
                 el('br'),
-                '「対応者」「対応経緯」「備考」は、この指定でも上書きしません。',
+                el('b', {}, ['相手が既に記入していた内容は消えます。戻せません。']),
+                el('br'),
+                `Mikke 側が空の項目は、リスト側も空になります。`,
+                el('br'),
+                `「${LABEL.responder}」だけは上書きしません（SharePoint のユーザー列で、`
+                + '表示名からは確実に引けないため）。',
               ]),
             ]),
           ]),
@@ -610,16 +617,20 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       // リンク側で stopPropagation する。
       // ★ Excel 取込の項目と明細の項目を一覧にも揃える。既定は非表示にして
       //   今までの見た目を変えず、「列」ボタンから出せるようにする。
-      { id: 'responsePlan', label: '対応計画', width: 200, defaultHidden: true,
+      { id: 'responsePlan', label: LABEL.responsePlan, width: 200, defaultHidden: true,
         text: (i) => i.responsePlan ?? '' },
-      { id: 'completionReason', label: '完了理由', width: 200, defaultHidden: true,
+      { id: 'completionReason', label: LABEL.completionReason, width: 200, defaultHidden: true,
         text: (i) => i.completionReason ?? '' },
-      { id: 'noAppReason', label: '申請不要理由', width: 200, defaultHidden: true,
+      { id: 'noAppReason', label: LABEL.noAppReason, width: 200, defaultHidden: true,
         text: (i) => i.noAppReason ?? '' },
       { id: 'outOfScopeReason', label: '対象外の理由', width: 200, defaultHidden: true,
         text: (i) => i.outOfScopeReason ?? '' },
-      { id: 'mgmtNote', label: 'メモ', width: 220, defaultHidden: true,
+      { id: 'mgmtNote', label: LABEL.mgmtNote, width: 220, defaultHidden: true,
         text: (i) => stripHtml(i.mgmtNote ?? '') },
+      { id: 'responseNote', label: LABEL.responseNote, width: 220, defaultHidden: true,
+        text: (i) => stripHtml(i.responseNote ?? '') },
+      { id: 'responseRemarks', label: LABEL.responseRemarks, width: 200, defaultHidden: true,
+        text: (i) => i.responseRemarks ?? '' },
       { id: 'addedReason', label: '取込経緯', width: 110, defaultHidden: true,
         text: (i) => i.addedReason ?? '', cellStyle: 'color:var(--ink-3)' },
       { id: 'scannerStatus', label: '検査ツールステータス', width: 160, defaultHidden: true,

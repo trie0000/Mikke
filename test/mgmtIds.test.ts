@@ -52,9 +52,13 @@ describe('管理系 ID の持ち場所', () => {
   });
 
   it('連携用リストの ID 系はカードで見せるので本体では隠す', () => {
-    for (const n of ['AssetMgmtId', 'ExtConnAppId', 'LegacyMgmtNumber']) {
+    for (const n of ['AssetMgmtId', 'LegacyMgmtNumber']) {
       expect(vuln.find((f) => f.name === n)?.conditionalFormula).toBeTruthy();
     }
+  });
+
+  it('★ 外部接続申請ID だけは資産管理者が入力する欄 (本体に出す)', () => {
+    expect(vuln.find((f) => f.name === 'ExtConnAppId')?.conditionalFormula).toBeUndefined();
   });
 
   it('索引付きにして絞り込みに耐えるようにしている', () => {

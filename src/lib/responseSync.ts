@@ -1,12 +1,13 @@
 // 連携用リスト (資産管理者が記入) → Mikke の管理対象一覧 への取り込み。
 //
-// 資産管理者が書き換えられるのは 対応状況 / 対応者 / 対応期日 / 対応経緯 / 備考 の 5 つ。
+// 資産管理者が書き換えられるのは 対応状況 / 対応者 / 対応期日 / 外部接続申請ID /
+// 対応計画 / 完了理由 / 申請不要理由 / 対応経緯 / 備考 の 9 つ。
 // これらを管理対象へ反映する計画をここで組み立てる (UI 非依存の純関数)。
 //
 // ★ 方針
 //   - 実際に値が変わるものだけを patch にする (毎回全件書き込まない)。
-//   - 対応経緯・備考は Mikke 側の「メモ」とは別のフィールドに入れる。
-//     管理者が書いたメモを資産管理者の入力で消さないため。
+//   - 対応経緯・備考は Mikke 側の「社内メモ」とは別のフィールドに入れる。
+//     管理者が書いた社内メモを資産管理者の入力で消さないため。
 //   - 対応状況は Mikke の対応ステータスへそのまま入れる (値が 1:1 で対応する)。
 //     対応表に無い値は無視する (SharePoint 側で選択肢が増えても壊れないように)。
 import type { ManagedIssue, MgmtStatus, FieldChange } from '../types';
@@ -25,6 +26,14 @@ export interface VulnResponseItem {
   responseNote?: string;
   /** 備考。 */
   remarks?: string;
+  /** 外部接続申請ID。 */
+  extConnAppId?: string;
+  /** 対応計画。 */
+  responsePlan?: string;
+  /** 完了理由。 */
+  completionReason?: string;
+  /** 申請不要理由。 */
+  noAppReason?: string;
 }
 
 export interface ResponseSyncPatch {
@@ -102,6 +111,20 @@ export function buildResponseSyncPlan(
 
     put('備考 (連携)', text(issue.responseRemarks), text(r.remarks),
       () => { patch.responseRemarks = text(r.remarks); });
+
+    // ★ ここも資産管理者が書く欄。書いてもらった内容が Mikke に返ってこないと
+    //   一覧で状況が追えない。
+    put('外部接続申請ID', text(issue.extConnAppId), text(r.extConnAppId),
+      () => { patch.extConnAppId = text(r.extConnAppId); });
+
+    put('対応計画', text(issue.responsePlan), text(r.responsePlan),
+      () => { patch.responsePlan = text(r.responsePlan); });
+
+    put('完了理由', text(issue.completionReason), text(r.completionReason),
+      () => { patch.completionReason = text(r.completionReason); });
+
+    put('申請不要理由', text(issue.noAppReason), text(r.noAppReason),
+      () => { patch.noAppReason = text(r.noAppReason); });
 
     if (!changes.length) { unchanged++; continue; }
     patch.responseSyncedAt = nowIso;

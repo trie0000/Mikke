@@ -276,7 +276,6 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('BusinessCompany', LABEL.businessCompany),
     pushed('AffiliateCompany', LABEL.affiliateCompany),
     pushed('AssetMgmtId', LABEL.assetMgmtId, { indexed: true }),
-    pushed('ExtConnAppId', LABEL.extConnAppId),
     pushed('RelatedAssets', '関連資産', { type: 'Note' }),
     pushed('IdentifyEvidence', LABEL.identifyEvidence, { type: 'Note' }),
     // ★ 脆弱性レポート (PDF) へのリンク。資産管理者が一覧から 1 クリックで開ける
@@ -285,11 +284,17 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     //   ライブラリまで届かない利用者はそちらから開ける)。
     pushed('ReportUrl', LABEL.report, { type: 'Url' }),
 
-    // ── 対応 (資産管理者が記入) ──
+    // ── 対応 (資産管理者が記入。conditionalFormula を付けない = フォームで入力できる) ──
     { name: 'ResponseStatus', type: 'Choice', displayName: LABEL.responseStatus,
       choices: [...RESPONSE_STATUS_CHOICES], indexed: true },
     { name: 'Responder', type: 'User', displayName: LABEL.responder },
     { name: 'DueDate', type: 'DateTime', dateOnly: true, displayName: LABEL.responseDueDate },
+    // ★ 外部接続申請ID・対応計画・完了理由・申請不要理由も資産管理者が書く欄。
+    //   以前は脆弱性情報として読み取り専用にしていたが、記入できないと運用が回らない。
+    { name: 'ExtConnAppId', type: 'Text', displayName: LABEL.extConnAppId, indexed: true },
+    { name: 'ResponsePlan', type: 'Note', displayName: LABEL.responsePlan },
+    { name: 'CompletionReason', type: 'Note', displayName: LABEL.completionReason },
+    { name: 'NoAppReason', type: 'Note', displayName: LABEL.noAppReason },
     { name: 'ResponseNote', type: 'NoteRich', displayName: LABEL.responseNote,
       schemaXmlAttributes: { RichTextMode: 'FullHtml' } },
 
@@ -333,7 +338,7 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
 export const VULNRESPONSE_VIEW_FIELDS = [
   'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'LastSeen',
   'AssetFqdn', 'AssetIp', 'BusinessCompany', 'AssetMgmtId', 'ReportUrl',
-  'ResponseStatus', 'DueDate', 'Responder',
+  'ResponseStatus', 'DueDate', 'Responder', 'ExtConnAppId',
 ];
 
 /** MikkeImportLog: 取込履歴。 */

@@ -488,7 +488,8 @@ export class SpRepository implements Repository {
     const out: VulnResponseItem[] = [];
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
-      + '?$select=Title,ResponseStatus,DueDate,ResponseNote,Remarks,Responder/Title'
+      + '?$select=Title,ResponseStatus,DueDate,ResponseNote,Remarks,Responder/Title,'
+      + 'ExtConnAppId,ResponsePlan,CompletionReason,NoAppReason'
       + '&$expand=Responder&$top=5000';
     try {
       while (url) {
@@ -502,6 +503,10 @@ export class SpRepository implements Repository {
             dueDate: row.DueDate ?? undefined,
             responseNote: row.ResponseNote ?? undefined,
             remarks: row.Remarks ?? undefined,
+            extConnAppId: row.ExtConnAppId ?? undefined,
+            responsePlan: row.ResponsePlan ?? undefined,
+            completionReason: row.CompletionReason ?? undefined,
+            noAppReason: row.NoAppReason ?? undefined,
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
@@ -518,10 +523,11 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
       + '?$select=Id,Title,VulnTitle,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
       + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
-      + 'ExtConnAppId,RelatedAssets,IdentifyEvidence,ReportUrl,'
+      + 'RelatedAssets,IdentifyEvidence,ReportUrl,'
       // 資産管理者の記入欄。上書きを選んだときに「変わった分だけ書く」ための比較に使う
       // (毎回書くと相手の更新時刻が動いて「通知」列の判定が濁る)。
-      + 'ResponseStatus,DueDate&$top=5000';
+      + 'ResponseStatus,DueDate,ExtConnAppId,ResponsePlan,CompletionReason,NoAppReason,'
+      + 'ResponseNote,Remarks&$top=5000';
     try {
       while (url) {
         const j: any = await this.spGet(url);
@@ -540,13 +546,18 @@ export class SpRepository implements Repository {
             businessCompany: r.BusinessCompany ?? '',
             affiliateCompany: r.AffiliateCompany ?? '',
             assetMgmtId: r.AssetMgmtId ?? '',
-            extConnAppId: r.ExtConnAppId ?? '',
             relatedAssets: r.RelatedAssets ?? '',
             identifyEvidence: r.IdentifyEvidence ?? '',
             // URL 列は {Url, Description} で返る。差分は Url だけで比べる。
             reportUrl: r.ReportUrl?.Url ?? '',
             responseStatus: r.ResponseStatus ?? '',
             responseDueDate: r.DueDate ?? '',
+            extConnAppId: r.ExtConnAppId ?? '',
+            responsePlan: r.ResponsePlan ?? '',
+            completionReason: r.CompletionReason ?? '',
+            noAppReason: r.NoAppReason ?? '',
+            responseNote: r.ResponseNote ?? '',
+            responseRemarks: r.Remarks ?? '',
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;

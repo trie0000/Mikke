@@ -108,21 +108,25 @@ describe('schema: 連携用リストの列定義', () => {
   });
 
   it('資産管理者の入力欄には表示条件を付けない (常に出す)', () => {
-    for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks']) {
+    for (const name of ['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
+                        'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBeUndefined();
     }
   });
 
   it('資産情報はヘッダーカードで見せるので本体では隠す', () => {
     for (const name of ['AssetIp', 'AssetFqdn', 'AssetType', 'BusinessCompany', 'AffiliateCompany',
-                        'AssetMgmtId', 'ExtConnAppId', 'RelatedAssets', 'IdentifyEvidence']) {
+                        'AssetMgmtId', 'RelatedAssets', 'IdentifyEvidence']) {
       expect(specs.find((f) => f.name === name)?.conditionalFormula).toBe(HIDDEN_UNLESS_NEW);
     }
   });
 
-  it('本体に出る入力欄は 対応状況 → 対応者 → 対応期日 → 対応経緯 → 備考 の順', () => {
+  it('★ 本体に出る入力欄は資産管理者が記入する 9 項目だけ、定義順に並ぶ', () => {
+    // 外部接続申請ID・対応計画・完了理由・申請不要理由も資産管理者が書く欄。
+    // 読み取り専用にしていると運用が回らない。
     const visible = specs.filter((f) => !f.conditionalFormula).map((f) => f.name);
-    expect(visible).toEqual(['ResponseStatus', 'Responder', 'DueDate', 'ResponseNote', 'Remarks']);
+    expect(visible).toEqual(['ResponseStatus', 'Responder', 'DueDate', 'ExtConnAppId',
+      'ResponsePlan', 'CompletionReason', 'NoAppReason', 'ResponseNote', 'Remarks']);
   });
 
   it('旧レイアウトの列は定義に残っていない (削除対象)', () => {
