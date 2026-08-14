@@ -231,3 +231,83 @@ describe('テーブルオブジェクトの見出し行を見る', () => {
     expect(rows).toEqual([{ 'Issue ID': 'IID-9', 事業会社: 'MOB' }]);
   });
 });
+
+describe('見出しと値がずれる読み取り事故', () => {
+  const book = (sheetXml: string, sharedXml?: string): Record<string, string>[] => {
+    const files: [string, string][] = [
+      ['[Content_Types].xml', '<Types/>'],
+      ['_rels/.rels', '<Relationships/>'],
+      ['xl/workbook.xml',
+        '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<sheets><sheet name="list" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/worksheets/sheet1.xml', `<worksheet><sheetData>${sheetXml}</sheetData></worksheet>`],
+    ];
+    if (sharedXml) files.push(['xl/sharedStrings.xml', `<sst>${sharedXml}</sst>`]);
+    return parseXlsxSheet(buildZip(files), 'list')!.rows;
+  };
+
+  it('★ 空の共有文字列 <si/> でも番号がずれない', () => {
+    // 事故: <si/> を数え飛ばすと以降の番号が 1 つずつ前にずれ、
+    //   本来ブランクの列に**別の列の値**が出る (「11312」のような無関係な値)。
+    const rows = book(
+      '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>2</v></c></row>'
+      + '<row r="2"><c r="A2" t="s"><v>3</v></c><c r="B2" t="s"><v>4</v></c></row>',
+      '<si><t>Issue ID</t></si><si/><si><t>参考情報</t></si><si><t>IID-1</t></si><si/>',
+    );
+    // 番号 2 = 参考情報 / 番号 4 = 空。ずれていれば見出しに IID-1 が出る。
+    expect(rows).toEqual([{ 'Issue ID': 'IID-1', 参考情報: '' }]);
+  });
+
+  it('★ ふりがな (rPh) を本文に混ぜない', () => {
+    const rows = book(
+      '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+      + '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>',
+      '<si><t>事業会社</t><rPh sb="0" eb="4"><t>ジギョウガイシャ</t></rPh><phoneticPr fontId="1"/></si>'
+      + '<si><t>脆弱性</t></si>'
+      + '<si><t>エナジー事業</t><rPh sb="4" eb="6"><t>ジギョウ</t></rPh></si>'
+      + '<si><t>TLS 1.0</t></si>',
+    );
+    expect(rows).toEqual([{ 事業会社: 'エナジー事業', 脆弱性: 'TLS 1.0' }]);
+  });
+
+  it('★ r 属性の無いブックでも、空セル <c/> で列がずれない', () => {
+    // 事故: 自己終了の空セルを読み飛ばすと、その分だけ右の値が左にずれる。
+    const rows = book(
+      '<row><c t="inlineStr"><is><t>A列</t></is></c><c t="inlineStr"><is><t>B列</t></is></c>'
+      + '<c t="inlineStr"><is><t>C列</t></is></c></row>'
+      + '<row><c t="inlineStr"><is><t>a</t></is></c><c/>'
+      + '<c t="inlineStr"><is><t>c</t></is></c></row>',
+    );
+    expect(rows).toEqual([{ A列: 'a', B列: '', C列: 'c' }]);
+  });
+
+  it('★ 見出しはテーブル定義より実際のセルの文字を優先する', () => {
+    // tableColumn の name が実際のセルとずれているブックがある。
+    // 定義側を優先すると、見えている名前と中身が食い違う。
+    const sheetXml =
+      '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>'
+      + '<row r="1"><c r="A1" t="inlineStr"><is><t>Issue ID</t></is></c>'
+      + '<c r="B1" t="inlineStr"><is><t>その他の参考情報</t></is></c></row>'
+      + '<row r="2"><c r="A2" t="inlineStr"><is><t>IID-1</t></is></c>'
+      + '<c r="B2" t="inlineStr"><is><t>手掛かり</t></is></c></row>'
+      + '</sheetData><tableParts count="1"><tablePart r:id="rId1"/></tableParts></worksheet>';
+    const rows = parseXlsxSheet(buildZip([
+      ['[Content_Types].xml', '<Types/>'],
+      ['_rels/.rels', '<Relationships/>'],
+      ['xl/workbook.xml',
+        '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<sheets><sheet name="list" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/worksheets/sheet1.xml', sheetXml],
+      ['xl/worksheets/_rels/sheet1.xml.rels',
+        '<Relationships><Relationship Id="rId1" Target="../tables/table1.xml"/></Relationships>'],
+      ['xl/tables/table1.xml',
+        '<table ref="A1:B2" headerRowCount="1"><tableColumns>'
+        + '<tableColumn name="列1"/><tableColumn name="古い名前"/></tableColumns></table>'],
+    ]), 'list')!.rows;
+    expect(rows).toEqual([{ 'Issue ID': 'IID-1', その他の参考情報: '手掛かり' }]);
+  });
+});

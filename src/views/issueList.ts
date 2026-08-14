@@ -34,9 +34,14 @@ const REPORT_FETCH_PARALLEL = 6;
  *  import.ts の COL_TITLE='Title' / ISSUE_ID_COLUMN='Issue Instance ID' がそのまま
  *  'Title' 列・'Issue Instance ID' 列に入るので、同じ内容の列が 2 本並んでしまう。
  *  比較は空白・アンダースコアを除いた小文字で行う ('Issue Instance ID' / 'issue_instance_id' 等)。 */
-const BUILTIN_SCAN_COLUMNS = new Set(['title', 'issueinstanceid']);
+const BUILTIN_SCAN_COLUMNS = new Set(['title', 'issueinstanceid', 'lastseen', 'firstseen']);
 const normScanCol = (c: string): string =>
   c.replace(/^Scan_/, '').replace(/[\s\u3000_]+/g, '').toLowerCase();
+
+/** 明細へ移る直前の一覧のスクロール位置 (縦・横)。
+ *  ★ 一覧は明細から戻るたびに作り直されるので、関数の外に置いて持ち越す。
+ *    戻したら null に戻し、他の画面を経由したときに効かないようにする。 */
+let savedScroll: { top: number; left: number } | null = null;
 
 const DETECTION_ORDER: Record<string, number> = { '新規': 5, '再検知': 4, '継続': 3, '未検出(New)': 2, '未検出': 1 };
 const MGMT_ORDER: Record<string, number> = {
@@ -126,6 +131,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   void load();
 
   async function load(): Promise<void> {
+    // ★ 読み直しでスクロール位置を失わない。明細から戻ったときは覚えた位置を、
+    //   それ以外 (連携内容の取込など、画面にいるままの読み直し) は今の位置を戻す。
+    //   ここを入れないと、読み込み後に走る自動取り込みの再読込で先頭に飛ぶ。
+    const keep = savedScroll ?? { top: tableWrap.scrollTop, left: tableWrap.scrollLeft };
+    savedScroll = null;
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
@@ -154,6 +164,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       setState({ issueCount: all.length }, { silent: true });
       table.setColumns(buildColumns());
       paint();
+      applyScroll(keep);
       // 画面を開いた直後に 1 回だけ、連携用リストの記入内容を取り込む。
       if (!autoSyncDone) { autoSyncDone = true; void syncFromVulnResponse(true); }
     } catch (e) {
@@ -538,6 +549,13 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       { id: 'identifyEvidence', label: '事業会社特定の根拠', width: 200, text: (i) => i.identifyEvidence ?? '' },
       { id: 'assignee', label: '担当', width: 120, text: (i) => i.assignee ?? '' },
       { id: 'due', label: '期限', width: 108, text: (i) => fmtDate(i.dueDate, false) || '' },
+      // ★ 検知日は明細と同じ値 (i.lastSeen / i.firstSeen) を同じ表記で出す。
+      //   CSV の 'Last Seen' / 'First Seen' 列は同じ内容なので出さない
+      //   (BUILTIN_SCAN_COLUMNS)。あちらは原文のままで JST に直っていない。
+      { id: 'lastSeen', label: '最終検知日', width: 150, text: (i) => fmtDate(i.lastSeen) || '',
+        sortValue: (i) => i.lastSeen ?? '' },
+      { id: 'firstSeen', label: '初回検知日', width: 150, text: (i) => fmtDate(i.firstSeen) || '',
+        sortValue: (i) => i.firstSeen ?? '', cellStyle: 'color:var(--ink-3)' },
       // 「情報更新」で取得した個別レポート。形式は検査ツールが返したまま (現状 PDF) なので、
       // リンク表記もファイル名の拡張子から出す。行クリック (詳細を開く) と競合しないよう
       // リンク側で stopPropagation する。
@@ -894,6 +912,23 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     colBtn.innerHTML = icon('columns') + `<span>列${n ? ` (${n} 非表示)` : ''}</span>`;
   }
 
+  /** 行を描いた後にスクロール位置を戻す。
+   *  ★ その場で当ててから、届くまで数回だけ試す。仮想スクロールは行を描くまで
+   *    高さが足りず値が丸められる。requestAnimationFrame は**タブが裏にあると
+   *    発火しない**ので使わない。 */
+  function applyScroll(pos: { top: number; left: number }): void {
+    if (!pos.top && !pos.left) return;
+    let tries = 0;
+    const apply = (): void => {
+      tableWrap.scrollTop = pos.top;
+      tableWrap.scrollLeft = pos.left;
+      const off = Math.abs(tableWrap.scrollTop - pos.top) > 1
+        || Math.abs(tableWrap.scrollLeft - pos.left) > 1;
+      if (off && ++tries < 10) setTimeout(apply, 16);
+    };
+    apply();
+  }
+
   /** 検索/表示条件を反映して表を再描画 (toolbar は保持)。 */
   function refresh(): void {
     if (cache.length === 0) return;
@@ -988,6 +1023,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   }
 
   function openDetail(id: number): void {
+    // ★ 明細へ移る前に一覧のスクロール位置を覚えておく (縦・横とも)。
+    //   一覧は毎回作り直されるので、覚えておかないと先頭に戻ってしまう。
+    savedScroll = { top: tableWrap.scrollTop, left: tableWrap.scrollLeft };
     const open = getState().openIssueIds;
     const next = open.includes(id) ? open : [...open, id];
     setState({ view: 'issues', selectedIssueId: id, openIssueIds: next });

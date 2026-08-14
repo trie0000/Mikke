@@ -149,10 +149,10 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
       body.appendChild(metaGrid([
         ['ID', `#${i.id}`],
         ['Issue Instance ID', i.issueInstanceId],
-        ['タイトル', i.title],
+        ['Title', i.title],
         // 深刻度は Mikke の項目としては表示しない (CSV に Severity 列があれば
         // 検査ツール詳細タブに原本のまま並ぶ)。
-        ['検知ステータス', null, detectionBadge(i.detectionStatus)],
+        ['検知', null, detectionBadge(i.detectionStatus)],
         // 一覧と同じ 2 項目に分ける: 対応 = Mikke 側の対応状況 / 通知 = 連携用リストとの同期状態。
         ['対応', null, mgmtBadge(i.mgmtStatus)],
         ['通知', null, notifyBadge(notifyStatusOf(i.updatedAt, vulnResponseUpdated.get(i.issueInstanceId)))],
@@ -164,8 +164,8 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     } else if (activeTab === 'scanner') {
       const rows: [string, string][] = [
         ['検査ツールステータス', i.scannerStatus || '—'],
-        ['初回検出', fmtDate(i.firstSeen) || '—'],
-        ['最終検出', fmtDate(i.lastSeen) || '—'],
+        ['初回検知日', fmtDate(i.firstSeen) || '—'],
+        ['最終検知日', fmtDate(i.lastSeen) || '—'],
         ['未検出になった日', fmtDate(i.firstUndetectedAt) || '—'],
       ];
       // CSV の全項目を「ヘッダの列順」で表示する。

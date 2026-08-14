@@ -332,8 +332,11 @@ export function extractCsvTextFromZip(buf: ArrayBuffer): string | null {
 
 // ── xlsx 読込 ────────────────────────────────────────────────────────────────
 function collectText(inner: string): string {
+  // ★ 日本語のブックは <si> にふりがな (<rPh><t>…</t></rPh>) が入っている。
+  //   これを拾うと「その他」が「その他タ」のように化けるので先に落とす。
+  const body = inner.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '');
   let s = '';
-  for (const tm of inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)) s += tm[1];
+  for (const tm of body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)) s += tm[1];
   return xmlUnescape(s);
 }
 
@@ -445,20 +448,26 @@ function readGrid(files: Map<string, Uint8Array>, xml: string): Map<number, stri
   const ssBytes = files.get('xl/sharedStrings.xml');
   if (ssBytes) {
     const ss = dec.decode(ssBytes);
-    for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(collectText(m[1]!));
+    // ★ 空文字列は <si/> と書かれることがある。これを飛ばすと以降の番号が 1 つずつ
+    //   ずれ、全ての文字列セルが**別の列の値**に化ける。自己終了タグも 1 件として数える。
+    for (const m of ss.matchAll(/<si\b[^>]*?(?:\/>|>([\s\S]*?)<\/si>)/g)) {
+      shared.push(m[1] === undefined ? '' : collectText(m[1]));
+    }
   }
 
   const grid = new Map<number, string[]>();
   let autoRow = 0;
-  for (const rm of xml.matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
+  for (const rm of xml.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
     const rAttr = /\br="(\d+)"/.exec(rm[1]!)?.[1];
     const rowIdx = rAttr ? parseInt(rAttr, 10) - 1 : autoRow;
     autoRow = rowIdx + 1;
     const cells: string[] = [];
     let auto = 0;
-    for (const cm of rm[2]!.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    // ★ 空セルは <c r="G5" s="12"/> と自己終了で書かれる。これを読み飛ばすと、
+    //   r 属性を持たないブックで列がずれる (auto が進まない)。両方の形を拾う。
+    for (const cm of (rm[2] ?? '').matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const attrs = cm[1]!;
-      const inner = cm[2]!;
+      const inner = cm[2] ?? '';
       const ref = /r="([A-Z]+)\d+"/.exec(attrs);
       const col = ref ? letterCol(ref[1]!) : auto;
       const t = /t="([^"]+)"/.exec(attrs)?.[1];
@@ -507,11 +516,13 @@ function sheetFrom(files: Map<string, Uint8Array>, xml: string, table: TableDef 
   const headerCells = grid.get(headerRow) ?? [];
   const headers: string[] = [];
   for (let c = left; c <= right; c++) {
-    // ★ 列名はテーブル定義のものを優先する (Excel 上の表記と一致し、
-    //   見出しセルが数式や書式で読みにくい場合でも確実)。
-    const fromTable = table?.names[c - left];
+    // ★ 列名は **見出しセルの文字** を優先する。ユーザーが Excel で見ている名前が
+    //   これであり、列の対応付けもその名前で書いてあるため。
+    //   tableColumn の name は他ツールが書き換えると実際のセルとずれることがあり、
+    //   ずれたまま優先すると「別の列の値が入る」ことになる。空のときだけ使う。
     const fromCell = (headerCells[c] ?? '').trim();
-    headers.push((fromTable ?? '').trim() || fromCell || `列${c + 1}`);
+    const fromTable = (table?.names[c - left] ?? '').trim();
+    headers.push(fromCell || fromTable || `列${c + 1}`);
   }
 
   const rows: Record<string, string>[] = [];
