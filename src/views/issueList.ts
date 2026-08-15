@@ -48,6 +48,16 @@ const seenMap = (): Record<string, string> => {
   try { return JSON.parse(localStorage.getItem(LS_SEEN) ?? '{}') as Record<string, string>; }
   catch { return {}; }
 };
+/** 初回だけ、今の状態を「見た」ことにして基準を作る。
+ *  ★ これが無いと、更新した直後に全件へバッジが出てしまう。 */
+const seedSeen = (map: Map<string, string>): void => {
+  try {
+    if (localStorage.getItem(LS_SEEN) !== null) return;
+    const m: Record<string, string> = {};
+    for (const [iid, at] of map) if (at) m[iid] = at;
+    localStorage.setItem(LS_SEEN, JSON.stringify(m));
+  } catch { /* noop */ }
+};
 const markSeen = (iid: string, at?: string): void => {
   if (!iid || !at) return;
   try {
@@ -120,8 +130,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   /** その脆弱性に「連携リスト更新」を出すか。 */
   const responseUpdated = (i: ManagedIssue): boolean => hasResponseUpdate({
     linkedAt: vulnResponseUpdated.get(i.issueInstanceId),
-    pushedAt: i.responsePushedAt,
-    issueUpdatedAt: i.updatedAt,
     seenAt: seen[i.issueInstanceId],
   });
 
@@ -181,6 +189,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         getRepo().listAssets().catch(() => []),
       ]);
       vulnResponseUpdated = notified;
+      seedSeen(notified);
       seen = seenMap();
       assetColumns = (settings.assetColumns && settings.assetColumns.length)
         ? settings.assetColumns
@@ -579,6 +588,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         ...plan.updates.map((u) => u.issueInstanceId),
       ]);
       if (pushedIids.size && !fail) {
+        // ★ 自分が書いた分は「見た」ことにする。反映で連携リスト側の更新時刻も
+        //   動くので、ここで覚えないと自分の反映でバッジが出てしまう。
+        const after = await getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>());
+        for (const iid of pushedIids) markSeen(iid, after.get(iid));
+        seen = seenMap();
         const now = new Date().toISOString();
         await mapLimit(cache.filter((i) => pushedIids.has(i.issueInstanceId)), REFRESH_PARALLEL,
           async (i) => { try { await getRepo().updateIssue(i.id, { responsePushedAt: now }); } catch { /* 反映自体は成功 */ } });
