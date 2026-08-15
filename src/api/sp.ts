@@ -935,10 +935,12 @@ export class SpRepository implements Repository {
   async batchWrite(
     ops: { kind: 'add' | 'update' | 'delete'; id?: number; row: Record<string, unknown> }[],
     onProgress?: (done: number, total: number) => void,
+    /** 書き込み先。省略時は管理表。 */
+    listTitle: string = LIST_MANAGED,
   ): Promise<{ ok: number; fail: number }> {
     const BATCH_CHUNK = 100;
-    const etype = 'SP.Data.MikkeManagedIssuesListItem';
-    const listUrl = `${this.webUrl}/_api/web/lists/getbytitle('${LIST_MANAGED}')/items`;
+    const etype = await this.listEntityType(listTitle);
+    const listUrl = `${this.webUrl}/_api/web/lists/getbytitle('${listTitle}')/items`;
     const enc = new TextEncoder();
     let ok = 0, fail = 0;
 
@@ -1162,42 +1164,26 @@ export class SpRepository implements Repository {
     return out;
   }
 
+  /** ★ 1 件ずつ POST すると件数ぶん往復して遅い。$batch で 100 件ずつまとめる。 */
   async applyOverseasPlan(
     creates: Omit<OverseasIssue, 'id'>[],
     updates: { id: number; patch: Partial<OverseasIssue> }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }> {
-    const type = await this.listEntityType(LIST_OVERSEAS);
-    const base = `/_api/web/lists/getbytitle('${LIST_OVERSEAS}')/items`;
-    let ok = 0, fail = 0, done = 0;
-    const total = creates.length + updates.length;
-    const step = async (fn: () => Promise<unknown>): Promise<void> => {
-      try { await fn(); ok++; } catch { fail++; }
-      onProgress?.(++done, total);
-    };
-    for (const c of creates) {
-      await step(() => this.spPost(base, { __metadata: { type }, ...this.overseasRow(c) }));
-    }
-    for (const u of updates) {
-      await step(() => this.spPost(`${base}(${u.id})`,
-        { __metadata: { type }, ...this.overseasRow(u.patch) },
-        { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' }));
-    }
-    return { ok, fail };
+    const ops = [
+      ...creates.map((c) => ({ kind: 'add' as const, row: this.overseasRow(c) })),
+      ...updates.map((u) => ({ kind: 'update' as const, id: u.id, row: this.overseasRow(u.patch) })),
+    ];
+    if (!ops.length) return { ok: 0, fail: 0 };
+    return this.batchWrite(ops, onProgress, LIST_OVERSEAS);
   }
 
   async deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
     const rows = await this.listOverseasIssues();
-    const base = `/_api/web/lists/getbytitle('${LIST_OVERSEAS}')/items`;
-    let ok = 0, fail = 0, done = 0;
-    for (const r of [...rows].sort((a, b) => b.id - a.id)) {
-      try {
-        await this.spPost(`${base}(${r.id})`, undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
-        ok++;
-      } catch { fail++; }
-      onProgress?.(++done, rows.length);
-    }
-    return { ok, fail };
+    if (!rows.length) return { ok: 0, fail: 0 };
+    const ids = rows.map((r) => r.id).sort((a, b) => b - a);
+    return this.batchWrite(ids.map((id) => ({ kind: 'delete' as const, id, row: {} })),
+      onProgress, LIST_OVERSEAS);
   }
 
   async listAssets(): Promise<ManagedAsset[]> {

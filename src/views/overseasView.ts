@@ -103,19 +103,28 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       const rows: Record<string, string>[] = [];
       const headers = new Set<string>();
       const badFiles: string[] = [];
-      for (const f of files) {
-        box.textContent = `読み込んでいます… ${f.name}`;
+      // ★ ファイルの読み出しは待ち時間なので **まとめて先に** 済ませる。
+      //   解析 (unzip + XML) は CPU の仕事で並列にしても速くならないため、
+      //   読み出しだけ並行にして、解析は順にかけて進捗を出す。
+      const buffers = await Promise.all(files.map(async (f) => {
+        try { return { f, buf: await f.arrayBuffer(), err: '' }; }
+        catch (e) { return { f, buf: null, err: (e as Error).message }; }
+      }));
+      for (const [i, b] of buffers.entries()) {
+        box.textContent = `読み込んでいます… (${i + 1}/${files.length}) ${b.f.name}`;
+        if (!b.buf) { badFiles.push(`${b.f.name} (${b.err})`); continue; }
         try {
-          const buf = await f.arrayBuffer();
           // ★ シート名は決まっていないので先頭シートを読む (テーブルオブジェクトでもない)。
-          const names = xlsxSheetNames(buf);
-          const sheet = parseXlsxSheet(buf, names[0] ?? '');
-          if (!sheet || !sheet.rows.length) { badFiles.push(`${f.name} (行が読めません)`); continue; }
+          const names = xlsxSheetNames(b.buf);
+          const sheet = parseXlsxSheet(b.buf, names[0] ?? '');
+          if (!sheet || !sheet.rows.length) { badFiles.push(`${b.f.name} (行が読めません)`); continue; }
           for (const h of sheet.headers) headers.add(h);
           rows.push(...sheet.rows);
         } catch (e) {
-          badFiles.push(`${f.name} (${(e as Error).message})`);
+          badFiles.push(`${b.f.name} (${(e as Error).message})`);
         }
+        // 大きいファイルが続くと画面が固まるので、1 ファイルごとに描画を通す。
+        await new Promise((r) => setTimeout(r, 0));
       }
       if (!rows.length) {
         previewing = true;
