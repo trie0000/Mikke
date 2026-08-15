@@ -92,7 +92,7 @@ function makeBook(headers: string[], rows: string[][]): ArrayBuffer {
 
 // 実ファイルの見出し (検知状況の見出しには検査ツール名が頭に付く)。
 const HEADERS = [
-  'Issue Instance ID', '通知日', 'ある検査ツールでの通知状況', '事業会社', '地域', '管理会社',
+  'Issue Instance ID', '通知日', 'ある検査ツールでの検知状況', '事業会社', '地域', '管理会社',
   'WebMaps登録情報', 'その他参考情報', 'IP/URL', '脆弱性',
   'Asset Title', 'Asset Mapped Domains', 'Asset Homepage URL', '最終検知日', '備考',
 ];
@@ -132,8 +132,21 @@ describe('★ 実ファイルの形 (シート list / テーブル / 見出し�
 
   it('検知状況の見出しは検査ツール名が付いていても見つかる (後半の一致で探す)', () => {
     const cols = resolveOvsMigColumns(HEADERS);
+    expect(cols.byKey.detection).toBe('ある検査ツールでの検知状況');
+    expect(cols.missing).toEqual([]);
+  });
+
+  it('「通知状況」と書かれていても拾う (地域で表記が違う場合)', () => {
+    const h = HEADERS.map((x) => (x === 'ある検査ツールでの検知状況' ? 'ある検査ツールでの通知状況' : x));
+    const cols = resolveOvsMigColumns(h);
     expect(cols.byKey.detection).toBe('ある検査ツールでの通知状況');
     expect(cols.missing).toEqual([]);
+  });
+
+  it('最終検知日を検知状況の列と取り違えない', () => {
+    const cols = resolveOvsMigColumns(HEADERS);
+    expect(cols.byKey.lastSeen).toBe('最終検知日');
+    expect(cols.byKey.detection).toBe('ある検査ツールでの検知状況');
   });
 
   it('1 件ぶんの内容が全部入る', () => {

@@ -23,14 +23,15 @@ const text = (v: unknown): string => (v === undefined || v === null ? '' : Strin
 
 /**
  * Excel の列名 (シート「list」のテーブル)。
- * ★ 検知状況の見出しは実際には検査ツール名が頭に付く (「〜での通知状況」)。
+ * ★ 検知状況の見出しは実際には検査ツール名が頭に付く (「〜での検知状況」)。
  *   ツール名は書かず、**必ず残る部分**だけで探す (findColumn が部分一致で拾う)。
  *   ツールを乗り換えても見出しの後半は変わらないので、こちらの方が壊れにくい。
+ *   国内の移行データ (lib/migration.ts) と同じ見出しの付き方をしている。
  */
 export const OVS_MIG_COL = {
   issueInstanceId: 'Issue Instance ID',
   contactedAt: '通知日',
-  detection: '通知状況',
+  detection: '検知状況',
   businessCompany: '事業会社',
   region: '地域',
   affiliateCompany: '管理会社',
@@ -56,6 +57,8 @@ const ALTS: Partial<Record<OvsMigColKey, string[]>> = {
   // ★ 'Title' は入れない。'Asset Title' に部分一致してしまい、脆弱性名の欄に
   //   資産名が入ったまま「列は全部見つかった」ことになる。
   title: ['脆弱性タイトル', 'Vulnerability'],
+  // 「通知状況」と書かれている地域のファイルもあり得るので拾えるようにしておく。
+  detection: ['通知状況'],
 };
 
 /** 見出しの比較用キー (findColumn と同じ揃え方)。 */
