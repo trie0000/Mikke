@@ -22,7 +22,7 @@ export function isExcelError(v: string): boolean { return EXCEL_ERROR.test(text(
 // ── Excel の列名 (シート「list」のヘッダ) ────────────────────────────────────
 export const MIG_COL = {
   legacyMgmtNumber: 'No.',
-  detection: 'Cycognitoでの検知状況',
+  detection: '検知状況',
   businessCompany: '事業会社',
   affiliateCompany: '管理会社',
   webMaps: 'WebMAPS登録情報',
@@ -59,6 +59,9 @@ export const MIG_COL = {
 const PARTIAL_MATCH: Record<string, string> = {
   [MIG_COL.extConnAppId]: '申請状況を選択ください',
   [MIG_COL.responsePlan]: '早めにご計画ください',
+  // 検知状況の見出しは頭に検査ツール名が付く (「〜での検知状況」)。ツール名は書かず、
+  // **必ず残る部分**だけで探す。ツールを乗り換えても後半は変わらないので壊れにくい。
+  [MIG_COL.detection]: '検知状況',
 };
 
 /** MIG_COL の列名 → シートにある実際の見出し。 */

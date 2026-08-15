@@ -17,6 +17,7 @@
 import type { DetectionStatus, ManagedIssue, OverseasIssue, OverseasOpenStatus, OverseasRegion } from '../types';
 import { OVERSEAS_REGIONS } from '../types';
 import { resolveScanValue } from './scanName';
+import { fitSingleLine } from './vulnResponseSync';
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
 
@@ -161,6 +162,11 @@ export interface OverseasPlan {
   missingColumns: string[];
 }
 
+/** SharePoint 側が単一行テキスト (255 文字) の項目。schema.ts の overseasFieldSpecs と揃える。 */
+const OVERSEAS_SINGLE_LINE_FIELDS = [
+  'title', 'businessCompany', 'affiliateCompany', 'webMapsId', 'assetIp', 'assetFqdn', 'assetTitle',
+] as const satisfies readonly (keyof OverseasIssue)[];
+
 /** 空の項目を落とす (上書きで既存値を消さないため)。 */
 function onlyFilled(fields: Omit<OverseasIssue, 'id'>): Partial<OverseasIssue> {
   const out: Partial<OverseasIssue> = {};
@@ -269,7 +275,12 @@ export function buildOverseasPlan(
     });
     let detectionStatus: DetectionStatus | undefined;
     for (const r of ordered) detectionStatus = nextOverseasDetection(detectionStatus, r.open ?? undefined);
-    const last = ordered[ordered.length - 1]!;
+    // ★ 「最新の行」は **日付が読めた行の中の最後**。日付が読めない行は並べようが
+    //   ないので末尾に置いているが、それを最新とみなすと、1 行混ざっただけで
+    //   通知日・open・備考がその行の内容になってしまう。日付が読める行が
+    //   1 つも無いときだけ、仕方なく末尾の行を使う。
+    const dated = ordered.filter((r) => r.at);
+    const last = dated[dated.length - 1] ?? ordered[ordered.length - 1]!;
     const open = last.open;
     const contactedAt = last.at;
     const row = last.raw;
@@ -315,6 +326,11 @@ export function buildOverseasPlan(
     //   初期データの Excel から入れた値や、一覧で手入力した値が黙って消える。
     //   海外分には管理対象条件に一致しない脆弱性が普通に含まれるので、これは例外的な
     //   経路ではない (CSV が 1 本も無ければ全行がこれに当たる)。
+    // ★ 単一行テキスト列 (255 文字・改行なし) に収める。CSV から来る FQDN 一覧
+    //   (' | ' 連結) と検査ツールの長いタイトルが実際に超え、超えると SharePoint は
+    //   その行を HTTP 500 で拒否する。
+    for (const k of OVERSEAS_SINGLE_LINE_FIELDS) fields[k] = fitSingleLine(fields[k] ?? '');
+
     if (prev) plan.updates.push({ id: prev.id, patch: onlyFilled(fields) });
     else plan.creates.push(fields);
   }

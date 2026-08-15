@@ -206,6 +206,56 @@ describe('Excel に無い項目の埋め方', () => {
   });
 });
 
+describe('★ 日付の読めない行を「最新の行」にしない', () => {
+  it('読める行があれば、その中の最後を最新として使う', () => {
+    // 日付が読めない行は並べようがないので末尾に置くが、最新とみなすと
+    // 1 行混ざっただけで通知日・備考がその行の内容になってしまう。
+    const p = buildOverseasPlan([
+      row('IID-1', '2026-05-10', 'open', 'APAC', '5月の備考'),
+      row('IID-1', '2026-06-10', 'open', 'APAC', '6月の備考'),
+      row('IID-1', 'いつか', 'closed/removed', 'APAC', '日付が読めない行'),
+    ], H, [], MERGED, [domestic()], parseFlexibleDate, NOW);
+    const c = p.creates[0]!;
+    expect(c.contactedAt).toBe('2026-06-09T15:00:00.000Z');
+    expect(c.remarks).toBe('6月の備考');
+    expect(c.openStatus).toBe('open');
+    // 検知状況の積み上げには読めない行も混ぜる (close/remove の事実は残す)
+    expect(c.detectionStatus).toBe('未検出(New)');
+    expect(p.warnings.some((w) => /通知日/.test(w.message))).toBe(true);
+  });
+
+  it('全部読めなければ、仕方なく末尾の行を使う', () => {
+    const p = buildOverseasPlan([row('IID-1', 'いつか', 'open', 'APAC', 'これだけ')],
+      H, [], MERGED, [domestic()], parseFlexibleDate, NOW);
+    expect(p.creates[0]!.remarks).toBe('これだけ');
+    expect(p.creates[0]!.contactedAt).toBe('');
+  });
+});
+
+describe('★ 単一行テキスト列に収める (超えると SP が 500 を返す)', () => {
+  it('CSV の長い FQDN 一覧を 255 文字に丸める', () => {
+    const long = Array.from({ length: 20 }, (_, i) => `host${i}.subdomain.example.co.jp`).join(' | ');
+    const merged = indexMergedCsv([
+      { 'Issue Instance ID': 'IID-L', 'Title': 'x'.repeat(300), 'Asset Domain': long, 'Asset Title': 'y'.repeat(300) },
+    ]);
+    const c = buildOverseasPlan([row('IID-L', '2026-05-10', 'open')], H, [], merged, [],
+      parseFlexibleDate, NOW).creates[0]!;
+    expect(c.assetFqdn!.length).toBeLessThanOrEqual(255);
+    expect(c.title!.length).toBeLessThanOrEqual(255);
+    expect(c.assetTitle!.length).toBeLessThanOrEqual(255);
+    expect(c.assetFqdn!.endsWith('…')).toBe(true);
+  });
+
+  it('複数行の列 (Asset Mapped Domains) は丸めない', () => {
+    const merged = indexMergedCsv([
+      { 'Issue Instance ID': 'IID-L', 'Asset Mapped Domains': 'z'.repeat(400) },
+    ]);
+    const c = buildOverseasPlan([row('IID-L', '2026-05-10', 'open')], H, [], merged, [],
+      parseFlexibleDate, NOW).creates[0]!;
+    expect(c.assetMappedDomains!.length).toBe(400);
+  });
+});
+
 describe('★ 人が決めた値を月次の取り込みで消さない', () => {
   // 事業会社などは一覧で直接直せる (初期データの Excel からも入る)。月次の
   // 取り込みで管理対象の値 (無ければ空) を上書きすると、手で入れた値が毎月消える。

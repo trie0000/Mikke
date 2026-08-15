@@ -15,6 +15,24 @@ const PERMS = normalizePerms({
   aliasesByCompany: { 'エナジー事業': ['ENG', 'エナジー'], 'モビリティ事業': ['MOB'] },
 });
 
+describe('★ 見出しは部分一致で探す (頭に付く検査ツール名に依存しない)', () => {
+  it('「〜での検知状況」でも当たる', () => {
+    const m = resolveMigColumns(['Issue ID', 'ある検査ツールでの検知状況', '事業会社']);
+    expect(m.byCol[MIG_COL.detection]).toBe('ある検査ツールでの検知状況');
+    expect(m.missing).not.toContain(MIG_COL.detection);
+  });
+
+  it('見出しがそのまま「検知状況」でも当たる', () => {
+    expect(resolveMigColumns(['検知状況']).byCol[MIG_COL.detection]).toBe('検知状況');
+  });
+
+  it('最終検知日は別の列として扱う (取り違えない)', () => {
+    const m = resolveMigColumns(['最終検知日', 'ある検査ツールでの検知状況']);
+    expect(m.byCol[MIG_COL.lastSeen]).toBe('最終検知日');
+    expect(m.byCol[MIG_COL.detection]).toBe('ある検査ツールでの検知状況');
+  });
+});
+
 describe('検知状況の対応付け', () => {
   it.each([
     ['未検出 / Not detected', '未検出'],

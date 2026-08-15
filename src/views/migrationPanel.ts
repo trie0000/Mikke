@@ -130,6 +130,10 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
   file.addEventListener('change', () => void (async () => {
     const f = file.files?.[0];
     if (!f) return;
+    // ★ 直したファイルを選び直せるようにする。value が同じままだと、ブラウザは
+    //   同じパスのファイルを選んでも change を出さず、画面が古い警告のまま固まる。
+    //   File はもう取れているので、ここで空にしても読み込みには影響しない。
+    file.value = '';
     fileName = f.name;
     plan = null;
     sheet = null;
@@ -265,19 +269,25 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
       fail = creates.length + updates.length;
       firstErr = (e as Error).message;
     }
-    const added = fail ? 0 : creates.length;
-    const updated = fail ? 0 : updates.length;
+    // ★ 失敗した件があっても、成功した分は実際に入っている。0 件と言わない
+    //   (「何も入らなかった」と誤解して、原因を探さずにやり直すことになる)。
+    const total = creates.length + updates.length;
+    const okCount = total - fail;
     clear(result);
     result.appendChild(el('div', { class: fail ? 'mikke-error' : 'mikke-note' }, [
       fail
-        ? `登録に失敗した件があります: 失敗 ${fail} 件 — ${firstErr}`
-        : `登録しました: 新規 ${added} 件 / 上書き ${updated} 件`,
+        ? `登録 ${okCount} 件 / 失敗 ${fail} 件 — ${firstErr}`
+          + `（内訳は新規 ${creates.length} 件 / 上書き ${updates.length} 件のうち。もう一度読み込めば、`
+          + `入った分は上書きになるので二重にはなりません）`
+        : `登録しました: 新規 ${creates.length} 件 / 上書き ${updates.length} 件`,
     ]));
-    toast(root, `移行データを登録しました (新規 ${added} / 上書き ${updated})`, fail ? 'warn' : 'ok');
+    toast(root, fail
+      ? `移行データ: ${okCount} 件を登録、${fail} 件が失敗しました`
+      : `移行データを登録しました (新規 ${creates.length} / 上書き ${updates.length})`,
+      fail ? 'warn' : 'ok');
     plan = null;
     split = null;
     sheet = null;
-    file.value = '';
   })());
 
   const body = el('div', {}, [
