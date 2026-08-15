@@ -160,6 +160,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
         ] },
         { title: '連携', items: [
           { key: 'vulnResponseList', label: '資産管理者向けリスト', render: () => renderVulnResponsePanel(root) },
+          { key: 'overseasResponseList', label: '海外拠点向けリスト', render: () => renderOverseasResponsePanel(root) },
         ] },
       ],
     },
@@ -585,8 +586,17 @@ async function renderDownloadPanel(root: HTMLElement): Promise<SettingPanel> {
   };
 }
 
-// ── 共通設定: 資産管理者への連携用リスト ──
-function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
+// ── 共通設定: 連携用リストの構築 ──
+//   国内 (資産管理者向け) と海外 (海外拠点向け) で同じ画面を使う。違うのは
+//   説明文と、実際に叩く構築 API だけ。
+interface ListSetupOpts {
+  title: string;
+  description: string;
+  bullets: string[];
+  run: () => Promise<SetupResult>;
+}
+
+function renderListSetupPanel(root: HTMLElement, opts: ListSetupOpts): SettingPanel {
   const result = el('div', { style: 'margin-top:var(--s-5)' });
   const runBtn = el('button', { class: 'mikke-btn mikke-btn--primary', type: 'button' }, ['リストを作成 / 整形する']);
 
@@ -613,7 +623,7 @@ function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
     clear(result);
     result.appendChild(el('div', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, ['実行中…']));
     try {
-      const res = await getRepo().ensureVulnResponseList();
+      const res = await opts.run();
       clear(result);
       result.append(
         countLine(res.counts),
@@ -638,20 +648,48 @@ function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
   };
 
   const body = el('div', {}, [
-    panelHead('資産管理者への連携用リスト',
-      'Mikke の管理表とは別に、資産管理者に対応状況を記入してもらう SharePoint リスト (MikkeVulnResponse) を作成・整形します。'
-      + '脆弱性情報はフォーム上部にカードで読み取り専用表示し、本体は対応状況の入力欄だけになります。'),
-    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
-      el('li', {}, ['何度実行しても同じ状態になります（既にある列や設定はスキップ）。']),
-      el('li', {}, ['列の内部名は英語のまま、表示名だけ日本語にします。']),
-      el('li', {}, ['脆弱性情報の列は新規フォームでのみ入力でき、登録後は読み取り専用になります。']),
-      el('li', {}, ['フォームの書式設定は上書きされます。SharePoint 側で手を入れている場合は注意してください。']),
-      el('li', {}, ['Mikke の管理表 (MikkeManagedIssues) には影響しません。']),
-    ]),
+    panelHead(opts.title, opts.description),
+    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' },
+      opts.bullets.map((b) => el('li', {}, [b]))),
     runBtn,
     result,
   ]);
   return { body };
+}
+
+function renderVulnResponsePanel(root: HTMLElement): SettingPanel {
+  return renderListSetupPanel(root, {
+    title: '資産管理者への連携用リスト',
+    description:
+      'Mikke の管理表とは別に、資産管理者に対応状況を記入してもらう SharePoint リスト (MikkeVulnResponse) を作成・整形します。'
+      + '脆弱性情報はフォーム上部にカードで読み取り専用表示し、本体は対応状況の入力欄だけになります。',
+    bullets: [
+      '何度実行しても同じ状態になります（既にある列や設定はスキップ）。',
+      '列の内部名は英語のまま、表示名だけ日本語にします。',
+      '脆弱性情報の列は新規フォームでのみ入力でき、登録後は読み取り専用になります。',
+      'フォームの書式設定は上書きされます。SharePoint 側で手を入れている場合は注意してください。',
+      'Mikke の管理表 (MikkeManagedIssues) には影響しません。',
+    ],
+    run: () => getRepo().ensureVulnResponseList(),
+  });
+}
+
+function renderOverseasResponsePanel(root: HTMLElement): SettingPanel {
+  return renderListSetupPanel(root, {
+    title: '海外拠点への連携用リスト',
+    description:
+      '海外脆弱性一覧を渡すための SharePoint リスト (MikkeOverseasResponse) を作成・整形します。'
+      + '国内の連携用リストとは別のリストで、記入欄はありません（読み取り専用）。'
+      + '脆弱性情報と資産情報を 2 段組のカードで表示します。',
+    bullets: [
+      '何度実行しても同じ状態になります（既にある列や設定はスキップ）。',
+      '記入してもらう欄はありません。フォームはカード表示だけになります。',
+      'リストからの取り込み（逆方向）はありません。海外脆弱性一覧の内容が一方的に反映されます。',
+      'アイテムのアクセス権は国内と同じ設定（アクセス権画面の事業会社の割当・管理者グループ）を使います。',
+      '反映は「海外脆弱性一覧」画面の「連携リストへ反映(全件 / 選択)」から行います。',
+    ],
+    run: () => getRepo().ensureOverseasResponseList(),
+  });
 }
 
 // ── 共通: 脆弱性タイプの判定条件 ──

@@ -13,13 +13,16 @@ import {
   vulnResponseFieldSpecs, orderFieldLinks,
   toFieldSchema, spFieldTypeString, type FieldSpec,
   LIST_OVERSEAS, overseasFieldSpecs,
+  LIST_OVERSEAS_RESPONSE, overseasResponseFieldSpecs, OVERSEAS_RESPONSE_VIEW_FIELDS,
 } from './sp/schema';
-import { buildVulnResponseFormFormatter } from './sp/formFormatter';
+import { buildVulnResponseFormFormatter, buildOverseasResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { OverseasIssue } from '../types';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, REPORT_LINK_TEXT } from '../lib/vulnResponseSync';
+import type { OverseasResponseFields, OverseasResponseRow } from '../lib/overseasResponseSync';
+import { OVERSEAS_RESPONSE_COLUMN, OVERSEAS_RESPONSE_DATE_FIELDS } from '../lib/overseasResponseSync';
 import { normalizePerms, hasAnyPerms, pickRoles, buildItemPermPlan,
   type VulnResponsePerms, type PermRoles } from '../lib/itemPerms';
 import { getSelectedSiteUrl, currentWebUrl, normalizeWebUrl } from '../utils/spSites';
@@ -431,7 +434,7 @@ export class SpRepository implements Repository {
       const fl = await this.spGet(`${ctPath}/FieldLinks?$select=Name&$top=500`);
       const current: string[] = (fl.d?.results ?? []).map((f: any) => String(f.Name));
       const ordered = orderFieldLinks(current, fields.map((f) => f.name));
-      if (ordered.join(' ') === current.join(' ')) {
+      if (ordered.join('\u0000') === current.join('\u0000')) {
         rep.record('列の並び順', ct.Name, 'skipped', '設定済み'); return;
       }
       await this.processQuery(buildReorderFieldsXml(listTitle, ct.StringId, ordered));
@@ -676,12 +679,26 @@ export class SpRepository implements Repository {
     targets: { id: number; businessCompany: string }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    return this.applyItemPermsOn(LIST_VULNRESPONSE, targets, onProgress);
+  }
+
+  /** アイテム単位アクセス権の適用本体。国内 / 海外の連携用リストで共用する。
+   *  ★ 割当の設定 (vulnResponsePerms) は 1 つを共用する。事業会社ごとのグループも
+   *    管理者グループも同じものを使う、という仕様のため。
+   *  ★ companyRole は事業会社グループに付けるロール。国内は記入してもらうので投稿、
+   *    海外は読み取り専用なので参照。管理者グループは両方ともフルコントロール。 */
+  private async applyItemPermsOn(
+    listTitle: string,
+    targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
+    companyRole: 'edit' | 'read' = 'edit',
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
     const settings = await this.getSettings();
     const perms = normalizePerms(settings.vulnResponsePerms);
     if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
     const ctx = await this.buildPermContext(perms);
     const plans = buildItemPermPlan(targets, perms);
-    const listPath = `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')`;
+    const listPath = `/_api/web/lists/getbytitle('${listTitle}')`;
     const out = { applied: 0, adminOnly: 0, errors: [] as string[] };
     let done = 0;
     for (const plan of plans) {
@@ -700,7 +717,7 @@ export class SpRepository implements Repository {
         }
         for (const gid of plan.edit) {
           if (keep.has(gid)) continue;
-          await this.spPost(`${base}/roleassignments/addroleassignment(principalid=${gid},roledefid=${ctx.roles.edit})`, undefined);
+          await this.spPost(`${base}/roleassignments/addroleassignment(principalid=${gid},roledefid=${ctx.roles[companyRole]})`, undefined);
           keep.add(gid);
         }
         // 2) 付与したもの以外を削除 (既定の継承グループ・継承解除で付く実行者の個別権限)。
@@ -1232,6 +1249,124 @@ export class SpRepository implements Repository {
     const ids = rows.map((r) => r.id).sort((a, b) => b - a);
     return this.batchWrite(ids.map((id) => ({ kind: 'delete' as const, id, row: {} })),
       onProgress, LIST_OVERSEAS);
+  }
+
+  // ── 海外連携用リスト (読み取り専用・逆取り込みなし) ───────────────────────
+
+  /** 書き込む行を組み立てる。列名の対応は overseasResponseSync.ts に一本化。 */
+  private overseasResponseRow(f: Partial<OverseasResponseFields>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    for (const [key, col] of
+      Object.entries(OVERSEAS_RESPONSE_COLUMN) as [keyof OverseasResponseFields, string][]) {
+      const v = f[key];
+      if (v === undefined) continue;
+      // 日付は空文字だと SP が 400 を返すので null を送る。
+      row[col] = OVERSEAS_RESPONSE_DATE_FIELDS.includes(key) ? (v || null) : v;
+    }
+    return row;
+  }
+
+  async listOverseasResponseRows(): Promise<OverseasResponseRow[]> {
+    const out: OverseasResponseRow[] = [];
+    const cols = Object.values(OVERSEAS_RESPONSE_COLUMN).join(',');
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_OVERSEAS_RESPONSE}')/items?$select=Id,${cols}&$top=5000`;
+    try {
+      while (url) {
+        const j: any = await this.spGet(url);
+        for (const r of j.d.results as any[]) {
+          const row = { id: r.Id } as OverseasResponseRow;
+          for (const [key, col] of
+            Object.entries(OVERSEAS_RESPONSE_COLUMN) as [keyof OverseasResponseFields, string][]) {
+            row[key] = r[col] ?? '';
+          }
+          out.push(row);
+        }
+        url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+      }
+    } catch { return out; }   // 未作成 (404) 等
+    return out;
+  }
+
+  async findMissingOverseasResponseColumns(): Promise<string[]> {
+    this.fieldNamesByList.delete(LIST_OVERSEAS_RESPONSE);   // 最新の実在列で判定する
+    let existing: Set<string>;
+    try { existing = await this.getFieldNamesOf(LIST_OVERSEAS_RESPONSE); }
+    catch { return []; }        // リスト自体が無い場合は呼び出し側の別導線に任せる
+    return Object.values(OVERSEAS_RESPONSE_COLUMN).filter((k) => !existing.has(k));
+  }
+
+  async applyOverseasResponseWrites(
+    creates: OverseasResponseFields[],
+    updates: { id: number; fields: Partial<OverseasResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const existing = await this.getFieldNamesOf(LIST_OVERSEAS_RESPONSE);
+    const dropped = new Set<string>();
+    const pick = (f: Partial<OverseasResponseFields>): Record<string, unknown> =>
+      this.filterExisting(this.overseasResponseRow(f), existing, dropped);
+    const ops = [
+      ...deletes.map((id) => ({ kind: 'delete' as const, id, row: {} })),
+      ...creates.map((c) => ({ kind: 'add' as const, row: pick(c) })),
+      ...updates.map((u) => ({ kind: 'update' as const, id: u.id, row: pick(u.fields) })),
+    ];
+    if (dropped.size) console.warn('[mikke] 海外連携用リストに存在しない列を除外:', [...dropped]);
+    if (!ops.length) return { ok: 0, fail: 0 };
+    return this.batchWrite(ops, onProgress, LIST_OVERSEAS_RESPONSE);
+  }
+
+  async listOverseasResponsePermTargets():
+    Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]> {
+    const out: { id: number; businessCompany: string; hasUniquePerms: boolean }[] = [];
+    let url: string | null =
+      `/_api/web/lists/getbytitle('${LIST_OVERSEAS_RESPONSE}')/items`
+      + '?$select=Id,BusinessCompany,HasUniqueRoleAssignments&$top=5000';
+    while (url) {
+      const j: any = await this.spGet(url);
+      for (const r of j.d.results as
+        { Id: number; BusinessCompany?: string; HasUniqueRoleAssignments?: boolean }[]) {
+        out.push({
+          id: r.Id, businessCompany: r.BusinessCompany ?? '',
+          hasUniquePerms: !!r.HasUniqueRoleAssignments,
+        });
+      }
+      url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+    }
+    return out;
+  }
+
+  /** ★ 事業会社グループには **参照** を付ける (国内は投稿)。
+   *  海外連携用リストは読み取り専用で、記入してもらう欄が無いため。 */
+  async applyOverseasResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    return this.applyItemPermsOn(LIST_OVERSEAS_RESPONSE, targets, onProgress, 'read');
+  }
+
+  async overseasResponseListUrl(): Promise<string | null> {
+    return this.listViewUrl(LIST_OVERSEAS_RESPONSE);
+  }
+
+  /** 海外連携用リストを構築する (冪等)。
+   *  ★ 記入欄が無いので条件付き数式 (HIDDEN_UNLESS_NEW) を全列に付ける。
+   *    これでフォーム本体には何も出ず、ヘッダーのカードだけが見える。 */
+  async ensureOverseasResponseList(): Promise<SetupResult> {
+    const rep = new StepReporter();
+    const fields = overseasResponseFieldSpecs();
+    await this.ensureList(LIST_OVERSEAS_RESPONSE, fields, rep);
+    const map = await this.loadFieldMap(LIST_OVERSEAS_RESPONSE);
+    await this.applySchemaXmlAttributes(LIST_OVERSEAS_RESPONSE, fields, map, rep);
+    await this.applyRequired(LIST_OVERSEAS_RESPONSE, fields, map, rep);
+    await this.applyDisplayNames(LIST_OVERSEAS_RESPONSE, fields, map, rep);
+    await this.ensureViewFields(LIST_OVERSEAS_RESPONSE, OVERSEAS_RESPONSE_VIEW_FIELDS, rep);
+    await this.applyFieldOrder(LIST_OVERSEAS_RESPONSE, fields, rep);
+    await this.applyFormFormatter(LIST_OVERSEAS_RESPONSE, buildOverseasResponseFormFormatter(), rep);
+    await this.applyConditionalFormulas(LIST_OVERSEAS_RESPONSE, fields, map, rep);
+    this.fieldNamesByList.delete(LIST_OVERSEAS_RESPONSE);
+    const listUrl = await this.listViewUrl(LIST_OVERSEAS_RESPONSE);
+    return rep.result(listUrl ?? `${this.webUrl}/Lists/${LIST_OVERSEAS_RESPONSE}/AllItems.aspx`);
   }
 
   async listAssets(): Promise<ManagedAsset[]> {

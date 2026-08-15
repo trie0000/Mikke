@@ -14,6 +14,8 @@ import { parseFlexibleDate } from '../lib/migration';
 import { buildOverseasPlan, indexMergedCsv, OVERSEAS_COL, type OverseasPlan } from '../lib/overseas';
 import { loadLatestMergedCsv } from '../lib/downloadFlow';
 import { LABEL } from '../lib/fieldLabels';
+import { buildOverseasResponsePlan, overseasKey } from '../lib/overseasResponseSync';
+import { normalizePerms, registeredCompanies } from '../lib/itemPerms';
 import type { OverseasIssue } from '../types';
 
 export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
@@ -25,6 +27,12 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
 
   let cache: OverseasIssue[] = [];
   let busy = false;
+  /** 反映などの一括処理中。二重起動を防ぐ。 */
+  let bulkBusy = false;
+  /** 選択分の反映で使う (行 ID)。 */
+  const selected = new Set<number>();
+  /** 事業会社の選択肢 (アクセス権画面で登録した一覧)。 */
+  let companies: string[] = [];
   /** 取り込み前の確認を出している間は表を描き直さない (描くと確認画面が消える)。 */
   let previewing = false;
 
@@ -33,8 +41,70 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     columns: [],
     rowId: (i) => i.id,
     virtualMin: 40,
+    selection: {
+      checked: (i) => selected.has(i.id),
+      onToggle: (i, on) => { if (on) selected.add(i.id); else selected.delete(i.id); paintSubbar(); },
+      onToggleAll: (on, visible) => {
+        for (const i of visible) { if (on) selected.add(i.id); else selected.delete(i.id); }
+        paintSubbar(); table.render();
+      },
+    },
     emptyText: 'まだ取り込んでいません。「Excel を取り込む」から月次のファイルを読み込んでください。',
   });
+
+  /** 表から直接直した 1 項目を保存する。
+   *  ★ 保存は **その場で 1 件だけ** 書く (まとめ保存にすると、どこまで保存されたか
+   *    分からなくなる)。失敗したら画面を引き直して、直したつもりのまま残さない。 */
+  async function saveCell(row: OverseasIssue, patch: Partial<OverseasIssue>): Promise<void> {
+    try {
+      await getRepo().applyOverseasPlan([], [{ id: row.id, patch }]);
+      Object.assign(row, patch);    // 表の行オブジェクトは cache と同じ実体
+    } catch (e) {
+      toast(rootEl, `保存できませんでした: ${(e as Error).message}`, 'error');
+      await load();
+    }
+  }
+
+  /** 文字を直接書き込める入力欄。値の確定は blur / Enter (change) 時。 */
+  function textCell(
+    row: OverseasIssue, get: (i: OverseasIssue) => string, set: (v: string) => Partial<OverseasIssue>,
+  ): HTMLElement {
+    const inp = el('input', {
+      class: 'mikke-cell-edit', type: 'text', value: get(row), placeholder: '—',
+    }) as HTMLInputElement;
+    inp.addEventListener('change', () => {
+      const v = inp.value.trim();
+      if (v === get(row)) return;               // 変わっていなければ書かない
+      void saveCell(row, set(v));
+    });
+    // Enter で確定 (change が走る)。表の行クリックには伝えない。
+    inp.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') inp.blur();
+      e.stopPropagation();
+    });
+    inp.addEventListener('click', (e) => e.stopPropagation());
+    return inp;
+  }
+
+  /** 事業会社は登録済み一覧からの選択式 (国内と同じ顔ぶれ)。
+   *  ★ 既に入っている値が一覧に無いことがある (登録前に取り込んだ / 会社を消した)。
+   *    その値も選択肢に残す。残さないと、開いただけで別の会社に化ける。 */
+  function companyCell(row: OverseasIssue): HTMLElement {
+    const cur = row.businessCompany ?? '';
+    const opts = [...companies];
+    if (cur && !opts.includes(cur)) opts.unshift(cur);
+    const sel = el('select', { class: 'mikke-cell-edit' }, [
+      el('option', { value: '' }, ['—']),
+      ...opts.map((c) => el('option', { value: c, ...(c === cur ? { selected: 'selected' } : {}) }, [c])),
+    ]) as HTMLSelectElement;
+    sel.value = cur;
+    sel.addEventListener('change', () => {
+      if (sel.value === cur) return;
+      void saveCell(row, { businessCompany: sel.value });
+    });
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    return sel;
+  }
 
   function buildColumns(): void {
     table.setColumns([
@@ -47,10 +117,18 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       { id: 'open', label: 'open', width: 120, text: (i) => i.openStatus ?? '',
         cellStyle: 'color:var(--ink-3)' },
       { id: 'region', label: '地域', width: 100, text: (i) => i.region ?? '' },
-      { id: 'businessCompany', label: LABEL.businessCompany, width: 150, text: (i) => i.businessCompany ?? '' },
-      { id: 'affiliateCompany', label: LABEL.affiliateCompany, width: 150, text: (i) => i.affiliateCompany ?? '' },
-      { id: 'webMapsId', label: LABEL.assetMgmtId, width: 150, text: (i) => i.webMapsId ?? '' },
-      { id: 'identifyEvidence', label: '参考情報', width: 200, text: (i) => i.identifyEvidence ?? '' },
+      // ★ この 4 つは表から直接直せる (Excel にも検査ツールにも無い、人が決める情報)。
+      { id: 'businessCompany', label: LABEL.businessCompany, width: 170,
+        text: (i) => i.businessCompany ?? '', render: (i) => companyCell(i) },
+      { id: 'affiliateCompany', label: LABEL.affiliateCompany, width: 170,
+        text: (i) => i.affiliateCompany ?? '',
+        render: (i) => textCell(i, (x) => x.affiliateCompany ?? '', (v) => ({ affiliateCompany: v })) },
+      { id: 'webMapsId', label: LABEL.assetMgmtId, width: 160,
+        text: (i) => i.webMapsId ?? '',
+        render: (i) => textCell(i, (x) => x.webMapsId ?? '', (v) => ({ webMapsId: v })) },
+      { id: 'identifyEvidence', label: '参考情報', width: 220,
+        text: (i) => i.identifyEvidence ?? '',
+        render: (i) => textCell(i, (x) => x.identifyEvidence ?? '', (v) => ({ identifyEvidence: v })) },
       { id: 'assetIp', label: 'IP', width: 140, text: (i) => i.assetIp ?? '' },
       { id: 'assetFqdn', label: 'FQDN', width: 200, text: (i) => i.assetFqdn ?? '' },
       { id: 'title', label: LABEL.title, width: 260, text: (i) => i.title ?? '' },
@@ -70,7 +148,16 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
-      cache = await getRepo().listOverseasIssues();
+      // 事業会社の選択肢はアクセス権の設定 (登録済み事業会社) から引く。国内と同じ顔ぶれ。
+      const [rows, settings] = await Promise.all([
+        getRepo().listOverseasIssues(),
+        getRepo().getSettings().catch(() => null),
+      ]);
+      cache = rows;
+      companies = registeredCompanies(normalizePerms(settings?.vulnResponsePerms));
+      // 消えた行の選択は残さない (選択分の反映で存在しない ID を触らないため)。
+      const alive = new Set(cache.map((i) => i.id));
+      for (const id of [...selected]) if (!alive.has(id)) selected.delete(id);
       buildColumns();
       table.setRows(cache);
       paint();
@@ -225,6 +312,98 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     tableWrap.appendChild(box);
   }
 
+  // ── 海外連携用リストへの反映 ───────────────────────────────────────────────
+  //   ★ 国内と違い **一方通行**。リスト側は読み取り専用で、取り込み (逆方向) は無い。
+  async function push(onlySelected: boolean): Promise<void> {
+    if (bulkBusy) return;
+    const targets = onlySelected ? cache.filter((i) => selected.has(i.id)) : cache;
+    if (!targets.length) {
+      toast(rootEl, onlySelected ? '行を選択してください。' : '反映するものがありません。', 'warn');
+      return;
+    }
+    const scope = onlySelected
+      ? new Set(targets.map((i) => overseasKey(i.issueInstanceId, i.region ?? '')))
+      : undefined;
+    bulkBusy = true;
+    paint();
+    try {
+      // ★ 列が 1 つでも足りないと SP は書込を 400 で返し、全件失敗する。
+      //   何が足りないのか・どう直すのかを先に出す。
+      const missing = await getRepo().findMissingOverseasResponseColumns().catch(() => [] as string[]);
+      if (missing.length) {
+        toast(rootEl,
+          `海外連携用リストに列が足りません (${missing.join(', ')})。`
+          + '設定 → 連携用リスト の「海外連携用リストを構築」を実行してから、もう一度反映してください。',
+          'error', 0);
+        return;
+      }
+      const existing = await getRepo().listOverseasResponseRows();
+      const plan = buildOverseasResponsePlan(cache, existing, scope);
+      const label = onlySelected ? `選択 ${targets.length} 件の反映` : '海外連携リストへの反映';
+      const total = plan.creates.length + plan.updates.length + plan.deletes.length;
+      // ★ 内容に変更が無くても止まらない。権限だけ未適用のことがある
+      //   (先にリストを作ってから、あとでアクセス権を設定した場合)。
+      if (total) {
+        toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`,
+          'default', 6000);
+      }
+
+      let fail = 0;
+      let firstErr = '';
+      try {
+        const w = await getRepo().applyOverseasResponseWrites(
+          plan.creates, plan.updates.map((u) => ({ id: u.id, fields: u.fields })), plan.deletes.map((d) => d.id),
+          (d, t) => { if (t > 200 && d % 200 === 0) toast(rootEl, `${label}… (${d}/${t})`, 'default', 2000); });
+        fail = w.fail;
+        if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
+      } catch (e) {
+        fail = total;
+        firstErr = (e as Error).message;
+      }
+
+      // ★ アクセス権を付ける対象は「追加した分」だけではない (国内と同じ)。
+      //   追加した分 / 事業会社が変わった分 / まだ継承のままの分 の 3 つ。
+      let permMsg = '';
+      try {
+        const [permTargets, rows] = await Promise.all([
+          getRepo().listOverseasResponsePermTargets(),
+          getRepo().listOverseasResponseRows(),
+        ]);
+        const keyById = new Map(rows.map((r) => [r.id, overseasKey(r.issueInstanceId, r.region)]));
+        const idByKey = new Map(rows.map((r) => [overseasKey(r.issueInstanceId, r.region), r.id]));
+        const createdIds = new Set(plan.creates
+          .map((c) => idByKey.get(overseasKey(c.issueInstanceId, c.region)))
+          .filter((x): x is number => !!x));
+        const changedCompany = new Set(
+          plan.updates.filter((u) => u.fields.businessCompany !== undefined).map((u) => u.id));
+        const scoped = permTargets.filter((t) => {
+          if (!(createdIds.has(t.id) || changedCompany.has(t.id) || !t.hasUniquePerms)) return false;
+          return !scope || scope.has(keyById.get(t.id) ?? '');
+        });
+        if (scoped.length) {
+          const pr = await getRepo().applyOverseasResponseItemPerms(scoped);
+          permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
+            + (pr.errors.length ? ` (失敗 ${pr.errors.length}: ${pr.errors[0]})` : '');
+        }
+      } catch (e) {
+        permMsg = /未設定/.test((e as Error).message)
+          ? ' / アクセス権は未設定のため付与していません（アクセス権画面で管理者グループを選んでください）'
+          : ` / アクセス権の付与に失敗: ${(e as Error).message}`;
+      }
+
+      const done = total - fail;
+      toast(rootEl,
+        `${label}: ${done} 件${fail ? ` / 失敗 ${fail} 件 (${firstErr})` : ''}`
+        + (plan.unchanged ? ` / 変更なし ${plan.unchanged} 件` : '') + permMsg,
+        fail ? 'warn' : 'ok', fail ? 0 : 6000);
+    } catch (e) {
+      toast(rootEl, `反映に失敗しました: ${(e as Error).message}`, 'error', 0);
+    } finally {
+      bulkBusy = false;
+      paint();
+    }
+  }
+
   // ドラッグ＆ドロップ (複数ファイルまとめて)
   const stop = (e: Event): void => { e.preventDefault(); e.stopPropagation(); };
   for (const t of ['dragenter', 'dragover']) {
@@ -240,25 +419,52 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     else toast(rootEl, '.xlsx ファイルをドロップしてください。', 'warn');
   });
 
-  function paint(): void {
+  /** 選択件数を出す帯。選択のたびに表ごと描き直さないよう分けてある。 */
+  function paintSubbar(): void {
     clear(subbar);
     subbar.append(
       el('span', { class: 'mikke-subbar-title' }, ['海外脆弱性一覧']),
       el('span', { class: 'mikke-subbar-count' }, [`${cache.length} 件`]),
     );
+    if (selected.size) {
+      subbar.append(
+        el('span', { class: 'mikke-subbar-count' }, [`選択 ${selected.size} 件`]),
+        el('button', {
+          class: 'mikke-btn mikke-btn--secondary', style: 'height:26px;font-size:var(--fs-sm)',
+          ...(bulkBusy ? { disabled: 'disabled' } : {}),
+          onclick: () => void push(true),
+        }, ['連携リストへ反映(選択)']),
+        el('button', {
+          class: 'mikke-btn mikke-btn--ghost', style: 'height:26px;font-size:var(--fs-sm)',
+          onclick: () => { selected.clear(); paintSubbar(); table.render(); },
+        }, ['選択を解除']),
+      );
+    }
+  }
+
+  function paint(): void {
+    paintSubbar();
     clear(toolbar);
     const importBtn = el('button', {
       class: 'mikke-btn mikke-btn--primary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '地域ごとの Excel をまとめて選べます。画面へドラッグしても取り込めます',
-      ...(busy ? { disabled: 'disabled' } : {}),
+      ...(busy || bulkBusy ? { disabled: 'disabled' } : {}),
       onclick: () => fileInput.click(),
       html: icon('upload') + '<span>Excel を取り込む</span>',
     });
+    const pushBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+      title: '海外拠点向けの連携リスト (国内とは別リスト) へ一覧の内容を書き出します',
+      ...(busy || bulkBusy ? { disabled: 'disabled' } : {}),
+      onclick: () => void push(false),
+    }, ['連携リストへ反映(全件)']);
     toolbar.append(
       importBtn,
+      pushBtn,
       fileInput,
       el('span', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
-        '地域ごと・モニタリング区分ごとのファイルをまとめて読み込めます（ドラッグ＆ドロップ可）。',
+        '地域ごと・モニタリング区分ごとのファイルをまとめて読み込めます（ドラッグ＆ドロップ可）。'
+        + ' 事業会社・管理会社・WebMAPS管理ID・参考情報は表から直接直せます。',
       ]),
     );
     if (!busy && !previewing) table.render();

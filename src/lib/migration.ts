@@ -614,7 +614,7 @@ export function buildMigrationPlan(
     if (!a || isExcelError(a)) continue;
     const mapped = applyAliasRemap(a, ctx.remapIndex);
     if (mapped !== a) {
-      const key = `${a} ${mapped}`;
+      const key = `${a}\u0000${mapped}`;
       const hit = hits.get(key);
       if (hit) hit.count++;
       else hits.set(key, { from: a, to: mapped, count: 1 });

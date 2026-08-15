@@ -228,6 +228,82 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
 }
 
 /**
+ * 海外連携用リストのヘッダー。国内と同じ 2 段組カード書式だが、
+ * ★ 記入欄が無い (読み取り専用) ので、全項目をここに出し切る。
+ */
+export function buildOverseasResponseHeader(): Record<string, unknown> {
+  return {
+    $schema: COLUMN_FORMAT_SCHEMA,
+    elmType: 'div',
+    attributes: { class: SELECTABLE_PARENT_CLASS },
+    style: {
+      display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+      'text-align': 'left', width: '100%', 'box-sizing': 'border-box',
+      padding: '0px',
+    },
+    children: [{
+      elmType: 'div',
+      attributes: { class: SELECTABLE_CLASS },
+      style: {
+        display: 'flex', 'flex-direction': 'column', 'align-items': 'stretch',
+        width: '100%', 'box-sizing': 'border-box',
+        padding: '0px', margin: '0px', border: 'none',
+      },
+      children: [
+        {
+          elmType: 'div',
+          txtContent: "=if([$VulnTitle] == '', '（脆弱性タイトル未入力）', [$VulnTitle])",
+          style: {
+            'font-size': '18px', 'font-weight': '600', color: '#201f1e',
+            'padding-bottom': '2px', 'word-break': 'break-word',
+          },
+        },
+        {
+          elmType: 'div',
+          txtContent: "=if([$Title] == '', '', 'Issue Instance ID: ' + [$Title])",
+          style: { 'font-size': '11px', color: '#797775', 'padding-bottom': '10px' },
+        },
+        card('脆弱性情報', '読み取り専用', [
+          twoColumns(
+            [
+              item('通知日', dateValue('ContactedAt')),
+              item(LABEL.detectionStatus, textValue('[$DetectionStatus]')),
+              item('地域', textValue('[$Region]')),
+            ],
+            [
+              item(LABEL.lastSeen, dateValue('LastSeen')),
+              item(LABEL.responseRemarks, textValue('[$Remarks]')),
+            ],
+          ),
+        ]),
+        card('資産情報', '読み取り専用', [
+          twoColumns(
+            [
+              item('IP', textValue('[$AssetIp]')),
+              item('FQDN', textValue('[$AssetFqdn]')),
+              item('Asset Title', textValue('[$AssetTitle]')),
+              item('Asset Mapped Domains', textValue('[$AssetMappedDomains]')),
+              item('Asset Homepage URL', textValue('[$AssetHomepageUrl]')),
+            ],
+            [
+              item(LABEL.businessCompany, textValue('[$BusinessCompany]')),
+              item(LABEL.affiliateCompany, textValue('[$AffiliateCompany]')),
+              item(LABEL.assetMgmtId, textValue('[$WebMapsId]')),
+              item('参考情報', textValue('[$IdentifyEvidence]')),
+            ],
+          ),
+        ]),
+      ],
+    }],
+  };
+}
+
+/** 海外連携用リストのフォーム書式 (ヘッダーのみ。本体に出す列は無い)。 */
+export function buildOverseasResponseFormFormatter(): string {
+  return JSON.stringify({ headerJSONFormatter: buildOverseasResponseHeader() });
+}
+
+/**
  * ClientFormCustomFormatter に入れる値 (文字列)。
  * キーは `headerJSONFormatter`。`header` ではフォームが読まない
  * (リストフォームの「レイアウトの構成」が書き込む形と揃えてある)。

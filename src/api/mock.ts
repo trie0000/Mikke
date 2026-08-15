@@ -4,9 +4,10 @@ import type { Repository, ImportLogEntry } from './repo';
 import type { OverseasIssue, ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
 import { normalizeMgmtStatus } from '../types';
 import type { ImportOp } from '../lib/import';
-import { vulnResponseFieldSpecs } from './sp/schema';
+import { vulnResponseFieldSpecs, overseasResponseFieldSpecs } from './sp/schema';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
+import type { OverseasResponseFields, OverseasResponseRow } from '../lib/overseasResponseSync';
 import { normalizePerms, hasAnyPerms, buildItemPermPlan } from '../lib/itemPerms';
 
 const LS_ISSUES = 'mikke.mock.issues';
@@ -20,6 +21,8 @@ const LS_ATTACHMENTS = 'mikke.mock.attachments';   // 連携用リストの添�
 const LS_VULNRESPONSE = 'mikke.mock.vulnresponse';
 /** 海外脆弱性一覧 (mock)。 */
 const LS_OVERSEAS = 'mikke.mock.overseas';
+const LS_OVERSEAS_RESPONSE = 'mikke.mock.overseasresponse';
+const LS_OVERSEAS_PERM_APPLIED = 'mikke.mock.overseasPermApplied';
 /** mock だけの補助: アクセス権を付与済みのアイテム ID (継承解除の代わり)。 */
 const LS_PERM_APPLIED = 'mikke.mock.permApplied';
 
@@ -376,6 +379,77 @@ export class MockRepository implements Repository {
       { category: '既定ビュー', target: 'ビュー列', outcome: 'updated' },
       { category: 'フォーム書式設定', target: 'アイテム', outcome: 'updated' },
       ...vulnResponseFieldSpecs().filter((f) => f.conditionalFormula).map((f) => ({
+        category: '条件付き数式', target: f.name, outcome: 'updated' as const,
+      })),
+    ];
+    const counts = { created: 0, updated: 0, skipped: 0, failed: 0 };
+    for (const s of steps) counts[s.outcome]++;
+    return { steps, counts, listUrl: '' };
+  }
+
+  // ── 海外連携用リスト (読み取り専用・逆取り込みなし) ───────────────────────
+  async listOverseasResponseRows(): Promise<OverseasResponseRow[]> {
+    return load<OverseasResponseRow[]>(LS_OVERSEAS_RESPONSE, []);
+  }
+  async findMissingOverseasResponseColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
+
+  async applyOverseasResponseWrites(
+    creates: OverseasResponseFields[],
+    updates: { id: number; fields: Partial<OverseasResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    let rows = load<OverseasResponseRow[]>(LS_OVERSEAS_RESPONSE, []);
+    const del = new Set(deletes);
+    rows = rows.filter((r) => !del.has(r.id));
+    for (const u of updates) {
+      const idx = rows.findIndex((r) => r.id === u.id);
+      if (idx >= 0) rows[idx] = { ...rows[idx]!, ...u.fields, id: u.id };
+    }
+    let next = rows.reduce((m, r) => Math.max(m, r.id), 0);
+    for (const c of creates) rows.push({ ...c, id: ++next });
+    save(LS_OVERSEAS_RESPONSE, rows);
+    const total = creates.length + updates.length + deletes.length;
+    onProgress?.(total, total);
+    return { ok: total, fail: 0 };
+  }
+
+  async listOverseasResponsePermTargets():
+    Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]> {
+    const applied = new Set(load<number[]>(LS_OVERSEAS_PERM_APPLIED, []));
+    return load<OverseasResponseRow[]>(LS_OVERSEAS_RESPONSE, [])
+      .map((r) => ({ id: r.id, businessCompany: r.businessCompany ?? '', hasUniquePerms: applied.has(r.id) }));
+  }
+
+  async applyOverseasResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    save(LS_OVERSEAS_PERM_APPLIED,
+      [...new Set([...load<number[]>(LS_OVERSEAS_PERM_APPLIED, []), ...targets.map((t) => t.id)])]);
+    const perms = normalizePerms((await this.getSettings()).vulnResponsePerms);
+    if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
+    const plans = buildItemPermPlan(targets, perms);
+    return {
+      applied: plans.filter((p) => p.edit.length).length,
+      adminOnly: plans.filter((p) => !p.edit.length).length,
+      errors: [],
+    };
+  }
+
+  async overseasResponseListUrl(): Promise<string | null> { return null; }
+
+  async ensureOverseasResponseList(): Promise<SetupResult> {
+    const steps: SetupStep[] = [
+      { category: 'リスト', target: 'MikkeOverseasResponse', outcome: 'created' },
+      ...overseasResponseFieldSpecs().map((f) => ({
+        category: '列', target: f.name, outcome: 'created' as const,
+      })),
+      ...overseasResponseFieldSpecs().filter((f) => f.displayName).map((f) => ({
+        category: '表示名', target: `${f.name} → ${f.displayName}`, outcome: 'updated' as const,
+      })),
+      { category: '既定ビュー', target: 'ビュー列', outcome: 'updated' },
+      { category: 'フォーム書式設定', target: 'アイテム', outcome: 'updated' },
+      ...overseasResponseFieldSpecs().filter((f) => f.conditionalFormula).map((f) => ({
         category: '条件付き数式', target: f.name, outcome: 'updated' as const,
       })),
     ];

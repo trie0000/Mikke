@@ -3,6 +3,7 @@ import type { OverseasIssue, ManagedIssue, ManagedAsset, ResponseHistory, Change
 import type { ImportOp } from '../lib/import';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
+import type { OverseasResponseFields, OverseasResponseRow } from '../lib/overseasResponseSync';
 
 export interface Repository {
   /** リスト自動作成 (ensureLists 相当)。 */
@@ -132,6 +133,30 @@ export interface Repository {
   vulnResponseListUrl(): Promise<string | null>;
   /** 資産管理者への連携用リストを構築する (冪等)。設定画面から明示的に実行する。 */
   ensureVulnResponseList(): Promise<SetupResult>;
+  // ── 海外連携用リスト (読み取り専用・逆取り込みなし) ───────────────────────
+  /** 海外連携用リストを構築する (冪等)。設定画面から明示的に実行する。 */
+  ensureOverseasResponseList(): Promise<SetupResult>;
+  /** 海外連携用リストの既存アイテム。反映の差分計算に使う。未作成なら空配列。 */
+  listOverseasResponseRows(): Promise<OverseasResponseRow[]>;
+  /** 海外連携用リストに足りない列。1 列でも欠けると書込が 400 になる。 */
+  findMissingOverseasResponseColumns(): Promise<string[]>;
+  /** 海外連携用リストへの反映 ($batch でまとめて書く)。 */
+  applyOverseasResponseWrites(
+    creates: OverseasResponseFields[],
+    updates: { id: number; fields: Partial<OverseasResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }>;
+  /** 海外連携用リストのアイテム (アクセス権の適用対象)。 */
+  listOverseasResponsePermTargets(): Promise<{ id: number; businessCompany: string; hasUniquePerms: boolean }[]>;
+  /** 海外連携用リストのアイテムへアクセス権を適用する (国内と同じ方式)。 */
+  applyOverseasResponseItemPerms(
+    targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ applied: number; adminOnly: number; errors: string[] }>;
+  /** 海外連携用リストを開く URL (既定ビュー)。まだ無ければ null。 */
+  overseasResponseListUrl(): Promise<string | null>;
+
   /** 連携用リストの該当アイテム (IssueInstanceId 一致) に個別レポートを添付する。
    *  常に最新 1 つになるよう、同名と previousFileName の添付を消してから追加する。
    *  該当アイテムが無ければ 'no-item'。 */

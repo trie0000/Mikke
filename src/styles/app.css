@@ -235,6 +235,19 @@
 #mikke-root .mikke-table tbody tr:hover { background: var(--paper-2); }
 #mikke-root .mikke-table tbody tr.is-selected { background: var(--accent-soft); }
 #mikke-root .mikke-check-col { width: 38px; text-align: center; }
+/* 表の中で直接編集するセル (海外脆弱性一覧の 事業会社 / 管理会社 / WebMAPS管理ID / 参考情報)。
+   既定では枠を出さず、ホバー/フォーカスで編集できると分かるようにする
+   (常時枠を出すと表が入力欄だらけに見えて読みにくい)。 */
+#mikke-root .mikke-cell-edit {
+  width: 100%; box-sizing: border-box; min-height: 26px; padding: 0 var(--s-2);
+  border: 1px solid transparent; border-radius: var(--r-2);
+  background: transparent; color: var(--ink);
+  font-family: var(--font-sans); font-size: var(--fs-md); line-height: 1.4;
+}
+#mikke-root .mikke-cell-edit:hover { border-color: var(--line); }
+#mikke-root .mikke-cell-edit:focus {
+  outline: none; background: var(--paper); border-color: var(--accent);
+}
 /* 列幅リサイズ用グリップ (th 右端。th は sticky=positioned なので absolute の基準になる) */
 #mikke-root .mikke-col-grip {
   position: absolute; top: 0; right: -4px; width: 9px; height: 100%;

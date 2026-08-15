@@ -57,6 +57,8 @@ export const LIST_DOWNLOADS = 'MikkeDownloads';
 export const LIST_VULNRESPONSE = 'MikkeVulnResponse';
 /** 海外脆弱性一覧 (国内の管理表とは別。地域ごとの通知状況を追う簡易版)。 */
 export const LIST_OVERSEAS = 'MikkeOverseasIssues';
+/** 海外拠点への連携用リスト (読み取り専用。国内の連携用リストとは別物)。 */
+export const LIST_OVERSEAS_RESPONSE = 'MikkeOverseasResponse';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -183,6 +185,44 @@ export function overseasFieldSpecs(): FieldSpec[] {
     { name: 'ImportedAt', type: 'DateTime' },
   ];
 }
+
+/**
+ * MikkeOverseasResponse: 海外拠点へ渡す連携用リスト。
+ * ★ 国内と違い **読み取り専用**。記入してもらう欄が無いので、全列を
+ *   フォーム本体から隠し (HIDDEN_UNLESS_NEW)、ヘッダーカードだけで見せる。
+ * ★ 逆取り込みはしないので、Mikke 側が一方的に書く。
+ */
+export function overseasResponseFieldSpecs(): FieldSpec[] {
+  const ro = (name: string, displayName: string, extra: Partial<FieldSpec> = {}): FieldSpec => ({
+    name, type: 'Text', displayName, conditionalFormula: HIDDEN_UNLESS_NEW, ...extra,
+  });
+  return [
+    // 突合キーは組込みの Title 列 (ビューの既定リンク列)。
+    { name: 'Title', type: 'Text', displayName: LABEL.issueInstanceId,
+      conditionalFormula: HIDDEN_UNLESS_NEW, required: false, indexed: true },
+    ro('VulnTitle', LABEL.title),
+    ro('ContactedAt', '通知日', { type: 'DateTime', dateOnly: true }),
+    ro('DetectionStatus', LABEL.detectionStatus, { indexed: true }),
+    ro('Region', '地域', { indexed: true }),
+    ro('BusinessCompany', LABEL.businessCompany, { indexed: true }),
+    ro('AffiliateCompany', LABEL.affiliateCompany),
+    ro('WebMapsId', LABEL.assetMgmtId, { indexed: true }),
+    ro('IdentifyEvidence', '参考情報', { type: 'Note' }),
+    ro('AssetIp', 'IP'),
+    ro('AssetFqdn', 'FQDN'),
+    ro('AssetTitle', 'Asset Title'),
+    ro('AssetMappedDomains', 'Asset Mapped Domains', { type: 'Note' }),
+    ro('AssetHomepageUrl', 'Asset Homepage URL', { type: 'Note' }),
+    ro('LastSeen', LABEL.lastSeen, { type: 'DateTime', dateOnly: true }),
+    ro('Remarks', LABEL.responseRemarks, { type: 'Note' }),
+  ];
+}
+
+/** 海外連携用リストの既定ビューに出す列。 */
+export const OVERSEAS_RESPONSE_VIEW_FIELDS = [
+  'LinkTitle', 'VulnTitle', 'ContactedAt', 'DetectionStatus', 'Region',
+  'BusinessCompany', 'AffiliateCompany', 'WebMapsId', 'AssetFqdn', 'AssetIp', 'LastSeen',
+];
 
 /** MikkeSettings: KV を JSON 1 行で保持。 */
 export function settingsFieldSpecs(): FieldSpec[] {
