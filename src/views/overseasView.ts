@@ -11,7 +11,8 @@ import { toast } from '../components/toast';
 import { DataTable } from './dataTable';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import { parseFlexibleDate } from '../lib/migration';
-import { buildOverseasPlan, OVERSEAS_COL, type OverseasPlan } from '../lib/overseas';
+import { buildOverseasPlan, indexMergedCsv, OVERSEAS_COL, type OverseasPlan } from '../lib/overseas';
+import { loadLatestMergedCsv } from '../lib/downloadFlow';
 import { LABEL } from '../lib/fieldLabels';
 import type { OverseasIssue } from '../types';
 
@@ -124,15 +125,19 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
         ]));
         return;
       }
-      box.textContent = '突き合わせています…';
-      const [existing, domestic] = await Promise.all([
+      box.textContent = 'ダウンロード済みの CSV と突き合わせています…';
+      // ★ 脆弱性・資産の情報は「ダウンロードデータ」のマージ CSV から引く。
+      //   管理対象一覧だと、管理対象条件に一致しなかった脆弱性が見つからない。
+      const [existing, domestic, merged] = await Promise.all([
         getRepo().listOverseasIssues(),
         getRepo().listIssues(),
+        loadLatestMergedCsv().catch(() => null),
       ]);
-      const plan = buildOverseasPlan(rows, [...headers], existing, domestic,
+      const plan = buildOverseasPlan(rows, [...headers], existing,
+        indexMergedCsv(merged?.rows ?? []), domestic,
         parseFlexibleDate, new Date().toISOString());
       previewing = true;
-      showPreview(plan, files.length, rows.length, badFiles);
+      showPreview(plan, files.length, rows.length, badFiles, merged);
     } catch (e) {
       previewing = true;
       clear(tableWrap);
@@ -144,7 +149,10 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   }
 
   /** 取り込む前に中身を見せる。ここで気づけないと、入れてから直すことになる。 */
-  function showPreview(plan: OverseasPlan, fileCount: number, rowCount: number, badFiles: string[]): void {
+  function showPreview(
+    plan: OverseasPlan, fileCount: number, rowCount: number, badFiles: string[],
+    merged: { fileName: string; downloadedAt: string; rows: unknown[] } | null,
+  ): void {
     clear(tableWrap);
     const box = el('div', { style: 'padding:var(--s-6) var(--gutter);max-width:900px' });
     box.append(
@@ -155,6 +163,12 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
         + `（脆弱性 × 地域 で ${plan.entries} 件）`
         + (plan.skipped ? ` / ${OVERSEAS_COL.issueInstanceId} が空で取り込めない ${plan.skipped} 行` : ''),
       ]),
+      el('div', { class: merged ? 'mikke-note' : 'mikke-error', style: 'margin-top:var(--s-3)' }, [
+        merged
+          ? `脆弱性・資産の情報は ${merged.fileName} (${fmtDate(merged.downloadedAt)} / ${merged.rows.length} 行) から引きます。`
+          : 'ダウンロードデータにマージ CSV がありません。脆弱性タイトル・資産の情報は空になります'
+            + '（「情報更新(全件)」でレポートを取得してください）。',
+      ]),
       ...(badFiles.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
         `読めなかったファイル: ${badFiles.join(' / ')}`,
       ])] : []),
@@ -164,10 +178,11 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
         '1 行目が見出しになっているか確認してください。',
       ])] : []),
       ...(plan.unmatched.length ? [el('div', { class: 'mikke-error', style: 'margin-top:var(--s-3)' }, [
-        `国内の管理対象に無い ${OVERSEAS_COL.issueInstanceId} が ${plan.unmatched.length} 件あります: `
+        `ダウンロード済み CSV にも管理対象にも無い ${OVERSEAS_COL.issueInstanceId} が `
+        + `${plan.unmatched.length} 件あります: `
         + plan.unmatched.slice(0, 10).join(' / ') + (plan.unmatched.length > 10 ? ' …' : ''),
         el('br'),
-        '脆弱性タイトル・資産・組織は空になります（先に CSV 取込を済ませてください）。',
+        '脆弱性タイトル・資産の情報は空になります。',
       ])] : []),
     );
     const warned = plan.warnings.slice(0, 20);

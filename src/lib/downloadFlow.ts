@@ -140,6 +140,37 @@ async function sampleMergedCsv(items: RelayDownloadItem[]): Promise<{ fileName: 
   return { fileName: `merged_${jstStamp()}.csv`, text, rowCount: rows.length };
 }
 
+/** 直近のマージ CSV (脆弱性＋資産)。無ければ null。 */
+export interface LatestMerged {
+  rows: Record<string, string>[];
+  headers: string[];
+  fileName: string;
+  downloadedAt: string;
+}
+
+/**
+ * ダウンロードデータから **いちばん新しいマージ CSV** を読む。
+ *
+ * ★ 海外脆弱性の取り込みで使う。管理対象一覧には管理対象条件に一致したものしか
+ *   入っていないが、この CSV には検査ツールの全件が入っている。
+ */
+export async function loadLatestMergedCsv(): Promise<LatestMerged | null> {
+  const all = await getRepo().listDownloads().catch(() => []);
+  const merged = all.filter((d) => d.type === 'merged' && d.fileUrl)
+    .sort((a, b) => (b.downloadedAt ?? '').localeCompare(a.downloadedAt ?? ''));
+  const latest = merged[0];
+  if (!latest) return null;
+  const href = await getRepo().docFileHref(latest.fileUrl);
+  if (!href) return null;
+  const r = await fetch(href, { credentials: 'same-origin', cache: 'no-store' });
+  if (!r.ok) throw new Error(`マージ CSV の取得に失敗: HTTP ${r.status}`);
+  const parsed = await parseCsvAsync(await r.text());
+  return {
+    rows: parsed.rows, headers: parsed.headers,
+    fileName: latest.fileName, downloadedAt: latest.downloadedAt,
+  };
+}
+
 export interface MergeResult {
   /** 取込に使うパース済み CSV。 */
   parsed: ParsedCsv;

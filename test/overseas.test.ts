@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   nextOverseasDetection, toOpenStatus, toRegion, resolveOverseasColumns,
-  missingOverseasColumns, buildOverseasPlan, OVERSEAS_COL,
+  missingOverseasColumns, buildOverseasPlan, indexMergedCsv, OVERSEAS_COL,
 } from '../src/lib/overseas';
 import { parseFlexibleDate } from '../src/lib/migration';
 import type { ManagedIssue, OverseasIssue } from '../src/types';
@@ -17,6 +17,17 @@ const row = (iid: string, date: string, open: string, region = 'APAC', remarks =
   [OVERSEAS_COL.remarks]: remarks,
   [OVERSEAS_COL.region]: region,
 });
+
+/** ダウンロード済みマージ CSV (検査ツールの全件。管理対象に無いものも入る)。 */
+const MERGED = indexMergedCsv([
+  { 'Issue Instance ID': 'IID-1', 'Title': 'TLS 1.0 が有効', 'Last Seen': '2026-07-31T00:00:00Z',
+    'Asset IP': '203.0.113.10', 'Asset Domain': 'web01.example.com', 'Asset Title': 'web01',
+    'Asset Mapped Domains': 'a.example.com | b.example.com',
+    'Asset Homepage URL': 'https://web01.example.com/' },
+  // ★ 管理対象条件に一致せず、管理対象一覧には入っていない脆弱性
+  { 'Issue Instance ID': 'IID-X', 'Title': '管理対象外の脆弱性', 'Last Seen': '2026-07-20T00:00:00Z',
+    'Asset Domain': 'web09.example.com', 'Asset Title': 'web09' },
+]);
 
 const domestic = (over: Partial<ManagedIssue> = {}): ManagedIssue => ({
   id: 1, title: 'TLS 1.0 が有効', issueInstanceId: 'IID-1',
@@ -77,7 +88,7 @@ describe('検知状況の遷移 (1 段ぶん)', () => {
 
 describe('★ 追記型の Excel から履歴を積み上げる', () => {
   const plan = (rows: Record<string, string>[], existing: OverseasIssue[] = []) =>
-    buildOverseasPlan(rows, H, existing, [domestic()], parseFlexibleDate, NOW);
+    buildOverseasPlan(rows, H, existing, MERGED, [domestic()], parseFlexibleDate, NOW);
 
   it('初回の open は新規', () => {
     expect(plan([row('IID-1', '2026-05-10', 'open')]).creates[0]!.detectionStatus).toBe('新規');
@@ -150,10 +161,10 @@ describe('★ 追記型の Excel から履歴を積み上げる', () => {
   });
 });
 
-describe('国内の取込済みデータから埋める', () => {
-  it('★ Excel に無い項目は国内分から引く', () => {
+describe('Excel に無い項目の埋め方', () => {
+  it('★ 脆弱性・資産はダウンロード済み CSV から、組織は管理対象から引く', () => {
     const c = buildOverseasPlan([row('IID-1', '2026-05-10', 'open', 'APAC', '要確認')],
-      H, [], [domestic()], parseFlexibleDate, NOW).creates[0]!;
+      H, [], MERGED, [domestic()], parseFlexibleDate, NOW).creates[0]!;
     expect(c.title).toBe('TLS 1.0 が有効');
     expect(c.businessCompany).toBe('エナジー事業');
     expect(c.affiliateCompany).toBe('ABC株式会社');
@@ -169,11 +180,29 @@ describe('国内の取込済みデータから埋める', () => {
     expect(c.region).toBe('APAC');
   });
 
-  it('★ 国内に無い ID は名指しする (項目が空になることに気づけるように)', () => {
-    const p = buildOverseasPlan([row('IID-X', '2026-05-10', 'open')], H, [], [domestic()],
+  it('★ 管理対象に無くても、ダウンロード済み CSV にあれば埋まる', () => {
+    // 海外分には管理対象条件に一致しない脆弱性が含まれる。CSV には全件載っている。
+    const p = buildOverseasPlan([row('IID-X', '2026-05-10', 'open')], H, [], MERGED, [domestic()],
       parseFlexibleDate, NOW);
-    expect(p.unmatched).toEqual(['IID-X']);
+    expect(p.unmatched).toEqual([]);
+    expect(p.creates[0]!.title).toBe('管理対象外の脆弱性');
+    expect(p.creates[0]!.assetFqdn).toBe('web09.example.com');
+    expect(p.creates[0]!.assetTitle).toBe('web09');
+    expect(p.creates[0]!.businessCompany).toBe('');   // 管理対象に無いので空
+  });
+
+  it('★ CSV にも管理対象にも無い ID だけを名指しする', () => {
+    const p = buildOverseasPlan([row('IID-ZZZ', '2026-05-10', 'open')], H, [], MERGED, [domestic()],
+      parseFlexibleDate, NOW);
+    expect(p.unmatched).toEqual(['IID-ZZZ']);
     expect(p.creates[0]!.title).toBe('');
+  });
+
+  it('CSV が空でも管理対象の控えから埋まる', () => {
+    const c = buildOverseasPlan([row('IID-1', '2026-05-10', 'open')], H, [], new Map(), [domestic()],
+      parseFlexibleDate, NOW).creates[0]!;
+    expect(c.title).toBe('TLS 1.0 が有効');
+    expect(c.assetFqdn).toBe('web01.example.com');
   });
 });
 
@@ -195,7 +224,7 @@ describe('見出しの探し方', () => {
   });
 
   it('突合キーが無ければ何も取り込まない', () => {
-    const p = buildOverseasPlan([{ x: '1' }], ['x'], [], [], parseFlexibleDate, NOW);
+    const p = buildOverseasPlan([{ x: '1' }], ['x'], [], MERGED, [], parseFlexibleDate, NOW);
     expect(p.creates).toEqual([]);
     expect(p.missingColumns).toContain(OVERSEAS_COL.issueInstanceId);
   });

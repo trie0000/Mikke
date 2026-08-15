@@ -7,7 +7,11 @@
 //   したがって検知状況は **ファイル内の履歴を古い順にたどって決める**。
 //   保存済みの状態は使わない (同じファイルを 2 回取り込んでも結果が変わらない)。
 // ★ Excel に入っているのは 通知日 / open / 備考 / 地域 と Issue Instance ID だけ。
-//   それ以外 (脆弱性タイトル・資産・組織など) は、国内分の取込済みデータから引く。
+//   それ以外 (脆弱性タイトル・資産) は **ダウンロード済みのマージ CSV** から引く。
+//   ★ 管理対象一覧ではなく CSV を見るのは、海外分には管理対象条件に一致せず
+//     管理対象に入っていない脆弱性があるため。CSV には全件載っている。
+//   事業会社・管理会社・WebMAPS管理ID・参考情報は Mikke 側で付ける値なので、
+//   管理対象にあればそこから引く (無ければ空)。
 //
 // UI にも SP にも依存しない (テストしやすくするため)。
 import type { DetectionStatus, ManagedIssue, OverseasIssue, OverseasOpenStatus, OverseasRegion } from '../types';
@@ -141,7 +145,7 @@ export interface OverseasPlan {
   skipped: number;
   /** 取り込んだ脆弱性の数 (行数ではなく、Issue Instance ID × 地域 の数)。 */
   entries: number;
-  /** 国内の取込済みデータに見つからず、脆弱性の情報を埋められなかった ID。 */
+  /** ダウンロード済み CSV にも管理対象にも見つからず、情報を埋められなかった ID。 */
   unmatched: string[];
   /** 行ごとの気づき (画面に出す)。 */
   warnings: { issueInstanceId: string; message: string }[];
@@ -149,10 +153,34 @@ export interface OverseasPlan {
   missingColumns: string[];
 }
 
-/** 検査ツール由来の値を 1 つ引く (列名は取込設定に依存しないよう複数候補で探す)。 */
+/** マージ CSV の 1 行から、名前のゆれを吸収して値を引く。 */
+function csvOf(row: Record<string, string> | undefined, names: string[]): string {
+  if (!row) return '';
+  const keys = Object.keys(row);
+  for (const n of names) {
+    const hit = findColumn(keys, n);
+    if (hit && text(row[hit])) return text(row[hit]);
+  }
+  return '';
+}
+
+/** 管理対象の Scan_ 値 (CSV に無かったときの控え)。 */
 function scanOf(issue: ManagedIssue | undefined, name: string): string {
   if (!issue) return '';
   return text(resolveScanValue(issue.scanFields, `Scan_${name}`, []));
+}
+
+/** マージ CSV を Issue Instance ID で引ける形にする。 */
+export function indexMergedCsv(rows: Record<string, string>[]): Map<string, Record<string, string>> {
+  const out = new Map<string, Record<string, string>>();
+  if (!rows.length) return out;
+  const key = findColumn(Object.keys(rows[0]!), OVERSEAS_COL.issueInstanceId, ['Issue ID', 'IssueInstanceId']);
+  if (!key) return out;
+  for (const r of rows) {
+    const iid = text(r[key]);
+    if (iid) out.set(iid, r);   // 同じ ID が複数行あれば後の行を採用
+  }
+  return out;
 }
 
 /**
@@ -161,7 +189,8 @@ function scanOf(issue: ManagedIssue | undefined, name: string): string {
  * @param rows       Excel の全行 (ファイルを跨いで連結してよい)
  * @param headers    見出し (ファイルを跨ぐ場合は和集合)
  * @param existing   既存の海外脆弱性一覧
- * @param domestic   国内の管理対象 (脆弱性の情報を引く元)
+ * @param scanner    ダウンロード済みマージ CSV (Issue Instance ID で引ける形)
+ * @param domestic   国内の管理対象 (事業会社などの Mikke 側の値を引く元)
  * @param parseDate  日付の読み取り (lib/migration の parseFlexibleDate を渡す)
  * @param nowIso     取り込み日時
  */
@@ -169,6 +198,7 @@ export function buildOverseasPlan(
   rows: Record<string, string>[],
   headers: string[],
   existing: OverseasIssue[],
+  scanner: Map<string, Record<string, string>>,
   domestic: ManagedIssue[],
   parseDate: DateParser,
   nowIso: string,
@@ -228,7 +258,10 @@ export function buildOverseasPlan(
     plan.entries++;
 
     const d = domesticByIid.get(iid);
-    if (!d) unmatched.add(iid);
+    const c = scanner.get(iid);
+    // ★ 「見つからない」は CSV に無いことを指す。管理対象に無いのは普通のこと
+    //   (管理対象条件に一致しない脆弱性も海外側では扱うため)。
+    if (!c && !d) unmatched.add(iid);
 
     const fields: Omit<OverseasIssue, 'id'> = {
       issueInstanceId: iid,
@@ -237,18 +270,19 @@ export function buildOverseasPlan(
       detectionStatus: detectionStatus ?? '未検出',
       region: g.region,
       remarks: col.remarks ? text(row[col.remarks]) : '',
-      // ここから下は国内の取込済みデータから引く (Excel には入っていない)。
-      title: text(d?.title),
+      // ★ 脆弱性・資産の情報は マージ CSV を優先。無ければ管理対象の控えを使う。
+      title: csvOf(c, ['Title']) || text(d?.title),
+      assetIp: csvOf(c, ['Asset IP']) || scanOf(d, 'Asset IP'),
+      assetFqdn: csvOf(c, ['Asset Domain', 'Asset']) || scanOf(d, 'Asset Domain'),
+      assetTitle: csvOf(c, ['Asset Title']) || scanOf(d, 'Asset Title'),
+      assetMappedDomains: csvOf(c, ['Asset Mapped Domains']) || scanOf(d, 'Asset Mapped Domains'),
+      assetHomepageUrl: csvOf(c, ['Asset Homepage URL']) || scanOf(d, 'Asset Homepage URL'),
+      lastSeen: csvOf(c, ['Last Seen']) || text(d?.lastSeen),
+      // ここから下は Mikke 側で付ける値。管理対象にあれば引く (無ければ空)。
       businessCompany: text(d?.businessCompany),
       affiliateCompany: text(d?.affiliateCompany),
       webMapsId: text(d?.webMapsId),
       identifyEvidence: text(d?.identifyEvidence),
-      assetIp: scanOf(d, 'Asset IP'),
-      assetFqdn: scanOf(d, 'Asset Domain'),
-      assetTitle: scanOf(d, 'Asset Title'),
-      assetMappedDomains: scanOf(d, 'Asset Mapped Domains'),
-      assetHomepageUrl: scanOf(d, 'Asset Homepage URL'),
-      lastSeen: text(d?.lastSeen),
       importedAt: nowIso,
     };
 
