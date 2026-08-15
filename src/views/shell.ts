@@ -14,7 +14,7 @@ import { renderOverseasView } from './overseasView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { resolveSiteUrl } from '../utils/spSites';
-import { LIST_VULNRESPONSE } from '../api/sp/schema';
+import { LIST_VULNRESPONSE, LIST_OVERSEAS_RESPONSE } from '../api/sp/schema';
 import { toast } from '../components/toast';
 import { checkBundleUpdate, stableBuildId, reloadBundleInPlace } from '../utils/bundleVersion';
 import { checkRelayUpdate, performRelayUpdate } from '../utils/relayUpdate';
@@ -254,9 +254,13 @@ function renderSidebar(root: HTMLElement): HTMLElement {
       onclick: () => setState({ view: view as ViewName, selectedIssueId: null }),
     }, [el('span', { html: icon(ic) }), el('span', {}, [label])]);
 
-  // 資産管理者への連携リスト (SharePoint リスト) を別タブで開く外部リンク。
+  // 連携リスト (SharePoint リスト) を別タブで開く外部リンク。
   // Mikke の画面ではなく SP のリストを開くので、他の項目とは別扱い (is-active にしない)。
-  const listLink = (): HTMLElement | null => {
+  // 国内 (資産管理者向け) と海外 (海外拠点向け) の 2 本を同じ作りで出す。
+  const listLink = (o: {
+    listTitle: string; label: string; ic: string; title: string;
+    resolve: () => Promise<string | null>; missing: string;
+  }): HTMLElement | null => {
     // 選択済みサイト、無ければ現在のページのサイト (リポジトリと同じ解決順)。
     // mock / SP 以外では空になるのでリンクを出さない。
     const site = resolveSiteUrl();
@@ -264,29 +268,40 @@ function renderSidebar(root: HTMLElement): HTMLElement {
     // ★ href は「組み立てた推測 URL」なので中クリック等の保険にとどめ、
     //   通常のクリックでは SharePoint から実際の URL を引いてから開く。
     //   リストの URL は作成時の名前で決まるため、組み立てると 404 になり得る。
-    const href = `${site.replace(/\/$/, '')}/Lists/${LIST_VULNRESPONSE}/AllItems.aspx`;
+    const href = `${site.replace(/\/$/, '')}/Lists/${o.listTitle}/AllItems.aspx`;
     return el('a', {
       class: 'mikke-nav-item mikke-nav-item--external',
       href, target: '_blank', rel: 'noopener noreferrer',
-      title: '資産管理者に対応状況を記入してもらうリストを別タブで開きます',
+      title: o.title,
       onclick: (e: Event) => {
         e.preventDefault();
         void (async () => {
           let url: string | null = null;
-          try { url = await getRepo().vulnResponseListUrl(); } catch { /* 下で案内する */ }
+          try { url = await o.resolve(); } catch { /* 下で案内する */ }
           if (url) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
-          toast(root,
-            '連携リストがまだありません。設定 → 共通設定 → 資産管理者向けリスト から作成してください。',
-            'warn', 8000);
+          toast(root, o.missing, 'warn', 8000);
         })();
       },
     }, [
-      el('span', { html: icon('building') }),
-      el('span', {}, ['連携リスト']),
+      el('span', { html: icon(o.ic) }),
+      el('span', {}, [o.label]),
       el('span', { class: 'mikke-nav-ext', html: icon('external') }),
     ]);
   };
-  const extLink = listLink();
+  const extLinks = [
+    listLink({
+      listTitle: LIST_VULNRESPONSE, label: '連携リスト', ic: 'building',
+      title: '資産管理者に対応状況を記入してもらうリストを別タブで開きます',
+      resolve: () => getRepo().vulnResponseListUrl(),
+      missing: '連携リストがまだありません。設定 → 共通設定 → 資産管理者向けリスト から作成してください。',
+    }),
+    listLink({
+      listTitle: LIST_OVERSEAS_RESPONSE, label: '海外連携リスト', ic: 'globe',
+      title: '海外拠点へ渡す読み取り専用のリストを別タブで開きます',
+      resolve: () => getRepo().overseasResponseListUrl(),
+      missing: '海外連携リストがまだありません。設定 → 共通設定 → 海外拠点向けリスト から作成してください。',
+    }),
+  ].filter((x): x is HTMLElement => !!x);
 
   let buildId = '';
   try { buildId = __MIKKE_BUILD_ID__; } catch { /* noop */ }
@@ -298,7 +313,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
     item('assets', 'building', '資産管理'),
     item('downloads', 'download', 'ダウンロードデータ'),
     item('perms', 'shield', 'アクセス権'),
-    ...(extLink ? [extLink] : []),
+    ...extLinks,
     el('div', { class: 'mikke-side-foot' }, [
       el('div', {}, [`mode: ${getRepoMode()}`]),
       el('div', { style: 'margin-top:2px;word-break:break-all' }, [buildId]),
