@@ -31,6 +31,19 @@ export interface VulnResponseItem {
   responsePlan?: string;
   /** 申請不要理由。 */
   noAppReason?: string;
+  /** 連携リストのアイテムの最終更新時刻 (ISO)。通知列と「連携リスト更新」の判定に使う。
+   *  ★ これを一緒に返すことで、一覧を開くたびの連携リスト全件読みが 1 回で済む。 */
+  updatedAt?: string;
+}
+
+/** 記入内容の一覧から「Issue Instance ID → 最終更新時刻」を作る。 */
+export function updatedAtMap(items: VulnResponseItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of items) {
+    const iid = text(r.issueInstanceId);
+    if (iid && r.updatedAt) out.set(iid, r.updatedAt);
+  }
+  return out;
 }
 
 export interface ResponseSyncPatch {

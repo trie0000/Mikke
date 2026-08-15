@@ -257,7 +257,20 @@ export class MockRepository implements Repository {
 
   /** モックには連携用リストの実体が無いので、取り込む記入内容も無い。 */
   async listVulnResponses(): Promise<VulnResponseItem[]> {
-    return [];
+    // 記入内容と更新時刻を一緒に返す (SP 版と同じ形。画面の確認に使う)。
+    return load<(VulnResponseRow & { updatedAt?: string; responderName?: string })[]>(LS_VULNRESPONSE, [])
+      .filter((r) => r.issueInstanceId)
+      .map((r) => ({
+        issueInstanceId: r.issueInstanceId,
+        responseStatus: r.responseStatus,
+        responderName: r.responderName,
+        dueDate: r.responseDueDate,
+        remarks: r.responseRemarks,
+        extConnAppId: r.extConnAppId,
+        responsePlan: r.responsePlan,
+        noAppReason: r.noAppReason,
+        updatedAt: r.updatedAt,
+      }));
   }
 
   /** モックには連携用リストの実体が無いので、全件「未通知」になる。 */

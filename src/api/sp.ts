@@ -490,7 +490,7 @@ export class SpRepository implements Repository {
     const out: VulnResponseItem[] = [];
     let url: string | null =
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
-      + '?$select=Title,ResponseStatus,DueDate,Remarks,Responder/Title,'
+      + '?$select=Title,Modified,ResponseStatus,DueDate,Remarks,Responder/Title,'
       + 'ExtConnAppId,ResponsePlan,NoAppReason'
       + '&$expand=Responder&$top=5000';
     try {
@@ -507,6 +507,7 @@ export class SpRepository implements Repository {
             extConnAppId: row.ExtConnAppId ?? undefined,
             responsePlan: row.ResponsePlan ?? undefined,
                   noAppReason: row.NoAppReason ?? undefined,
+            updatedAt: row.Modified ?? undefined,
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;

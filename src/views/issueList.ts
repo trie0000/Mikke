@@ -21,7 +21,7 @@ import { reportLinkLabel, zipEntryName, bulkReportZipName } from '../lib/reportF
 import { zipFiles, type ZipInput } from '../lib/zip';
 import { downloadFile } from '../lib/xlsx';
 import { notifyStatusOf, NOTIFY_ORDER, type NotifyStatus } from '../lib/notifyStatus';
-import { buildResponseSyncPlan } from '../lib/responseSync';
+import { buildResponseSyncPlan, updatedAtMap, type VulnResponseItem } from '../lib/responseSync';
 import { buildVulnResponsePlan } from '../lib/vulnResponseSync';
 import type { ManagedIssue } from '../types';
 
@@ -39,6 +39,11 @@ const REPORT_FETCH_PARALLEL = 6;
 const BUILTIN_SCAN_COLUMNS = new Set(['title', 'issueinstanceid', 'lastseen', 'firstseen']);
 const normScanCol = (c: string): string =>
   c.replace(/^Scan_/, '').replace(/[\s\u3000_]+/g, '').toLowerCase();
+
+/** 連携リストの自動取り込みを済ませたか。
+ *  ★ 一覧は明細から戻るたびに作り直されるので、関数の外に置く。中に置いていたため
+ *    明細を見て戻るたびに全件取り込みが走っていた。 */
+let autoSyncDone = false;
 
 /** 明細を開いたときに覚えた「その時点の連携リスト更新時刻」 (Issue Instance ID → ISO)。
  *  ★ これがあると「連携リスト更新」の表示を一度で消せる。端末ごとに持つ
@@ -91,6 +96,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   let scanCols: string[] = [];
   let csvHeaders: string[] = [];
   let cache: ManagedIssue[] = [];
+  /** 連携用リストの記入内容 (1 回の読み取りを使い回す)。 */
+  let vulnResponses: VulnResponseItem[] = [];
   /** 連携用リストの Issue Instance ID → 最終更新日時。通知ステータスの判定に使う。 */
   let vulnResponseUpdated = new Map<string, string>();
   /** 明細を開いて確認済みの時刻 (端末ローカル)。読み込みのたびに取り直す。 */
@@ -107,7 +114,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   /** ツールバーの「列」ボタン。非表示件数の表示を追随させるために持っておく。 */
   let colBtn: HTMLButtonElement | null = null;
   /** 連携内容の自動取り込みはこの画面を開いたとき 1 回だけ (毎回の再描画で走らせない)。 */
-  let autoSyncDone = false;
 
   const table = new DataTable<ManagedIssue>(tableWrap, {
     storeKey: 'mikke.issues',
@@ -184,12 +190,15 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         getRepo().listIssues(),
         getRepo().getSettings(),
         // 連携用リストが未作成でも一覧は出す (その場合は全件「未通知」)。
-        getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>()),
+        // ★ 連携リストは 1 回だけ読む。記入内容と更新時刻を同時に取り、
+        //   通知列・「連携リスト更新」・自動取り込みの 3 つで使い回す。
+        getRepo().listVulnResponses().catch(() => [] as VulnResponseItem[]),
         // Web資産管理ID を引くため。取れなくても一覧は出す。
         getRepo().listAssets().catch(() => []),
       ]);
-      vulnResponseUpdated = notified;
-      seedSeen(notified);
+      vulnResponses = notified;
+      vulnResponseUpdated = updatedAtMap(notified);
+      seedSeen(vulnResponseUpdated);
       seen = seenMap();
       assetColumns = (settings.assetColumns && settings.assetColumns.length)
         ? settings.assetColumns
@@ -209,7 +218,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       paint();
       applyScroll(keep);
       // 画面を開いた直後に 1 回だけ、連携用リストの記入内容を取り込む。
-      if (!autoSyncDone) { autoSyncDone = true; void syncFromVulnResponse(true); }
+      // 取得済みの内容をそのまま渡す (もう一度読みに行かない)。
+      if (!autoSyncDone) { autoSyncDone = true; void syncFromVulnResponse(true, false, vulnResponses); }
     } catch (e) {
       clear(tableWrap);
       tableWrap.appendChild(el('div', { class: 'mikke-error' }, [
@@ -333,7 +343,9 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
    * ★ 差分があるものだけ書き込み、更新履歴にも残す。
    * @param silent 自動実行。取り込む差分が無ければ何も表示しない。
    */
-  async function syncFromVulnResponse(silent: boolean, onlySelected = false): Promise<void> {
+  async function syncFromVulnResponse(
+    silent: boolean, onlySelected = false, prefetched?: VulnResponseItem[],
+  ): Promise<void> {
     if (bulkBusy) return;
     // 選択分だけを取り込むときは、選択した Issue Instance ID に絞る。
     const scope = onlySelected
@@ -343,7 +355,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     if (scope && !scope.size) { toast(rootEl, '脆弱性が選択されていません。', 'warn'); return; }
     bulkBusy = true;
     try {
-      const all = await getRepo().listVulnResponses();
+      const all = prefetched ?? await getRepo().listVulnResponses();
       const responses = scope ? all.filter((r) => scope.has((r.issueInstanceId ?? '').trim())) : all;
       if (!responses.length) {
         if (!silent) {
@@ -590,7 +602,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       if (pushedIids.size && !fail) {
         // ★ 自分が書いた分は「見た」ことにする。反映で連携リスト側の更新時刻も
         //   動くので、ここで覚えないと自分の反映でバッジが出てしまう。
-        const after = await getRepo().vulnResponseUpdatedAt().catch(() => new Map<string, string>());
+        const after = updatedAtMap(await getRepo().listVulnResponses().catch(() => [] as VulnResponseItem[]));
         for (const iid of pushedIids) markSeen(iid, after.get(iid));
         seen = seenMap();
         const now = new Date().toISOString();
