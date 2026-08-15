@@ -12,10 +12,12 @@ import {
   managedIssueFieldSpecs, settingsFieldSpecs, importLogFieldSpecs, assetFieldSpecs, historyFieldSpecs, changeLogFieldSpecs, downloadFieldSpecs,
   vulnResponseFieldSpecs, orderFieldLinks,
   toFieldSchema, spFieldTypeString, type FieldSpec,
+  LIST_OVERSEAS, overseasFieldSpecs,
 } from './sp/schema';
 import { buildVulnResponseFormFormatter } from './sp/formFormatter';
 import { buildReorderFieldsXml, processQueryError } from './sp/csom';
 import type { VulnResponseItem } from '../lib/responseSync';
+import type { OverseasIssue } from '../types';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
 import { VULNRESPONSE_COLUMN, VULNRESPONSE_DATE_FIELDS, VULNRESPONSE_KIND, REPORT_LINK_TEXT } from '../lib/vulnResponseSync';
 import { normalizePerms, hasAnyPerms, pickRoles, buildItemPermPlan,
@@ -183,6 +185,7 @@ export class SpRepository implements Repository {
     await this.ensureList(LIST_HISTORY, historyFieldSpecs());
     await this.ensureList(LIST_CHANGELOG, changeLogFieldSpecs());
     await this.ensureList(LIST_DOWNLOADS, downloadFieldSpecs());
+    await this.ensureList(LIST_OVERSEAS, overseasFieldSpecs());
   }
 
   private async ensureList(title: string, fields: FieldSpec[], rep?: StepReporter): Promise<void> {
@@ -1099,6 +1102,104 @@ export class SpRepository implements Repository {
   }
 
   // ── 資産 (FQDN/IP) 管理 — MikkeAssets ──────────────────────────────────────
+  // ── 海外脆弱性一覧 ────────────────────────────────────────────────────────
+  private overseasRow(p: Partial<OverseasIssue>): Record<string, unknown> {
+    const row: Record<string, unknown> = {};
+    if (p.issueInstanceId !== undefined) row.IssueInstanceId = p.issueInstanceId;
+    if (p.contactedAt !== undefined) row.ContactedAt = p.contactedAt || null;
+    // Choice 列は空文字を受け付けないので、未設定は null で送る。
+    if (p.openStatus !== undefined) row.OpenStatus = p.openStatus || null;
+    if (p.detectionStatus !== undefined) row.DetectionStatus = p.detectionStatus;
+    if (p.region !== undefined) row.Region = p.region || null;
+    if (p.title !== undefined) row.VulnTitle = p.title;
+    if (p.businessCompany !== undefined) row.BusinessCompany = p.businessCompany;
+    if (p.affiliateCompany !== undefined) row.AffiliateCompany = p.affiliateCompany;
+    if (p.webMapsId !== undefined) row.WebMapsId = p.webMapsId;
+    if (p.identifyEvidence !== undefined) row.IdentifyEvidence = p.identifyEvidence;
+    if (p.assetIp !== undefined) row.AssetIp = p.assetIp;
+    if (p.assetFqdn !== undefined) row.AssetFqdn = p.assetFqdn;
+    if (p.assetTitle !== undefined) row.AssetTitle = p.assetTitle;
+    if (p.assetMappedDomains !== undefined) row.AssetMappedDomains = p.assetMappedDomains;
+    if (p.assetHomepageUrl !== undefined) row.AssetHomepageUrl = p.assetHomepageUrl;
+    if (p.lastSeen !== undefined) row.LastSeen = p.lastSeen || null;
+    if (p.remarks !== undefined) row.Remarks = p.remarks;
+    if (p.importedAt !== undefined) row.ImportedAt = p.importedAt || null;
+    return row;
+  }
+
+  async listOverseasIssues(): Promise<OverseasIssue[]> {
+    const out: OverseasIssue[] = [];
+    let url: string | null = `/_api/web/lists/getbytitle('${LIST_OVERSEAS}')/items?$top=5000`;
+    try {
+      while (url) {
+        const j: any = await this.spGet(url);
+        for (const r of j.d.results as any[]) {
+          out.push({
+            id: r.Id,
+            issueInstanceId: r.IssueInstanceId ?? '',
+            contactedAt: r.ContactedAt ?? undefined,
+            openStatus: r.OpenStatus ?? undefined,
+            detectionStatus: r.DetectionStatus ?? '新規',
+            region: r.Region ?? undefined,
+            title: r.VulnTitle ?? undefined,
+            businessCompany: r.BusinessCompany ?? undefined,
+            affiliateCompany: r.AffiliateCompany ?? undefined,
+            webMapsId: r.WebMapsId ?? undefined,
+            identifyEvidence: r.IdentifyEvidence ?? undefined,
+            assetIp: r.AssetIp ?? undefined,
+            assetFqdn: r.AssetFqdn ?? undefined,
+            assetTitle: r.AssetTitle ?? undefined,
+            assetMappedDomains: r.AssetMappedDomains ?? undefined,
+            assetHomepageUrl: r.AssetHomepageUrl ?? undefined,
+            lastSeen: r.LastSeen ?? undefined,
+            remarks: r.Remarks ?? undefined,
+            importedAt: r.ImportedAt ?? undefined,
+          });
+        }
+        url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
+      }
+    } catch { return out; }   // 未作成 (404) 等
+    return out;
+  }
+
+  async applyOverseasPlan(
+    creates: Omit<OverseasIssue, 'id'>[],
+    updates: { id: number; patch: Partial<OverseasIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const type = await this.listEntityType(LIST_OVERSEAS);
+    const base = `/_api/web/lists/getbytitle('${LIST_OVERSEAS}')/items`;
+    let ok = 0, fail = 0, done = 0;
+    const total = creates.length + updates.length;
+    const step = async (fn: () => Promise<unknown>): Promise<void> => {
+      try { await fn(); ok++; } catch { fail++; }
+      onProgress?.(++done, total);
+    };
+    for (const c of creates) {
+      await step(() => this.spPost(base, { __metadata: { type }, ...this.overseasRow(c) }));
+    }
+    for (const u of updates) {
+      await step(() => this.spPost(`${base}(${u.id})`,
+        { __metadata: { type }, ...this.overseasRow(u.patch) },
+        { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' }));
+    }
+    return { ok, fail };
+  }
+
+  async deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
+    const rows = await this.listOverseasIssues();
+    const base = `/_api/web/lists/getbytitle('${LIST_OVERSEAS}')/items`;
+    let ok = 0, fail = 0, done = 0;
+    for (const r of [...rows].sort((a, b) => b.id - a.id)) {
+      try {
+        await this.spPost(`${base}(${r.id})`, undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });
+        ok++;
+      } catch { fail++; }
+      onProgress?.(++done, rows.length);
+    }
+    return { ok, fail };
+  }
+
   async listAssets(): Promise<ManagedAsset[]> {
     const out: ManagedAsset[] = [];
     let url: string | null =

@@ -125,6 +125,50 @@ export interface ManagedIssue {
   scanFields: Record<string, string>;
 }
 
+// ── 海外脆弱性 ────────────────────────────────────────────────────────────────
+/** 通知先の地域 (Excel の REALM 列)。 */
+export type OverseasRegion = 'NA/LA' | 'APAC' | 'CNA' | 'EU' | 'ISAMEA';
+export const OVERSEAS_REGIONS: OverseasRegion[] = ['NA/LA', 'APAC', 'CNA', 'EU', 'ISAMEA'];
+
+/** Excel の `open` 列。この 2 値しかない。
+ *  ★ 検知状況とは別に保持する。検知状況は先月末との比較で決まるため。 */
+export type OverseasOpenStatus = 'open' | 'closed/removed';
+
+/**
+ * 海外脆弱性 1 件 (SP リスト MikkeOverseasIssues の 1 行)。
+ * ★ 国内の管理対象より項目が少ない。通知状況を地域ごとに追うだけの一覧。
+ */
+export interface OverseasIssue {
+  id: number;
+  /** 突合キー。国内の管理対象と同じ Issue Instance ID。 */
+  issueInstanceId: string;
+  /** 海外地域へ通知した日 (ISO)。Excel の `date of contact`。 */
+  contactedAt?: string;
+  /** Excel の `open` 列 (open / closed∕removed)。 */
+  openStatus?: OverseasOpenStatus;
+  /** 検知状況。先月末の状態と今月の open から決める。 */
+  detectionStatus: DetectionStatus;
+  /** 地域 (REALM)。 */
+  region?: string;
+  /** 以下は国内の取込済みデータから埋める。 */
+  title?: string;
+  businessCompany?: string;
+  affiliateCompany?: string;
+  webMapsId?: string;
+  /** 参考情報 (国内分の「事業会社特定の根拠」と同じ値)。 */
+  identifyEvidence?: string;
+  assetIp?: string;
+  assetFqdn?: string;
+  assetTitle?: string;
+  assetMappedDomains?: string;
+  assetHomepageUrl?: string;
+  lastSeen?: string;
+  /** 備考 (Excel の Remarks/Comments)。 */
+  remarks?: string;
+  /** 取り込んだ日時 (ISO)。 */
+  importedAt?: string;
+}
+
 /** F7 条件エンジン: 1 ルール。 */
 export interface ConditionRule {
   field: string;   // CSV ヘッダ名
@@ -320,4 +364,4 @@ export interface ChangeLogEntry {
 }
 
 /** メイン画面のビュー。 */
-export type ViewName = 'issues' | 'import' | 'assets' | 'downloads' | 'perms';
+export type ViewName = 'issues' | 'overseas' | 'import' | 'assets' | 'downloads' | 'perms';

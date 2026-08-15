@@ -1,5 +1,5 @@
 // Repository 抽象。sp (本番) / mock (非SPホスト or ?mock=1) を切り替える。
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupResult } from '../types';
+import type { OverseasIssue, ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupResult } from '../types';
 import type { ImportOp } from '../lib/import';
 import type { VulnResponseItem } from '../lib/responseSync';
 import type { VulnResponseFields, VulnResponseRow } from '../lib/vulnResponseSync';
@@ -41,6 +41,18 @@ export interface Repository {
   createMissingColumns(cols: string[]): Promise<void>;
   /** 取込履歴を ImportLog に記録する。 */
   writeImportLog(entry: ImportLogEntry): Promise<void>;
+  // ── 海外脆弱性一覧 ──────────────────────────────────────────────────────
+  /** 全件取得。 */
+  listOverseasIssues(): Promise<OverseasIssue[]>;
+  /** 取り込み結果を反映する (追加・更新をまとめて書く)。 */
+  applyOverseasPlan(
+    creates: Omit<OverseasIssue, 'id'>[],
+    updates: { id: number; patch: Partial<OverseasIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }>;
+  /** 全件削除 (やり直し用)。 */
+  deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
+
   /** 資産 (FQDN/IP) の管理部門リスト。 */
   listAssets(): Promise<ManagedAsset[]>;
   /** 脆弱性の対応履歴 (Issue Instance ID で絞り込み)。 */

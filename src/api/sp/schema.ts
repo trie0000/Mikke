@@ -1,7 +1,7 @@
 // SharePoint REST: スキーマ宣言 / FieldSpec → SP REST 型変換。
 // SpRepository.ensureLists から呼ばれる。
 import { LABEL } from '../../lib/fieldLabels';
-import { MGMT_STATUSES, VULN_TYPES } from '../../types';
+import { OVERSEAS_REGIONS, MGMT_STATUSES, VULN_TYPES } from '../../types';
 
 export type FieldType = 'Text' | 'Note' | 'NoteRich' | 'Number' | 'DateTime' | 'Boolean' | 'Choice' | 'User' | 'Url';
 
@@ -55,6 +55,8 @@ export const LIST_CHANGELOG = 'MikkeChangeLog';
 export const LIST_DOWNLOADS = 'MikkeDownloads';
 /** 資産管理者への連携用リスト (対応状況を記入してもらう。Mikke の管理表とは別物)。 */
 export const LIST_VULNRESPONSE = 'MikkeVulnResponse';
+/** 海外脆弱性一覧 (国内の管理表とは別。地域ごとの通知状況を追う簡易版)。 */
+export const LIST_OVERSEAS = 'MikkeOverseasIssues';
 
 export function spFieldTypeString(t: FieldType): string {
   switch (t) {
@@ -150,6 +152,35 @@ export function managedIssueFieldSpecs(): FieldSpec[] {
     //   約8KB のサイズ上限に抵触し、検査ツールの 259 列 CSV で列作成が HTTP 500 /
     //   書込が失敗する。JSON 集約なら 1 列で済み破綻しない (表示・絞込はクライアント側)。
     { name: 'ScanData', type: 'Note' },
+  ];
+}
+
+/** MikkeOverseasIssues: 海外脆弱性一覧。
+ *  ★ 国内の管理表より項目が少ない。Excel で通知状況を月次に取り込むだけなので、
+ *    検査ツールの動的列 (Scan_*) は持たない。 */
+export function overseasFieldSpecs(): FieldSpec[] {
+  return [
+    // 突合キー。国内の管理対象と同じ Issue Instance ID。
+    { name: 'IssueInstanceId', type: 'Text', indexed: true },
+    { name: 'ContactedAt', type: 'DateTime', dateOnly: true },
+    // Excel の open 列 (検知状況とは別に持つ)。
+    { name: 'OpenStatus', type: 'Choice', choices: ['open', 'closed/removed'] },
+    { name: 'DetectionStatus', type: 'Choice', indexed: true,
+      choices: ['新規', '継続', '再検知', '未検出(New)', '未検出'] },
+    { name: 'Region', type: 'Choice', indexed: true, choices: [...OVERSEAS_REGIONS] },
+    { name: 'VulnTitle', type: 'Text' },
+    { name: 'BusinessCompany', type: 'Text', indexed: true },
+    { name: 'AffiliateCompany', type: 'Text' },
+    { name: 'WebMapsId', type: 'Text', indexed: true },
+    { name: 'IdentifyEvidence', type: 'Note' },
+    { name: 'AssetIp', type: 'Text' },
+    { name: 'AssetFqdn', type: 'Text' },
+    { name: 'AssetTitle', type: 'Text' },
+    { name: 'AssetMappedDomains', type: 'Note' },
+    { name: 'AssetHomepageUrl', type: 'Note' },
+    { name: 'LastSeen', type: 'DateTime' },
+    { name: 'Remarks', type: 'Note' },
+    { name: 'ImportedAt', type: 'DateTime' },
   ];
 }
 

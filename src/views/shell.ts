@@ -10,6 +10,7 @@ import { renderImportView } from './importView';
 import { renderAssetsView } from './assetsView';
 import { renderDownloadsView } from './downloadsView';
 import { renderPermsView } from './permsView';
+import { renderOverseasView } from './overseasView';
 import { openSettingsModal } from './settingsModal';
 import { openSiteSelectionModal } from './siteSelectionModal';
 import { resolveSiteUrl } from '../utils/spSites';
@@ -172,6 +173,8 @@ function paintMain(main: HTMLElement, root: HTMLElement): void {
     main.appendChild(renderIssueDetail(root));
   } else if (s.view === 'issues') {
     main.appendChild(renderIssueList(root));
+  } else if (s.view === 'overseas') {
+    main.appendChild(renderOverseasView(root));
   } else if (s.view === 'import') {
     main.appendChild(renderImportView(root));
   } else if (s.view === 'assets') {
@@ -290,6 +293,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
 
   return el('aside', { class: 'mikke-side' }, [
     item('issues', 'list', '管理対象一覧'),
+    item('overseas', 'globe', '海外脆弱性一覧'),
     item('import', 'upload', 'CSV 取込'),
     item('assets', 'building', '資産管理'),
     item('downloads', 'download', 'ダウンロードデータ'),

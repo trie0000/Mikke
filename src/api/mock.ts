@@ -1,7 +1,7 @@
 // Mock リポジトリ — 非 SP ホスト / ?mock=1 でのデザイン・動作検証用。
 // localStorage に保存して再読込でも保持する。
 import type { Repository, ImportLogEntry } from './repo';
-import type { ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
+import type { OverseasIssue, ManagedIssue, ManagedAsset, ResponseHistory, ChangeLogEntry, MikkeSettings, SiteUser, DownloadRecord, SetupStep, SetupResult } from '../types';
 import { normalizeMgmtStatus } from '../types';
 import type { ImportOp } from '../lib/import';
 import { vulnResponseFieldSpecs } from './sp/schema';
@@ -18,6 +18,8 @@ const LS_DOWNLOADS = 'mikke.mock.downloads';
 const LS_DOCFILES = 'mikke.mock.docfiles';
 const LS_ATTACHMENTS = 'mikke.mock.attachments';   // 連携用リストの添付 (IID → [{name,size}])
 const LS_VULNRESPONSE = 'mikke.mock.vulnresponse';
+/** 海外脆弱性一覧 (mock)。 */
+const LS_OVERSEAS = 'mikke.mock.overseas';
 /** mock だけの補助: アクセス権を付与済みのアイテム ID (継承解除の代わり)。 */
 const LS_PERM_APPLIED = 'mikke.mock.permApplied';
 
@@ -118,6 +120,36 @@ export class MockRepository implements Repository {
   }
 
   // ── 資産 (FQDN/IP) 管理 ──────────────────────────────────────────────────
+  // ── 海外脆弱性一覧 ──────────────────────────────────────────────────────
+  async listOverseasIssues(): Promise<OverseasIssue[]> {
+    return load<OverseasIssue[]>(LS_OVERSEAS, []);
+  }
+
+  async applyOverseasPlan(
+    creates: Omit<OverseasIssue, 'id'>[],
+    updates: { id: number; patch: Partial<OverseasIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const rows = load<OverseasIssue[]>(LS_OVERSEAS, []);
+    let nextId = rows.reduce((m, r) => Math.max(m, r.id), 0) + 1;
+    for (const c of creates) rows.push({ ...c, id: nextId++ });
+    for (const u of updates) {
+      const i = rows.findIndex((r) => r.id === u.id);
+      if (i >= 0) rows[i] = { ...rows[i]!, ...u.patch, id: u.id };
+    }
+    save(LS_OVERSEAS, rows);
+    const total = creates.length + updates.length;
+    onProgress?.(total, total);
+    return { ok: total, fail: 0 };
+  }
+
+  async deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
+    const n = load<OverseasIssue[]>(LS_OVERSEAS, []).length;
+    save(LS_OVERSEAS, []);
+    onProgress?.(n, n);
+    return { ok: n, fail: 0 };
+  }
+
   async listAssets(): Promise<ManagedAsset[]> {
     return this.assets.map((a) => ({ ...a }));
   }
