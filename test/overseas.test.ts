@@ -206,6 +206,43 @@ describe('Excel に無い項目の埋め方', () => {
   });
 });
 
+describe('★ 人が決めた値を月次の取り込みで消さない', () => {
+  // 事業会社などは一覧で直接直せる (初期データの Excel からも入る)。月次の
+  // 取り込みで管理対象の値 (無ければ空) を上書きすると、手で入れた値が毎月消える。
+  const already: OverseasIssue = {
+    id: 7, issueInstanceId: 'IID-X', detectionStatus: '継続', region: 'APAC',
+    businessCompany: '手で入れた事業会社', affiliateCompany: '手で入れた管理会社',
+    webMapsId: 'BW7654321', identifyEvidence: '手で入れた参考情報',
+  };
+
+  it('既に値がある 4 項目は残す (管理対象に無くても消えない)', () => {
+    const u = buildOverseasPlan([row('IID-X', '2026-06-10', 'open')], H, [already], MERGED,
+      [domestic()], parseFlexibleDate, NOW).updates[0]!;
+    expect(u.id).toBe(7);
+    expect(u.patch.businessCompany).toBe('手で入れた事業会社');
+    expect(u.patch.affiliateCompany).toBe('手で入れた管理会社');
+    expect(u.patch.webMapsId).toBe('BW7654321');
+    expect(u.patch.identifyEvidence).toBe('手で入れた参考情報');
+  });
+
+  it('空のときだけ管理対象から引く', () => {
+    const empty: OverseasIssue = { ...already, issueInstanceId: 'IID-1',
+      businessCompany: '', affiliateCompany: '', webMapsId: '', identifyEvidence: '' };
+    const u = buildOverseasPlan([row('IID-1', '2026-06-10', 'open')], H, [empty], MERGED,
+      [domestic()], parseFlexibleDate, NOW).updates[0]!;
+    expect(u.patch.businessCompany).toBe('エナジー事業');
+    expect(u.patch.webMapsId).toBe('A1234567');
+  });
+
+  it('脆弱性・資産・備考は月次のファイルと CSV が正 (そのまま更新する)', () => {
+    const u = buildOverseasPlan([row('IID-1', '2026-06-10', 'open', 'APAC', '今月の備考')], H,
+      [{ ...already, issueInstanceId: 'IID-1', remarks: '先月の備考', title: '古いタイトル' }],
+      MERGED, [domestic()], parseFlexibleDate, NOW).updates[0]!;
+    expect(u.patch.remarks).toBe('今月の備考');
+    expect(u.patch.title).toBe('TLS 1.0 が有効');
+  });
+});
+
 describe('見出しの探し方', () => {
   it('表記が揺れても拾う', () => {
     const m = resolveOverseasColumns(['Issue ID', 'Date of Contact', 'Open', 'Remarks/Comments', 'Realm']);

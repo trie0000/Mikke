@@ -29,6 +29,14 @@ export const OVERSEAS_COL = {
   region: 'REALM',
 } as const;
 
+/**
+ * 突合キー。海外は **Issue Instance ID × 地域** で 1 行になる
+ * (同じ脆弱性を複数の地域へ通知していることがあるため、ID だけでは足りない)。
+ */
+export function overseasKey(iid: unknown, region: unknown): string {
+  return `${text(iid)}\u0000${text(region)}`;
+}
+
 /** 見出しの比較用キー (小文字・空白と記号のゆれを吸収)。 */
 const norm = (s: string): string => text(s).toLowerCase().replace(/[\s　_]+/g, '');
 
@@ -153,6 +161,16 @@ export interface OverseasPlan {
   missingColumns: string[];
 }
 
+/** 空の項目を落とす (上書きで既存値を消さないため)。 */
+function onlyFilled(fields: Omit<OverseasIssue, 'id'>): Partial<OverseasIssue> {
+  const out: Partial<OverseasIssue> = {};
+  for (const [k, v] of Object.entries(fields) as [keyof OverseasIssue, unknown][]) {
+    if (v === undefined || v === '') continue;
+    (out as Record<string, unknown>)[k] = v;
+  }
+  return out;
+}
+
 /** マージ CSV の 1 行から、名前のゆれを吸収して値を引く。 */
 function csvOf(row: Record<string, string> | undefined, names: string[]): string {
   if (!row) return '';
@@ -230,7 +248,7 @@ export function buildOverseasPlan(
     if (col.open && !open && text(row[col.open])) {
       plan.warnings.push({ issueInstanceId: iid, message: `open 列「${text(row[col.open])}」を判別できません` });
     }
-    const key = `${iid}\u0000${region}`;
+    const key = overseasKey(iid, region);
     const g = groups.get(key) ?? { iid, region, rows: [] };
     g.rows.push({ at, open, raw: row });
     groups.set(key, g);
@@ -238,7 +256,7 @@ export function buildOverseasPlan(
 
   const byKey = new Map(existing
     .filter((e) => e.issueInstanceId)
-    .map((e) => [`${e.issueInstanceId}\u0000${text(e.region)}`, e]));
+    .map((e) => [overseasKey(e.issueInstanceId, e.region), e]));
 
   for (const [key, g] of groups) {
     const iid = g.iid;
@@ -263,6 +281,12 @@ export function buildOverseasPlan(
     //   (管理対象条件に一致しない脆弱性も海外側では扱うため)。
     if (!c && !d) unmatched.add(iid);
 
+    const prev = byKey.get(key);
+    // ★ 事業会社 / 管理会社 / WebMAPS管理ID / 参考情報 は **人が決める値**。
+    //   一覧で直接直せるし、初期データの Excel からも入る。月次の取り込みで
+    //   国内の管理対象の値 (無ければ空) を上書きすると、手で入れた値が毎月消える。
+    //   既に値があればそれを残し、空のときだけ管理対象から引く。
+    const keep = (cur: string | undefined, fromDomestic: string): string => text(cur) || fromDomestic;
     const fields: Omit<OverseasIssue, 'id'> = {
       issueInstanceId: iid,
       contactedAt: contactedAt ?? '',
@@ -279,15 +303,19 @@ export function buildOverseasPlan(
       assetHomepageUrl: csvOf(c, ['Asset Homepage URL']) || scanOf(d, 'Asset Homepage URL'),
       lastSeen: csvOf(c, ['Last Seen']) || text(d?.lastSeen),
       // ここから下は Mikke 側で付ける値。管理対象にあれば引く (無ければ空)。
-      businessCompany: text(d?.businessCompany),
-      affiliateCompany: text(d?.affiliateCompany),
-      webMapsId: text(d?.webMapsId),
-      identifyEvidence: text(d?.identifyEvidence),
+      businessCompany: keep(prev?.businessCompany, text(d?.businessCompany)),
+      affiliateCompany: keep(prev?.affiliateCompany, text(d?.affiliateCompany)),
+      webMapsId: keep(prev?.webMapsId, text(d?.webMapsId)),
+      identifyEvidence: keep(prev?.identifyEvidence, text(d?.identifyEvidence)),
       importedAt: nowIso,
     };
 
-    const prev = byKey.get(key);
-    if (prev) plan.updates.push({ id: prev.id, patch: fields });
+    // ★ 上書きでは **値が取れた項目だけ** 送る。取れなかった項目 (マージ CSV にも
+    //   管理対象にも無い / 日付が読めない / その列がファイルに無い) を空文字で送ると、
+    //   初期データの Excel から入れた値や、一覧で手入力した値が黙って消える。
+    //   海外分には管理対象条件に一致しない脆弱性が普通に含まれるので、これは例外的な
+    //   経路ではない (CSV が 1 本も無ければ全行がこれに当たる)。
+    if (prev) plan.updates.push({ id: prev.id, patch: onlyFilled(fields) });
     else plan.creates.push(fields);
   }
   // ★ ファイルに無い既存アイテムには触れない。追記型なので「無い」は

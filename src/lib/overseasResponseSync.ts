@@ -13,6 +13,10 @@
 // このファイルは UI にも SP にも依存しない (テストしやすくするため)。
 import type { OverseasIssue } from '../types';
 import { fitSingleLine, jstDateOnly } from './vulnResponseSync';
+import { overseasKey } from './overseas';
+
+// 突合キーは海外一覧と同じもの (定義は lib/overseas.ts に 1 本化)。
+export { overseasKey };
 
 /** 海外連携用リストに Mikke が書き込む項目。 */
 export interface OverseasResponseFields {
@@ -89,11 +93,6 @@ function day(iso?: string): string {
   if (!s) return '';
   const t = new Date(s);
   return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
-}
-
-/** 突合キー。(Issue Instance ID, 地域) の組。 */
-export function overseasKey(iid: string, region: string): string {
-  return `${text(iid)}\u0000${text(region)}`;
 }
 
 /** 1 件分の書き込み内容を組み立てる。 */

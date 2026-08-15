@@ -5,6 +5,7 @@ import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
 import { getRepo } from '../api/repo';
 import { renderMigrationPanel } from './migrationPanel';
+import { renderOverseasMigrationPanel } from './overseasMigrationPanel';
 import { renderEnvTransferPanel } from './envTransferPanel';
 import { renderResetPanel } from './resetPanel';
 import { normalizeVulnTypeRules } from '../lib/migration';
@@ -153,6 +154,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
           { key: 'individual', label: '個別追加 (Issue ID)', render: () => renderIndividualPanel(root) },
           { key: 'vulnType', label: '脆弱性タイプの判定', render: () => renderVulnTypePanel() },
           { key: 'migration', label: 'データ移行 (Excel)', render: () => renderMigrationPanel(root) },
+          { key: 'overseasMigration', label: '海外データ移行 (Excel)', render: () => renderOverseasMigrationPanel(root) },
           { key: 'envTransfer', label: '環境間コピー (開発 ↔ 本番)', render: () => renderEnvTransferPanel(root) },
         ] },
         { title: 'ダウンロード', items: [
