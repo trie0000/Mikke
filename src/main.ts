@@ -2,6 +2,7 @@
 import css from './styles/app.css';
 import { initRepo, getRepo, detectMode } from './api/repo';
 import { renderShell } from './views/shell';
+import { installKeyGuard } from './utils/keyGuard';
 import { setState } from './state';
 import { hasSelectedSite } from './utils/spSites';
 import { openSiteSelectionModal } from './views/siteSelectionModal';
@@ -84,6 +85,9 @@ function createMountPoint(): { host: HTMLElement; mount: ParentNode } {
 export async function mount(): Promise<void> {
   const { mount: at } = createMountPoint();
   const root = renderShell();
+  // ★ ページ側のキー横取り (Backspace 潰し) から入力欄を守る。モーダルも
+  //   この root の下に出るので、1 か所で全部の入力欄が対象になる。
+  installKeyGuard(root);
   at.appendChild(root);
 
   // bootstrap (非同期)
