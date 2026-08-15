@@ -13,6 +13,7 @@ import { splitAssetCell, DEFAULT_ASSET_COLUMN, assetSourceColumns } from '../lib
 import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { openModal } from '../components/modal';
 import { toast } from '../components/toast';
+import { createProgressLine } from '../components/progressLine';
 import { DataTable, type DataColumn } from './dataTable';
 import { acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES, mapLimit, base64ToBytes } from '../lib/downloadFlow';
 import { buildImportPlan, type ImportMode } from '../lib/import';
@@ -91,7 +92,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   const subbar = el('div', { class: 'mikke-subbar' });
   const toolbar = el('div', { class: 'mikke-toolbar' });
   const tableWrap = el('div', { class: 'mikke-table-wrap' });
-  root.append(subbar, toolbar, tableWrap);
+  // ★ 一括処理の進捗。subbar / toolbar は描き直しで中身が消えるので、
+  //   進捗行は独立した要素として置く。
+  const progress = createProgressLine();
+  root.append(subbar, toolbar, progress.el, tableWrap);
 
   let scanCols: string[] = [];
   let csvHeaders: string[] = [];
@@ -475,6 +479,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       : undefined;
     bulkBusy = true;
     updateSubbar();
+    progress.set('連携リストへ反映: 準備中');
     try {
       // ★ 列が 1 つでも足りないと SP は書込を 400 で返し、全件失敗する。
       //   何が足りないのか・どう直すのかを先に出す (原因が分からないまま
@@ -487,6 +492,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           'error', 0);
         return;
       }
+      progress.set('連携リストへ反映: 現在の内容を読んでいます');
       const [existing, assets] = await Promise.all([
         getRepo().listVulnResponseRows(),
         getRepo().listAssets().catch(() => []),
@@ -516,10 +522,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       //   失敗した件は件数だけ分かる (原因の詳細は F12 のコンソールに出る)。
       let fail = 0;
       let firstErr = '';
+      progress.set('連携リストへ反映: 書き込み', 0, total);
       try {
         const w = await getRepo().applyVulnResponseWrites(
           plan.creates, plan.updates, plan.deletes.map((d) => d.id),
-          (d, t) => { if (t > 200 && d % 200 === 0) toast(rootEl, `${label}… (${d}/${t})`, 'default', 2000); });
+          (d, t) => progress.set('連携リストへ反映: 書き込み', d, t));
         fail = w.fail;
         if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
       } catch (e) {
@@ -537,7 +544,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       ));
       const att = { ok: 0, noItem: 0, fail: 0, firstErr: '' };
       if (attachTargets.length) {
-        toast(rootEl, `レポートを添付しています… ${attachTargets.length} 件`, 'default', 6000);
+        let attDone = 0;
+        progress.set('連携リストへ反映: レポートを添付', 0, attachTargets.length);
         await mapLimit(attachTargets, REPORT_FETCH_PARALLEL, async (issue) => {
           try {
             const href = await getRepo().docFileHref(issue.reportUrl!);
@@ -551,6 +559,8 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           } catch (e) {
             att.fail++;
             if (!att.firstErr) att.firstErr = `${issue.issueInstanceId}: ${(e as Error).message}`;
+          } finally {
+            progress.set('連携リストへ反映: レポートを添付', ++attDone, attachTargets.length);
           }
         });
       }
@@ -563,6 +573,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       //   全件に毎回付け直すのは重い (1 件あたり 4〜6 リクエスト) ので、この 3 つに絞る。
       let permMsg = '';
       try {
+        progress.set('連携リストへ反映: アクセス権の対象を確認中');
         // 書き込み後の状態で引き直す (追加した分の ID と、継承のままかどうか)。
         const [targets, rows] = await Promise.all([
           getRepo().listVulnResponsePermTargets(),
@@ -580,7 +591,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
           return !scope || scope.has(iidById.get(t.id) ?? '');
         });
         if (scoped.length) {
-          const pr = await getRepo().applyVulnResponseItemPerms(scoped);
+          // ★ 1 件あたり 4〜6 リクエストかかる。ここがいちばん待たされるので必ず出す。
+          progress.set('連携リストへ反映: アクセス権', 0, scoped.length);
+          const pr = await getRepo().applyVulnResponseItemPerms(scoped,
+            (d, t) => progress.set('連携リストへ反映: アクセス権', d, t));
           permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
             + (pr.errors.length ? ` (失敗 ${pr.errors.length}: ${pr.errors[0]})` : '');
         }
@@ -598,6 +612,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         ...plan.updates.map((u) => u.issueInstanceId),
       ]);
       if (pushedIids.size && !fail) {
+        progress.set('連携リストへ反映: 反映日時を記録');
         // ★ 自分が書いた分は「見た」ことにする。反映で連携リスト側の更新時刻も
         //   動くので、ここで覚えないと自分の反映でバッジが出てしまう。
         const after = updatedAtMap(await getRepo().listVulnResponses().catch(() => [] as VulnResponseItem[]));
@@ -623,6 +638,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
     } catch (e) {
       toast(rootEl, `連携リストへの反映に失敗しました: ${(e as Error).message}`, 'error', 10000);
     } finally {
+      progress.hide();
       bulkBusy = false;
       await load();
     }

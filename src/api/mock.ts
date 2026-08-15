@@ -289,7 +289,10 @@ export class MockRepository implements Repository {
   /** モックには権限の実体が無いので、件数の内訳だけ再現する (UI 検証用)。 */
   async applyVulnResponseItemPerms(
     targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    // 進捗の出方を画面で確かめられるよう、mock でも 1 件ずつ刻む。
+    targets.forEach((_, i) => onProgress?.(i + 1, targets.length));
     save(LS_PERM_APPLIED, [...new Set([...load<number[]>(LS_PERM_APPLIED, []), ...targets.map((t) => t.id)])]);
     const perms = normalizePerms((await this.getSettings()).vulnResponsePerms);
     if (!hasAnyPerms(perms)) throw new Error('アクセス権が未設定です (管理者グループを 1 つ以上選んでください)');
@@ -423,7 +426,10 @@ export class MockRepository implements Repository {
 
   async applyOverseasResponseItemPerms(
     targets: { id: number; businessCompany: string }[],
+    onProgress?: (done: number, total: number) => void,
   ): Promise<{ applied: number; adminOnly: number; errors: string[] }> {
+    // 進捗の出方を画面で確かめられるよう、mock でも 1 件ずつ刻む。
+    targets.forEach((_, i) => onProgress?.(i + 1, targets.length));
     save(LS_OVERSEAS_PERM_APPLIED,
       [...new Set([...load<number[]>(LS_OVERSEAS_PERM_APPLIED, []), ...targets.map((t) => t.id)])]);
     const perms = normalizePerms((await this.getSettings()).vulnResponsePerms);

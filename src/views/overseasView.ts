@@ -8,6 +8,7 @@ import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
+import { createProgressLine } from '../components/progressLine';
 import { DataTable } from './dataTable';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import { parseFlexibleDate } from '../lib/migration';
@@ -23,7 +24,10 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   const subbar = el('div', { class: 'mikke-subbar' });
   const toolbar = el('div', { class: 'mikke-toolbar' });
   const tableWrap = el('div', { class: 'mikke-table-wrap' });
-  root.append(subbar, toolbar, tableWrap);
+  // ★ 一括処理の進捗。subbar / toolbar は描き直しで中身が消えるので、
+  //   進捗行は独立した要素として置く。
+  const progress = createProgressLine();
+  root.append(subbar, toolbar, progress.el, tableWrap);
 
   let cache: OverseasIssue[] = [];
   let busy = false;
@@ -86,6 +90,37 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     return inp;
   }
 
+  /**
+   * 複数行を書ける欄 (参考情報)。SP 側も複数行テキスト列なので改行がそのまま入る。
+   * ★ Enter は改行。確定は欄から離れたとき (change) にする。
+   * ★ 表の行は 1 行ぶんの高さしかないので、書いている間だけ内容の高さまで広げる。
+   *   広げないと 2 行目以降が見えないまま書くことになる。
+   */
+  function noteCell(
+    row: OverseasIssue, get: (i: OverseasIssue) => string, set: (v: string) => Partial<OverseasIssue>,
+  ): HTMLElement {
+    const ta = el('textarea', {
+      class: 'mikke-cell-edit mikke-cell-edit--multi', rows: '1', placeholder: '—', spellcheck: 'false',
+    }, [get(row)]) as HTMLTextAreaElement;
+    const MAX_ROWS_PX = 140;
+    const grow = (): void => {
+      ta.style.height = 'auto';
+      ta.style.height = `${Math.min(ta.scrollHeight, MAX_ROWS_PX)}px`;
+    };
+    ta.addEventListener('focus', grow);
+    ta.addEventListener('input', grow);
+    ta.addEventListener('blur', () => { ta.style.height = ''; });
+    ta.addEventListener('change', () => {
+      const v = ta.value.trim();
+      if (v === get(row)) return;               // 変わっていなければ書かない
+      void saveCell(row, set(v));
+    });
+    // Enter は改行として使うので確定しない。表の行クリックには伝えない。
+    ta.addEventListener('keydown', (e) => e.stopPropagation());
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    return ta;
+  }
+
   /** 事業会社は登録済み一覧からの選択式 (国内と同じ顔ぶれ)。
    *  ★ 既に入っている値が一覧に無いことがある (登録前に取り込んだ / 会社を消した)。
    *    その値も選択肢に残す。残さないと、開いただけで別の会社に化ける。 */
@@ -126,9 +161,10 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       { id: 'webMapsId', label: LABEL.assetMgmtId, width: 160,
         text: (i) => i.webMapsId ?? '',
         render: (i) => textCell(i, (x) => x.webMapsId ?? '', (v) => ({ webMapsId: v })) },
+      // ★ 参考情報は複数行 (SP 側も複数行テキスト列)。改行をそのまま入れられる。
       { id: 'identifyEvidence', label: '参考情報', width: 220,
         text: (i) => i.identifyEvidence ?? '',
-        render: (i) => textCell(i, (x) => x.identifyEvidence ?? '', (v) => ({ identifyEvidence: v })) },
+        render: (i) => noteCell(i, (x) => x.identifyEvidence ?? '', (v) => ({ identifyEvidence: v })) },
       { id: 'assetIp', label: 'IP', width: 140, text: (i) => i.assetIp ?? '' },
       { id: 'assetFqdn', label: 'FQDN', width: 200, text: (i) => i.assetFqdn ?? '' },
       { id: 'title', label: LABEL.title, width: 260, text: (i) => i.title ?? '' },
@@ -326,6 +362,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       : undefined;
     bulkBusy = true;
     paint();
+    progress.set('海外連携リストへ反映: 準備中');
     try {
       // ★ 列が 1 つでも足りないと SP は書込を 400 で返し、全件失敗する。
       //   何が足りないのか・どう直すのかを先に出す。
@@ -337,6 +374,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
           'error', 0);
         return;
       }
+      progress.set('海外連携リストへ反映: 現在の内容を読んでいます');
       const existing = await getRepo().listOverseasResponseRows();
       const plan = buildOverseasResponsePlan(cache, existing, scope);
       const label = onlySelected ? `選択 ${targets.length} 件の反映` : '海外連携リストへの反映';
@@ -350,10 +388,11 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
 
       let fail = 0;
       let firstErr = '';
+      progress.set('海外連携リストへ反映: 書き込み', 0, total);
       try {
         const w = await getRepo().applyOverseasResponseWrites(
           plan.creates, plan.updates.map((u) => ({ id: u.id, fields: u.fields })), plan.deletes.map((d) => d.id),
-          (d, t) => { if (t > 200 && d % 200 === 0) toast(rootEl, `${label}… (${d}/${t})`, 'default', 2000); });
+          (d, t) => progress.set('海外連携リストへ反映: 書き込み', d, t));
         fail = w.fail;
         if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
       } catch (e) {
@@ -365,6 +404,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       //   追加した分 / 事業会社が変わった分 / まだ継承のままの分 の 3 つ。
       let permMsg = '';
       try {
+        progress.set('海外連携リストへ反映: アクセス権の対象を確認中');
         const [permTargets, rows] = await Promise.all([
           getRepo().listOverseasResponsePermTargets(),
           getRepo().listOverseasResponseRows(),
@@ -381,7 +421,10 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
           return !scope || scope.has(keyById.get(t.id) ?? '');
         });
         if (scoped.length) {
-          const pr = await getRepo().applyOverseasResponseItemPerms(scoped);
+          // ★ 1 件あたり 4〜6 リクエストかかる。ここがいちばん待たされるので必ず出す。
+          progress.set('海外連携リストへ反映: アクセス権', 0, scoped.length);
+          const pr = await getRepo().applyOverseasResponseItemPerms(scoped,
+            (d, t) => progress.set('海外連携リストへ反映: アクセス権', d, t));
           permMsg = ` / アクセス権 ${pr.applied + pr.adminOnly} 件`
             + (pr.errors.length ? ` (失敗 ${pr.errors.length}: ${pr.errors[0]})` : '');
         }
@@ -399,6 +442,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     } catch (e) {
       toast(rootEl, `反映に失敗しました: ${(e as Error).message}`, 'error', 0);
     } finally {
+      progress.hide();
       bulkBusy = false;
       paint();
     }
