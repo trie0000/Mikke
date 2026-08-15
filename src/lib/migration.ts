@@ -11,7 +11,7 @@
 // UI にも SP にも依存しない (テストしやすくするため)。
 import type { ManagedIssue, DetectionStatus, MgmtStatus, VulnType } from '../types';
 import { MGMT_STATUSES, DEFAULT_MGMT_STATUS } from '../types';
-import { normalizePerms, type VulnResponsePerms } from './itemPerms';
+import { normalizePerms, asBuiltinCompany, type VulnResponsePerms } from './itemPerms';
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
 
@@ -421,8 +421,11 @@ export function migrateRow(row: Record<string, string>, ctx: MigrationContext): 
   const rawCompany = get(MIG_COL.businessCompany);
   const usedAlias = applyAliasRemap(rawCompany, ctx.remapIndex);
   const resolved = resolveCompany(usedAlias, ctx.aliasIndex);
-  const company = resolved ?? (companyCell ? OTHER_COMPANY : '');
-  if (rawCompany && !resolved) {
+  // ★「他社」「不明」はそのまま残す。判定できなかった行と一緒に「その他」へ
+  //   寄せると、他社の資産と分かっている行が見分けられなくなる。
+  const builtin = asBuiltinCompany(usedAlias);
+  const company = resolved ?? builtin ?? (companyCell ? OTHER_COMPANY : '');
+  if (rawCompany && !resolved && !builtin) {
     warnings.push(usedAlias === rawCompany
       ? `事業会社の略称「${rawCompany}」に対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`
       : `旧略称「${rawCompany}」を「${usedAlias}」に読み替えましたが、対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`);
@@ -623,7 +626,8 @@ export function buildMigrationPlan(
       else hits.set(key, { from: a, to: mapped, count: 1 });
     }
     // 読み替え後も引けない値だけを「未登録」として挙げる。表示は Excel の値のまま。
-    if (!resolveCompany(mapped, ctx.aliasIndex)) unknown.add(a);
+    // ★「他社」「不明」はそのまま登録する枠なので、未登録の略称ではない。
+    if (!resolveCompany(mapped, ctx.aliasIndex) && !asBuiltinCompany(mapped)) unknown.add(a);
   }
   return {
     rows: results,

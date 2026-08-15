@@ -14,6 +14,7 @@ import {
   buildOverseasMigrationPlan, indexOverseasByKey, splitOverseasMigrationWrites, OVS_MIG_COL,
   type OvsMigrationPlan, type OvsMigrationSplit,
 } from '../lib/overseasMigration';
+import { BUILTIN_COMPANIES } from '../lib/itemPerms';
 import type { MikkeSettings } from '../types';
 
 /** 移行元のシート名 (Excel のテーブルが載っているシート)。 */
@@ -199,6 +200,7 @@ export async function renderOverseasMigrationPanel(root: HTMLElement): Promise<O
       el('li', {}, ['事業会社は略称で書かれているので、アクセス権画面で登録した略称から判定します。'
         + '旧略称の読み替えは「旧略称の読み替え」(国内と共通) の設定を使います。']),
       el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
+      el('li', {}, [`「${BUILTIN_COMPANIES.join('」「')}」と書かれた行は、そのままその名前で登録します (事業会社の選択肢にも出ます)。`]),
     ]),
     el('div', { class: 'mikke-field' }, [
       el('label', { class: 'mikke-field-label' }, ['移行元の Excel (.xlsx)']),

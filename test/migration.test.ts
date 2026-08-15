@@ -471,6 +471,45 @@ describe('Excel の列名', () => {
   });
 });
 
+describe('★「他社」「不明」はそのまま登録する', () => {
+  const run = (v: string) => buildMigrationPlan(
+    [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: v }],
+    PERMS, {}, '2026-08-14T00:00:00Z');
+
+  it('他社 は 他社 のまま (その他に寄せない)', () => {
+    const plan = run('他社');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('他社');
+    expect(plan.otherCount).toBe(0);
+    expect(plan.unknownAliases).toEqual([]);
+    expect(plan.rows[0]!.warnings).toEqual([]);
+  });
+
+  it('不明 は 不明 のまま', () => {
+    const plan = run('不明');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('不明');
+    expect(plan.otherCount).toBe(0);
+    expect(plan.unknownAliases).toEqual([]);
+  });
+
+  it('前後に空白があっても同じ扱い', () => {
+    expect(run(' 不明 ').rows[0]!.issue!.businessCompany).toBe('不明');
+  });
+
+  it('似ているだけの値は寄せない', () => {
+    const plan = run('不明瞭');
+    expect(plan.rows[0]!.issue!.businessCompany).toBe(OTHER_COMPANY);
+    expect(plan.unknownAliases).toEqual(['不明瞭']);
+  });
+
+  it('読み替えで 他社 に寄せた行もそのまま登録できる', () => {
+    const plan = buildMigrationPlan(
+      [{ [MIG_COL.issueInstanceId]: 'IID-1', [MIG_COL.businessCompany]: 'ヨソ' }],
+      PERMS, {}, '2026-08-14T00:00:00Z', [{ to: '他社', from: ['ヨソ'] }]);
+    expect(plan.rows[0]!.issue!.businessCompany).toBe('他社');
+    expect(plan.otherCount).toBe(0);
+  });
+});
+
 describe('事業会社を決められない行は「その他」に寄せる', () => {
   it('★ 未登録の略称・読み替えても引けない略称・数式のエラー値をまとめて数える', () => {
     const plan = buildMigrationPlan([

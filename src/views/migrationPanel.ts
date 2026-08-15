@@ -16,6 +16,7 @@ import {
   buildMigrationPlan, OTHER_COMPANY, indexByIssueInstanceId, splitMigrationWrites,
   type MigrationPlan, type MigrationWriteSplit,
 } from '../lib/migration';
+import { BUILTIN_COMPANIES } from '../lib/itemPerms';
 import type { MikkeSettings } from '../types';
 
 /** 移行元のシート名 (Excel のテーブルが載っているシート)。 */
@@ -234,6 +235,7 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
       el('li', {}, ['脆弱性タイプは Title から自動判定します (判定条件は「脆弱性タイプの判定」で設定)。']),
       el('li', {}, ['組織再編前の古い略称は「旧略称の読み替え」(この下のメニュー) で現在の略称に寄せてから判定します。']),
       el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
+      el('li', {}, [`「${BUILTIN_COMPANIES.join('」「')}」と書かれた行は、そのままその名前で登録します (事業会社の選択肢にも出ます)。`]),
     ]),
     el('div', { class: 'mikke-field' }, [
       el('label', { class: 'mikke-field-label' }, ['移行元の Excel (.xlsx)']),

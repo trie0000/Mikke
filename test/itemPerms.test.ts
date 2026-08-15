@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   normalizePerms, hasAnyPerms, groupIdsFor, pickRoles, buildItemPermPlan,
   companyChoices, companiesWithoutGroups, EMPTY_PERMS,
-  parseCompanyList, mergeCompanies, registeredCompanies,
+  parseCompanyList, mergeCompanies, registeredCompanies, asBuiltinCompany,
 } from '../src/lib/itemPerms';
 
 const PERMS = normalizePerms({
@@ -168,8 +168,29 @@ describe('事業会社の一括登録 (WebReg の一括入力と同じ形)', () 
 
   it('registeredCompanies は割当の有無を問わず並べる', () => {
     const p = normalizePerms({ byBusinessCompany: { 'モビリティ事業': [], 'エナジー事業': [12] } });
-    expect(registeredCompanies(p)).toEqual(['エナジー事業', 'モビリティ事業']);
+    // ★「他社」「不明」は常設の枠。登録しなくても選択肢に出る。
+    expect(registeredCompanies(p)).toEqual(['エナジー事業', 'モビリティ事業', '他社', '不明']);
   });
+
+  it('★ 常設の枠 (他社 / 不明) は登録が無くても選択肢に出る', () => {
+    expect(registeredCompanies(normalizePerms({}))).toEqual(['他社', '不明']);
+  });
+
+  it('常設の枠を登録済みにしても重複しない', () => {
+    const p = normalizePerms({ byBusinessCompany: { '他社': [12], '不明': [] } });
+    expect(registeredCompanies(p)).toEqual(['他社', '不明']);
+    // 登録すれば割当も持てる (未登録なら管理者だけが見られる)
+    expect(groupIdsFor('他社', p)).toEqual([12]);
+  });
+
+  it('asBuiltinCompany は表記が一致するものだけ拾う', () => {
+    expect(asBuiltinCompany(' 他社 ')).toBe('他社');
+    expect(asBuiltinCompany('不明')).toBe('不明');
+    expect(asBuiltinCompany('その他')).toBeNull();
+    expect(asBuiltinCompany('他社A')).toBeNull();
+    expect(asBuiltinCompany('')).toBeNull();
+  });
+
 });
 
 describe('管理者グループが必ず付くこと', () => {

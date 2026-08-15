@@ -17,7 +17,7 @@ import {
   isIpAddress, normalizeAliasRemap, OTHER_COMPANY, resolveCompany, toDetectionStatus,
 } from './migration';
 import { fitSingleLine } from './vulnResponseSync';
-import { normalizePerms } from './itemPerms';
+import { normalizePerms, asBuiltinCompany } from './itemPerms';
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
 
@@ -185,8 +185,10 @@ export function migrateOverseasRow(
   const rawCompany = get('businessCompany');
   const usedAlias = applyAliasRemap(rawCompany, ctx.remapIndex);
   const resolved = resolveCompany(usedAlias, ctx.aliasIndex);
-  const businessCompany = resolved ?? (companyCell ? OTHER_COMPANY : '');
-  if (rawCompany && !resolved) {
+  // ★「他社」「不明」はそのまま残す (国内の移行と同じ)。
+  const builtin = asBuiltinCompany(usedAlias);
+  const businessCompany = resolved ?? builtin ?? (companyCell ? OTHER_COMPANY : '');
+  if (rawCompany && !resolved && !builtin) {
     warnings.push(usedAlias === rawCompany
       ? `事業会社の略称「${rawCompany}」に対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`
       : `旧略称「${rawCompany}」を「${usedAlias}」に読み替えましたが、対応する事業会社が未登録のため「${OTHER_COMPANY}」にしました`);
@@ -383,7 +385,8 @@ export function buildOverseasMigrationPlan(
         const hit = hits.get(key);
         if (hit) hit.count++; else hits.set(key, { from: a, to: mapped, count: 1 });
       }
-      if (!resolveCompany(mapped, ctx.aliasIndex)) unknown.add(a);
+      // ★「他社」「不明」はそのまま登録する枠なので、未登録の略称ではない。
+      if (!resolveCompany(mapped, ctx.aliasIndex) && !asBuiltinCompany(mapped)) unknown.add(a);
     }
   }
 

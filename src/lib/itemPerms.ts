@@ -86,8 +86,27 @@ export function hasAnyPerms(p: VulnResponsePerms): boolean {
 }
 
 /** 一括登録された事業会社 (割当の有無を問わない)。画面の一覧に出す順。 */
+/**
+ * 事業会社の選択肢に **常に出す枠**。
+ *
+ * ★ 移行データ (Excel) にこの表記で書かれている行は、略称として解決しようとせず
+ *   **そのまま** 登録する。どこの会社か分からない行をまとめて「その他」に寄せると、
+ *   「他社の資産と分かっている行」と「判定できなかった行」が混ざって区別できなくなる。
+ * ★ 選択肢にも出すので、一覧や明細から後から選び直せる。アクセス権の割当は
+ *   他の事業会社と同じで、アクセス権画面で割り当てる (未割当なら管理者だけが見られる)。
+ */
+export const BUILTIN_COMPANIES = ['他社', '不明'] as const;
+
+/** その値が常設の枠か (前後の空白は無視。表記は一致させる)。 */
+export function asBuiltinCompany(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  return (BUILTIN_COMPANIES as readonly string[]).find((b) => b === s) ?? null;
+}
+
+/** 事業会社の選択肢 (登録済み + 常設の枠)。 */
 export function registeredCompanies(p: VulnResponsePerms): string[] {
-  return Object.keys(p.byBusinessCompany).sort((a, b) => a.localeCompare(b, 'ja'));
+  const set = new Set([...Object.keys(p.byBusinessCompany), ...BUILTIN_COMPANIES]);
+  return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
 }
 
 /**

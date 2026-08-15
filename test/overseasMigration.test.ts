@@ -223,6 +223,32 @@ describe('事業会社の判定 (国内の移行と同じ扱い)', () => {
     expect(p.rows[0]!.warnings.join()).toContain('未登録');
   });
 
+  it('★「他社」はそのまま「他社」で登録する (その他に寄せない)', () => {
+    const p = plan([[...ROW1.slice(0, 3), '他社', ...ROW1.slice(4)]]);
+    expect(p.rows[0]!.issue!.businessCompany).toBe('他社');
+    expect(p.otherCount).toBe(0);
+    expect(p.unknownAliases).toEqual([]);       // 未登録の略称ではない
+    expect(p.rows[0]!.warnings).toEqual([]);    // 警告も出さない
+  });
+
+  it('★「不明」もそのまま「不明」で登録する', () => {
+    const p = plan([[...ROW1.slice(0, 3), '不明', ...ROW1.slice(4)]]);
+    expect(p.rows[0]!.issue!.businessCompany).toBe('不明');
+    expect(p.otherCount).toBe(0);
+    expect(p.unknownAliases).toEqual([]);
+  });
+
+  it('前後に空白があっても常設の枠として扱う', () => {
+    const p = plan([[...ROW1.slice(0, 3), ' 他社 ', ...ROW1.slice(4)]]);
+    expect(p.rows[0]!.issue!.businessCompany).toBe('他社');
+  });
+
+  it('似ているだけの値は寄せない (他社A は その他)', () => {
+    const p = plan([[...ROW1.slice(0, 3), '他社A', ...ROW1.slice(4)]]);
+    expect(p.rows[0]!.issue!.businessCompany).toBe(OTHER_COMPANY);
+    expect(p.unknownAliases).toEqual(['他社A']);
+  });
+
   it('空欄はそのまま空欄 (寄せる元が無いため)', () => {
     const p = plan([[...ROW1.slice(0, 3), '', ...ROW1.slice(4)]]);
     expect(p.rows[0]!.issue!.businessCompany).toBe('');
