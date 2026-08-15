@@ -232,37 +232,46 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     runBtn.setAttribute('disabled', '');
     const line = el('div', { class: 'mikke-note' }, ['登録しています…']);
     clear(result); result.appendChild(line);
-    let added = 0; let updated = 0; let fail = 0; let firstErr = '';
     // 既にある Issue Instance ID は上書き、無いものだけ追加する。
     const targets = [
       ...split.updates.map((u) => ({ row: u.row, id: u.id as number | null })),
       ...split.adds.map((row) => ({ row, id: null as number | null })),
     ];
-    for (const [i, t] of targets.entries()) {
-      line.textContent = `登録しています… (${i + 1}/${targets.length})`;
-      try {
-        // 担当者はメールアドレスから引く。引けなければ氏名列をそのまま入れる。
-        let assignee = t.row.assigneeFallback;
-        if (t.row.assigneeEmail) {
-          const found = await getRepo().resolveUserByEmail(t.row.assigneeEmail).catch(() => null);
-          if (found?.displayName) assignee = found.displayName;
-        }
-        if (t.id === null) {
-          await getRepo().createIssue({ ...t.row.issue!, assignee });
-          added++;
-        } else {
-          await getRepo().updateIssue(t.id, { ...t.row.issue!, assignee });
-          updated++;
-        }
-      } catch (e) {
-        fail++;
-        if (!firstErr) firstErr = `${t.row.issue!.issueInstanceId}: ${(e as Error).message}`;
-      }
+    // ★ 担当者を引くのは 1 件ずつのネットワーク往復。同じメールは 1 回で済ませる。
+    const byEmail = new Map<string, string>();
+    const emails = [...new Set(targets.map((t) => t.row.assigneeEmail).filter(Boolean))];
+    for (const [i, mail] of emails.entries()) {
+      line.textContent = `担当者を引いています… (${i + 1}/${emails.length})`;
+      const found = await getRepo().resolveUserByEmail(mail).catch(() => null);
+      if (found?.displayName) byEmail.set(mail, found.displayName);
     }
+    const withAssignee = (t: typeof targets[number]) => ({
+      ...t.row.issue!,
+      assignee: byEmail.get(t.row.assigneeEmail) ?? t.row.assigneeFallback,
+    });
+    // ★ 書き込みは $batch でまとめる。1 件ずつだと件数ぶん往復して遅い。
+    const creates = targets.filter((t) => t.id === null).map(withAssignee);
+    const updates = targets.filter((t) => t.id !== null)
+      .map((t) => ({ id: t.id!, patch: withAssignee(t) }));
+    line.textContent = '登録しています…';
+    let fail = 0; let firstErr = '';
+    try {
+      const w = await getRepo().applyIssueWrites(creates, updates, (d, t) => {
+        line.textContent = `登録しています… (${d}/${t})`;
+      });
+      fail = w.fail;
+      if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
+    } catch (e) {
+      fail = creates.length + updates.length;
+      firstErr = (e as Error).message;
+    }
+    const added = fail ? 0 : creates.length;
+    const updated = fail ? 0 : updates.length;
     clear(result);
     result.appendChild(el('div', { class: fail ? 'mikke-error' : 'mikke-note' }, [
-      `登録しました: 新規 ${added} 件 / 上書き ${updated} 件`
-      + (fail ? ` / 失敗 ${fail} 件 — ${firstErr}` : ''),
+      fail
+        ? `登録に失敗した件があります: 失敗 ${fail} 件 — ${firstErr}`
+        : `登録しました: 新規 ${added} 件 / 上書き ${updated} 件`,
     ]));
     toast(root, `移行データを登録しました (新規 ${added} / 上書き ${updated})`, fail ? 'warn' : 'ok');
     plan = null;

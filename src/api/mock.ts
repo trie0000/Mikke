@@ -106,6 +106,32 @@ export class MockRepository implements Repository {
     save(LS_ISSUES, this.issues);
   }
 
+  async applyIssueWrites(
+    creates: Omit<ManagedIssue, 'id'>[],
+    updates: { id: number; patch: Partial<ManagedIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    for (const c of creates) await this.createIssue(c);
+    for (const u of updates) await this.updateIssue(u.id, u.patch);
+    const total = creates.length + updates.length;
+    onProgress?.(total, total);
+    return { ok: total, fail: 0 };
+  }
+
+  async applyVulnResponseWrites(
+    creates: VulnResponseFields[],
+    updates: { id: number; fields: Partial<VulnResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    for (const id of deletes) await this.deleteVulnResponseItem(id);
+    for (const c of creates) await this.createVulnResponseItem(c);
+    for (const u of updates) await this.updateVulnResponseItem(u.id, u.fields);
+    const total = creates.length + updates.length + deletes.length;
+    onProgress?.(total, total);
+    return { ok: total, fail: 0 };
+  }
+
   async deleteAllIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
     const n = this.issues.length;
     this.issues = [];

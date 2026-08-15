@@ -17,6 +17,13 @@ export interface Repository {
   createIssue(issue: Omit<ManagedIssue, 'id'>): Promise<number>;
   /** 完全削除 (リストから行を消す。元に戻せない)。 */
   deleteIssue(id: number): Promise<void>;
+  /** ★ 管理対象への書き込みを $batch でまとめて行う (移行・連携取込)。
+   *  1 件ずつ書くと件数ぶん往復するため、まとまった件数はこちらを使う。 */
+  applyIssueWrites(
+    creates: Omit<ManagedIssue, 'id'>[],
+    updates: { id: number; patch: Partial<ManagedIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }>;
   /** 管理対象を全件削除する (リセット)。元に戻せない。 */
   deleteAllIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
   /** 設定の取得 / 保存。 */
@@ -102,6 +109,14 @@ export interface Repository {
   createVulnResponseItem(fields: VulnResponseFields): Promise<void>;
   /** 連携用リストのアイテムを更新する (Mikke が持つ項目だけ)。 */
   updateVulnResponseItem(id: number, fields: Partial<VulnResponseFields>): Promise<void>;
+  /** ★ 連携用リストへの反映を $batch でまとめて行う。
+   *  1 件ずつ書くと件数ぶん往復するため、まとまった件数はこちらを使う。 */
+  applyVulnResponseWrites(
+    creates: VulnResponseFields[],
+    updates: { id: number; fields: Partial<VulnResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }>;
   /** 連携用リストのアイテムを削除する (管理対象外にしたとき)。 */
   deleteVulnResponseItem(id: number): Promise<void>;
   /** 連携用リストの記入内容 (資産管理者が変更できる欄) を全件取得する。

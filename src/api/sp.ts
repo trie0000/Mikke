@@ -743,6 +743,54 @@ export class SpRepository implements Repository {
       { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' });
   }
 
+  /**
+   * 連携用リストへの反映を **$batch でまとめて** 書く。
+   * ★ 1 件ずつ POST/MERGE/DELETE していたので、件数ぶん往復して遅かった。
+   *   100 件ずつまとめる。実在しない列を落とす処理は先に 1 回だけ行う。
+   */
+  async applyVulnResponseWrites(
+    creates: VulnResponseFields[],
+    updates: { id: number; fields: Partial<VulnResponseFields> }[],
+    deletes: number[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const existing = await this.getFieldNamesOf(LIST_VULNRESPONSE);
+    const dropped = new Set<string>();
+    const pick = (f: Partial<VulnResponseFields>): Record<string, unknown> =>
+      this.filterExisting(this.vulnResponseRow(f), existing, dropped);
+    const ops = [
+      // 先に消す。対象外を解除した直後の追加と取り違えにくい。
+      ...deletes.map((id) => ({ kind: 'delete' as const, id, row: {} })),
+      ...creates.map((c) => ({ kind: 'add' as const, row: pick(c) })),
+      ...updates.map((u) => ({ kind: 'update' as const, id: u.id, row: pick(u.fields) })),
+    ];
+    if (dropped.size) console.warn('[mikke] 連携用リストに存在しない列を除外:', [...dropped]);
+    if (!ops.length) return { ok: 0, fail: 0 };
+    return this.batchWrite(ops, onProgress, LIST_VULNRESPONSE);
+  }
+
+  /**
+   * 管理対象への書き込みを **$batch でまとめて** 行う (移行・連携取込など)。
+   * ★ createIssue / updateIssue を 1 件ずつ呼ぶと件数ぶん往復する。
+   */
+  async applyIssueWrites(
+    creates: Omit<ManagedIssue, 'id'>[],
+    updates: { id: number; patch: Partial<ManagedIssue> }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const existing = await this.getFieldNames();
+    const dropped = new Set<string>();
+    const ops = [
+      ...creates.map((c) => ({ kind: 'add' as const,
+        row: this.filterExisting(this.issueToRow(c), existing, dropped) })),
+      ...updates.map((u) => ({ kind: 'update' as const, id: u.id,
+        row: this.filterExisting(this.issueToRow(u.patch), existing, dropped) })),
+    ];
+    if (dropped.size) console.warn('[mikke] 管理表に存在しない列を除外:', [...dropped]);
+    if (!ops.length) return { ok: 0, fail: 0 };
+    return this.batchWrite(ops, onProgress);
+  }
+
   async deleteVulnResponseItem(id: number): Promise<void> {
     await this.spPost(`/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items(${id})`,
       undefined, { 'X-HTTP-Method': 'DELETE', 'IF-MATCH': '*' });

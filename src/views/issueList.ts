@@ -372,22 +372,25 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         }
         return;
       }
-      let ok = 0, fail = 0, firstErr = '';
+      // ★ 管理対象への書き込みは $batch でまとめる (1 件ずつだと件数ぶん往復する)。
+      let fail = 0; let firstErr = '';
+      try {
+        const w = await getRepo().applyIssueWrites([],
+          plan.patches.map((p) => ({ id: p.id, patch: p.patch })));
+        fail = w.fail;
+        if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
+      } catch (e) {
+        fail = plan.patches.length;
+        firstErr = (e as Error).message;
+      }
+      const ok = plan.patches.length - fail;
+      // 誰の変更か分かるよう更新履歴にも残す (残せなくても取り込みは成立させる)。
+      const now = new Date().toISOString();
       await mapLimit(plan.patches, REFRESH_PARALLEL, async (p) => {
-        try {
-          await getRepo().updateIssue(p.id, p.patch);
-          // 誰の変更か分かるよう更新履歴にも残す。
-          await getRepo().createChangeLog({
-            issueInstanceId: p.issueInstanceId,
-            changedAt: new Date().toISOString(),
-            changedBy: '連携用リストから取り込み',
-            changes: p.changes,
-          }).catch(() => { /* 履歴が残せなくても取り込みは成立させる */ });
-          ok++;
-        } catch (e) {
-          fail++;
-          if (!firstErr) firstErr = (e as Error).message;
-        }
+        await getRepo().createChangeLog({
+          issueInstanceId: p.issueInstanceId, changedAt: now,
+          changedBy: '連携用リストから取り込み', changes: p.changes,
+        }).catch(() => { /* noop */ });
       });
       toast(rootEl,
         `連携内容を取り込みました: ${ok} 件更新${fail ? ` / ${fail} 件失敗 — ${firstErr}` : ''}`,
@@ -509,25 +512,20 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         toast(rootEl, `${label}… 追加 ${plan.creates.length} / 更新 ${plan.updates.length} / 削除 ${plan.deletes.length}`, 'default', 6000);
       }
 
-      let ok = 0, fail = 0, firstErr = '';
-      // ★ 失敗はどの脆弱性かが分からないと追えない。Issue Instance ID を添える。
-      const run = async (iid: string, fn: () => Promise<void>, fields?: object): Promise<void> => {
-        try { await fn(); ok++; } catch (e) {
-          fail++;
-          if (!firstErr) firstErr = `${iid}: ${(e as Error).message}`;
-          // ★ SharePoint の値エラー (500 テキストの値が正しくありません 等) は
-          //   どの項目が原因か応答に出ない。F12 で追えるよう項目長を残す。
-          if (fields) {
-            console.warn(`[mikke/vuln-response] ${iid} の書込に失敗:`, (e as Error).message,
-              Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, `${String(v ?? '').length}文字`])));
-          }
-        }
-      };
-      // 削除 → 追加 → 更新 の順。先に消しておくと、対象外を解除した直後の
-      // 追加と取り違えにくい。
-      await mapLimit(plan.deletes, REFRESH_PARALLEL, (d) => run(d.issueInstanceId, () => getRepo().deleteVulnResponseItem(d.id)));
-      await mapLimit(plan.creates, REFRESH_PARALLEL, (c) => run(c.issueInstanceId, () => getRepo().createVulnResponseItem(c), c));
-      await mapLimit(plan.updates, REFRESH_PARALLEL, (u) => run(u.issueInstanceId, () => getRepo().updateVulnResponseItem(u.id, u.fields), u.fields));
+      // ★ $batch で 100 件ずつまとめて書く。1 件ずつだと件数ぶん往復して遅い。
+      //   失敗した件は件数だけ分かる (原因の詳細は F12 のコンソールに出る)。
+      let fail = 0;
+      let firstErr = '';
+      try {
+        const w = await getRepo().applyVulnResponseWrites(
+          plan.creates, plan.updates, plan.deletes.map((d) => d.id),
+          (d, t) => { if (t > 200 && d % 200 === 0) toast(rootEl, `${label}… (${d}/${t})`, 'default', 2000); });
+        fail = w.fail;
+        if (fail) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください';
+      } catch (e) {
+        fail = plan.creates.length + plan.updates.length + plan.deletes.length;
+        firstErr = (e as Error).message;
+      }
 
       // ★ レポート PDF をアイテムの添付にも載せる。
       //   リンク列 (脆弱性レポート) はドキュメントライブラリを指すので、そこへの
@@ -606,8 +604,11 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         for (const iid of pushedIids) markSeen(iid, after.get(iid));
         seen = seenMap();
         const now = new Date().toISOString();
-        await mapLimit(cache.filter((i) => pushedIids.has(i.issueInstanceId)), REFRESH_PARALLEL,
-          async (i) => { try { await getRepo().updateIssue(i.id, { responsePushedAt: now }); } catch { /* 反映自体は成功 */ } });
+        // 反映日時の記録も 1 件ずつ書かず、まとめて書く。
+        await getRepo().applyIssueWrites([], cache
+          .filter((i) => pushedIids.has(i.issueInstanceId))
+          .map((i) => ({ id: i.id, patch: { responsePushedAt: now } })))
+          .catch(() => { /* 反映自体は成功しているので握る */ });
       }
 
       const attMsg = att.ok || att.fail
@@ -619,7 +620,6 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
       toast(rootEl,
         `${label}: ${summary}${attMsg}${permMsg}${fail ? ` — ${fail} 件失敗: ${firstErr}` : ''}`,
         fail || att.fail ? 'error' : 'ok', fail || att.fail ? 12000 : 8000);
-      void ok;
     } catch (e) {
       toast(rootEl, `連携リストへの反映に失敗しました: ${(e as Error).message}`, 'error', 10000);
     } finally {
