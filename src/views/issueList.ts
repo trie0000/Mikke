@@ -1119,11 +1119,14 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   }
 
   /** 「列」ボタンの見た目だけを更新する。
-   *  ★ 列を隠すたびに paint() し直すと、開いている列メニューが閉じてしまう。 */
+   *  ★ 列を隠すたびに paint() し直すと、開いている列メニューが閉じてしまう。
+   *  ★ 色は隣のボタンと同じ (secondary) で固定する。既定で隠している列があるので、
+   *    「非表示があると青」にすると常に青くなり、注意を促す色の意味が無くなる。
+   *    何列隠れているかはラベルの数字で分かる。 */
   function paintColBtn(): void {
     if (!colBtn) return;
     const n = table.hiddenColumnCount();
-    colBtn.className = n ? 'mikke-btn mikke-btn--primary' : 'mikke-btn mikke-btn--secondary';
+    colBtn.className = 'mikke-btn mikke-btn--secondary';
     colBtn.innerHTML = icon('columns') + `<span>列${n ? ` (${n} 非表示)` : ''}</span>`;
   }
 

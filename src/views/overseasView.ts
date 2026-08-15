@@ -8,6 +8,7 @@ import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
 import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
+import { openModal } from '../components/modal';
 import { createProgressLine } from '../components/progressLine';
 import { DataTable } from './dataTable';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
@@ -37,6 +38,8 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   const selected = new Set<number>();
   /** 事業会社の選択肢 (アクセス権画面で登録した一覧)。 */
   let companies: string[] = [];
+  /** 対象外にした行も表示するか (既定は隠す。国内の一覧と同じ)。 */
+  let showExcluded = false;
   /** 取り込み前の確認を出している間は表を描き直さない (描くと確認画面が消える)。 */
   let previewing = false;
 
@@ -45,6 +48,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     columns: [],
     rowId: (i) => i.id,
     virtualMin: 40,
+    columnToggle: true,           // ツールバーの「列」ボタンが戻す入口
     selection: {
       checked: (i) => selected.has(i.id),
       onToggle: (i, on) => { if (on) selected.add(i.id); else selected.delete(i.id); paintSubbar(); },
@@ -143,8 +147,19 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
 
   function buildColumns(): void {
     table.setColumns([
-      { id: 'no', label: '#No', width: 80, sortValue: (i) => i.id,
-        text: (i) => `#${i.id}`, cellStyle: 'color:var(--ink-3)' },
+      { id: 'no', label: '#No', width: 110, sortValue: (i) => i.id,
+        text: (i) => `#${i.id}${i.isOutOfScope ? ' 対象外' : ''}`,
+        cellStyle: 'color:var(--ink-3)',
+        render: (i) => el('span', { style: 'display:inline-flex;align-items:center;gap:6px' }, [
+          `#${i.id}`,
+          ...(i.isOutOfScope
+            ? [el('span', {
+                class: 'mikke-badge',
+                style: 'white-space:nowrap',
+                title: i.outOfScopeReason || '管理対象から除外',
+              }, ['対象外'])]
+            : []),
+        ]) },
       { id: 'iid', label: LABEL.issueInstanceId, width: 170, text: (i) => i.issueInstanceId },
       { id: 'contactedAt', label: '通知日', width: 116,
         text: (i) => fmtDate(i.contactedAt, false) || '', sortValue: (i) => i.contactedAt ?? '' },
@@ -176,6 +191,8 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       { id: 'lastSeen', label: LABEL.lastSeen, width: 150,
         text: (i) => fmtDate(i.lastSeen) || '', sortValue: (i) => i.lastSeen ?? '' },
       { id: 'remarks', label: LABEL.responseRemarks, width: 240, text: (i) => i.remarks ?? '' },
+      { id: 'outOfScopeReason', label: '除外理由', width: 200, defaultHidden: true,
+        text: (i) => i.outOfScopeReason ?? '' },
     ]);
   }
 
@@ -195,7 +212,7 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       const alive = new Set(cache.map((i) => i.id));
       for (const id of [...selected]) if (!alive.has(id)) selected.delete(id);
       buildColumns();
-      table.setRows(cache);
+      applyRows();
       paint();
     } catch (e) {
       clear(tableWrap);
@@ -204,6 +221,20 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       ]));
     }
   }
+
+  /** 表に流す行 (既定では対象外を隠す)。
+   *  ★ 表から消えた行の選択は必ず落とす。残すと「画面に出ていない行」が
+   *    完全に削除の対象に入り、取り返しがつかない。 */
+  function applyRows(): void {
+    const rows = showExcluded ? cache : cache.filter((i) => !i.isOutOfScope);
+    const visible = new Set(rows.map((i) => i.id));
+    for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
+    table.setRows(rows);
+  }
+
+  /** いま表に出ている行数 (帯の件数に使う)。 */
+  const visibleCount = (): number =>
+    showExcluded ? cache.length : cache.filter((i) => !i.isOutOfScope).length;
 
   // ── 取り込み ──────────────────────────────────────────────────────────────
   const fileInput = el('input', {
@@ -348,13 +379,111 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     tableWrap.appendChild(box);
   }
 
+  // ── 一括アクション (国内の管理対象一覧と同じ形) ────────────────────────────
+  /** 管理対象から除外する。データは残し、既定の一覧から隠す。 */
+  function bulkExclude(): void {
+    const targets = cache.filter((i) => selected.has(i.id));
+    if (!targets.length || bulkBusy) return;
+    const reasonTa = el('textarea', {
+      class: 'mikke-input', placeholder: '除外の理由 (任意)',
+      style: 'width:100%;min-height:80px;padding:var(--s-3);border:1px solid var(--line-strong);border-radius:var(--r-2)',
+    }) as HTMLTextAreaElement;
+    const body = el('div', {}, [
+      el('p', { style: 'margin:0 0 var(--s-4);line-height:1.7' }, [
+        `選択中の ${targets.length} 件を管理対象から除外します。`, el('br'),
+        '一覧のデフォルト表示から隠れます（「対象外も表示」で再表示できます）。', el('br'),
+        '次の「連携リストへ反映」で、海外連携リストからは削除されます。',
+      ]),
+      reasonTa,
+    ]);
+    openModal(rootEl, {
+      title: '管理対象から除外', body, primaryLabel: `除外する (${targets.length} 件)`, primaryVariant: 'danger',
+      onPrimary: async () => {
+        const reason = reasonTa.value.trim() || '一括除外';
+        // ★ 進捗はモーダルの中に出す。ツールバー下の進捗行は暗幕の裏で見えない。
+        const line = el('div', { class: 'mikke-note', style: 'margin-top:var(--s-3)' }, ['除外しています…']);
+        body.appendChild(line);
+        bulkBusy = true;
+        try {
+          const r = await getRepo().applyOverseasPlan([],
+            targets.map((i) => ({ id: i.id, patch: { isOutOfScope: true, outOfScopeReason: reason } })),
+            (d, t) => { line.textContent = `除外しています… (${d}/${t})`; });
+          toast(rootEl, `除外: ${r.ok} 件${r.fail ? ` / 失敗 ${r.fail} 件` : ''}`, r.fail ? 'warn' : 'ok');
+        } catch (e) {
+          toast(rootEl, `除外に失敗しました: ${(e as Error).message}`, 'error');
+        } finally {
+          bulkBusy = false;
+          selected.clear();
+          await load();
+        }
+      },
+    });
+  }
+
+  /** 除外を解除する (対象外を表示しているときだけ出す)。 */
+  function bulkInclude(): void {
+    const targets = cache.filter((i) => selected.has(i.id) && i.isOutOfScope);
+    if (!targets.length || bulkBusy) return;
+    void (async () => {
+      bulkBusy = true; paint();
+      progress.set('除外を解除', 0, targets.length);
+      try {
+        const r = await getRepo().applyOverseasPlan([],
+          targets.map((i) => ({ id: i.id, patch: { isOutOfScope: false, outOfScopeReason: '' } })),
+          (d, t) => progress.set('除外を解除', d, t));
+        toast(rootEl, `除外を解除: ${r.ok} 件${r.fail ? ` / 失敗 ${r.fail} 件` : ''}`, r.fail ? 'warn' : 'ok');
+      } catch (e) {
+        toast(rootEl, `解除に失敗しました: ${(e as Error).message}`, 'error');
+      } finally {
+        progress.hide();
+        bulkBusy = false;
+        selected.clear();
+        await load();
+      }
+    })();
+  }
+
+  /** 一覧から完全に削除する (元に戻せない)。 */
+  function bulkDelete(): void {
+    const ids = [...selected];
+    if (!ids.length || bulkBusy) return;
+    const body = el('div', { style: 'line-height:1.7' }, [
+      `選択中の ${ids.length} 件を海外脆弱性一覧から完全に削除します。`, el('br'),
+      el('span', { style: 'color:var(--danger)' }, ['元に戻せません。']), el('br'),
+      'データを残したまま一覧から隠す場合は「管理対象から除外」を使ってください。', el('br'),
+      '次の「連携リストへ反映」で、海外連携リストからも削除されます。',
+    ]);
+    openModal(rootEl, {
+      title: '完全に削除', body, primaryLabel: `削除する (${ids.length} 件)`, primaryVariant: 'danger',
+      onPrimary: async () => {
+        const line = el('div', { class: 'mikke-note', style: 'margin-top:var(--s-3)' }, ['削除しています…']);
+        body.appendChild(line);
+        bulkBusy = true;
+        try {
+          const r = await getRepo().deleteOverseasIssues(ids,
+            (d, t) => { line.textContent = `削除しています… (${d}/${t})`; });
+          toast(rootEl, `削除: ${r.ok} 件${r.fail ? ` / 失敗 ${r.fail} 件` : ''}`, r.fail ? 'warn' : 'ok');
+        } catch (e) {
+          toast(rootEl, `削除に失敗しました: ${(e as Error).message}`, 'error');
+        } finally {
+          bulkBusy = false;
+          selected.clear();
+          await load();
+        }
+      },
+    });
+  }
+
   // ── 海外連携用リストへの反映 ───────────────────────────────────────────────
   //   ★ 国内と違い **一方通行**。リスト側は読み取り専用で、取り込み (逆方向) は無い。
   async function push(onlySelected: boolean): Promise<void> {
     if (bulkBusy) return;
     const targets = onlySelected ? cache.filter((i) => selected.has(i.id)) : cache;
-    if (!targets.length) {
-      toast(rootEl, onlySelected ? '行を選択してください。' : '反映するものがありません。', 'warn');
+    // ★ 全件のときは、一覧が空でも止めない。空 = 「全部消した」なので、
+    //   リスト側に残っている行を消す必要がある。ここで戻すと、古い行を
+    //   二度と消せなくなる (リスト側は読み取り専用で手で消せない想定)。
+    if (onlySelected && !targets.length) {
+      toast(rootEl, '行を選択してください。', 'warn');
       return;
     }
     const scope = onlySelected
@@ -466,18 +595,32 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   /** 選択件数を出す帯。選択のたびに表ごと描き直さないよう分けてある。 */
   function paintSubbar(): void {
     clear(subbar);
+    const shown = visibleCount();
     subbar.append(
       el('span', { class: 'mikke-subbar-title' }, ['海外脆弱性一覧']),
-      el('span', { class: 'mikke-subbar-count' }, [`${cache.length} 件`]),
+      el('span', { class: 'mikke-subbar-count' }, [
+        shown === cache.length ? `${cache.length} 件` : `${shown} / ${cache.length} 件`,
+      ]),
     );
     if (selected.size) {
+      const btn = (label: string, title: string, cls: string, onclick: () => void): HTMLElement =>
+        el('button', {
+          class: `mikke-btn ${cls}`, style: 'height:26px;font-size:var(--fs-sm)', title,
+          ...(bulkBusy || previewing ? { disabled: 'disabled' } : {}),
+          onclick,
+        }, [label]);
+      // 除外済みを選んでいるときだけ「除外を解除」を出す。
+      const anyExcluded = cache.some((i) => selected.has(i.id) && i.isOutOfScope);
       subbar.append(
         el('span', { class: 'mikke-subbar-count' }, [`選択 ${selected.size} 件`]),
-        el('button', {
-          class: 'mikke-btn mikke-btn--secondary', style: 'height:26px;font-size:var(--fs-sm)',
-          ...(bulkBusy ? { disabled: 'disabled' } : {}),
-          onclick: () => void push(true),
-        }, ['連携リストへ反映(選択)']),
+        btn('連携リストへ反映(選択)', '選択中の脆弱性だけを海外連携リストへ反映します',
+          'mikke-btn--secondary', () => void push(true)),
+        btn('管理対象から除外', 'データを残したまま一覧から隠します（連携リストからは次の反映で消えます）',
+          'mikke-btn--secondary', () => bulkExclude()),
+        ...(anyExcluded ? [btn('除外を解除', '除外を取り消して一覧に戻します',
+          'mikke-btn--secondary', () => bulkInclude())] : []),
+        btn('完全に削除', '一覧から完全に削除します（元に戻せません）',
+          'mikke-btn--danger', () => bulkDelete()),
         el('button', {
           class: 'mikke-btn mikke-btn--ghost', style: 'height:26px;font-size:var(--fs-sm)',
           onclick: () => { selected.clear(); paintSubbar(); table.render(); },
@@ -496,20 +639,44 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       onclick: () => fileInput.click(),
       html: icon('upload') + '<span>Excel を取り込む</span>',
     });
+    // 列の表示/非表示。既定で隠している列 (除外理由) を戻す入口はここだけ。
+    const colBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+      title: '表示する列を選びます（列ヘッダのメニューからも非表示にできます）',
+    }) as HTMLButtonElement;
+    colBtn.addEventListener('click', () => table.openColumnPicker(colBtn));
+    const hiddenCols = table.hiddenColumnCount();
+    colBtn.innerHTML = icon('columns') + `<span>列${hiddenCols ? ` (${hiddenCols} 非表示)` : ''}</span>`;
     const pushBtn = el('button', {
       class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
       title: '海外拠点向けの連携リスト (国内とは別リスト) へ一覧の内容を書き出します',
-      ...(busy || bulkBusy ? { disabled: 'disabled' } : {}),
+      // ★ 取り込みの確認を出している間は押させない (押すと確認内容が黙って消える)。
+      ...(busy || bulkBusy || previewing ? { disabled: 'disabled' } : {}),
       onclick: () => void push(false),
     }, ['連携リストへ反映(全件)']);
+    const excludedCount = cache.filter((i) => i.isOutOfScope).length;
+    const hiddenToggle = el('label', {
+      style: 'display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;margin-left:auto',
+    }, [
+      el('input', {
+        type: 'checkbox', ...(showExcluded ? { checked: 'checked' } : {}),
+        onchange: (e: Event) => {
+          showExcluded = (e.target as HTMLInputElement).checked;
+          applyRows(); paint();
+        },
+      }),
+      `対象外も表示${excludedCount ? ` (${excludedCount})` : ''}`,
+    ]);
     toolbar.append(
       importBtn,
+      colBtn,
       pushBtn,
       fileInput,
       el('span', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
         '地域ごと・モニタリング区分ごとのファイルをまとめて読み込めます（ドラッグ＆ドロップ可）。'
         + ' 事業会社・管理会社・WebMAPS管理ID・参考情報は表から直接直せます。',
       ]),
+      hiddenToggle,
     );
     if (!busy && !previewing) table.render();
   }

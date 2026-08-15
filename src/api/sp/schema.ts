@@ -183,6 +183,9 @@ export function overseasFieldSpecs(): FieldSpec[] {
     { name: 'LastSeen', type: 'DateTime' },
     { name: 'Remarks', type: 'Note' },
     { name: 'ImportedAt', type: 'DateTime' },
+    // 管理対象から除外 (国内の管理表と同じ列名で揃える)。
+    { name: 'IsOutOfScope', type: 'Boolean', indexed: true },
+    { name: 'OutOfScopeReason', type: 'Note' },
   ];
 }
 

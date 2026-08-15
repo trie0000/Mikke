@@ -80,12 +80,17 @@ export interface OverseasResponseRow extends OverseasResponseFields {
 export interface OverseasResponsePlan {
   creates: OverseasResponseFields[];
   updates: { id: number; key: string; fields: Partial<OverseasResponseFields> }[];
-  deletes: { id: number; key: string }[];
+  deletes: { id: number; key: string; reason: '対象外' | '一覧に無い' }[];
   /** 既にあり、内容も一致していた件数。 */
   unchanged: number;
 }
 
 const text = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();
+
+/** 管理対象から外れているか (連携用リストから消す対象)。国内の isExcluded と同じ考え方。 */
+export function isExcludedOverseas(issue: OverseasIssue): boolean {
+  return !!issue.isOutOfScope;
+}
 
 /** 日付は日単位で比べる (時刻差で毎回差分にしない)。 */
 function day(iso?: string): string {
@@ -151,6 +156,14 @@ export function buildOverseasResponsePlan(
     const key = keyOfIssue(issue);
     seen.add(key);
     const row = byKey.get(key);
+
+    // ★ 管理対象から除外した行は連携用リストから消す。除外を解除すれば
+    //   「リストに無い」状態になり、次の反映で作り直される (国内と同じ)。
+    if (isExcludedOverseas(issue)) {
+      if (row) plan.deletes.push({ id: row.id, key, reason: '対象外' });
+      continue;
+    }
+
     const fields = toOverseasResponseFields(issue);
     if (!row) { plan.creates.push(fields); continue; }
 
@@ -169,7 +182,7 @@ export function buildOverseasResponsePlan(
   // 海外一覧から消えたものはリストからも消す (SP 側は常に Mikke の写し)。
   for (const row of existing) {
     const key = keyOfRow(row);
-    if (text(row.issueInstanceId) && !seen.has(key)) plan.deletes.push({ id: row.id, key });
+    if (text(row.issueInstanceId) && !seen.has(key)) plan.deletes.push({ id: row.id, key, reason: '一覧に無い' });
   }
   return plan;
 }

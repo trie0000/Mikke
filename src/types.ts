@@ -167,6 +167,10 @@ export interface OverseasIssue {
   remarks?: string;
   /** 取り込んだ日時 (ISO)。 */
   importedAt?: string;
+  /** 管理対象から除外したか (既定の一覧では隠す。国内の管理対象と同じ扱い)。 */
+  isOutOfScope?: boolean;
+  /** 除外の理由。 */
+  outOfScopeReason?: string;
 }
 
 /** F7 条件エンジン: 1 ルール。 */

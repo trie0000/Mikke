@@ -1191,6 +1191,8 @@ export class SpRepository implements Repository {
     if (p.lastSeen !== undefined) row.LastSeen = p.lastSeen || null;
     if (p.remarks !== undefined) row.Remarks = p.remarks;
     if (p.importedAt !== undefined) row.ImportedAt = p.importedAt || null;
+    if (p.isOutOfScope !== undefined) row.IsOutOfScope = p.isOutOfScope;
+    if (p.outOfScopeReason !== undefined) row.OutOfScopeReason = p.outOfScopeReason;
     return row;
   }
 
@@ -1221,6 +1223,8 @@ export class SpRepository implements Repository {
             lastSeen: r.LastSeen ?? undefined,
             remarks: r.Remarks ?? undefined,
             importedAt: r.ImportedAt ?? undefined,
+            isOutOfScope: !!r.IsOutOfScope,
+            outOfScopeReason: r.OutOfScopeReason ?? undefined,
           });
         }
         url = j.d.__next ? j.d.__next.replace(this.webUrl, '') : null;
@@ -1229,18 +1233,46 @@ export class SpRepository implements Repository {
     return out;
   }
 
-  /** ★ 1 件ずつ POST すると件数ぶん往復して遅い。$batch で 100 件ずつまとめる。 */
+  /** ★ 1 件ずつ POST すると件数ぶん往復して遅い。$batch で 100 件ずつまとめる。
+   *  ★ **リストに無い列は落としてから送る**。SP は body に無い列が 1 つでもあると
+   *    その 1 件ごと 400 を返すので、Mikke に列を足した直後 (リストを作り直して
+   *    いない環境) では全件が失敗する。管理表・連携用リストと同じ扱いに揃える。 */
   async applyOverseasPlan(
     creates: Omit<OverseasIssue, 'id'>[],
     updates: { id: number; patch: Partial<OverseasIssue> }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }> {
+    const existing = await this.getFieldNamesOf(LIST_OVERSEAS);
+    const dropped = new Set<string>();
+    const pick = (p: Partial<OverseasIssue>): Record<string, unknown> =>
+      this.filterExisting(this.overseasRow(p), existing, dropped);
     const ops = [
-      ...creates.map((c) => ({ kind: 'add' as const, row: this.overseasRow(c) })),
-      ...updates.map((u) => ({ kind: 'update' as const, id: u.id, row: this.overseasRow(u.patch) })),
+      ...creates.map((c) => ({ kind: 'add' as const, row: pick(c) })),
+      ...updates.map((u) => ({ kind: 'update' as const, id: u.id, row: pick(u.patch) })),
     ];
+    if (dropped.size) console.warn('[mikke] 海外脆弱性一覧に存在しない列を除外:', [...dropped]);
     if (!ops.length) return { ok: 0, fail: 0 };
     return this.batchWrite(ops, onProgress, LIST_OVERSEAS);
+  }
+
+  /** 海外脆弱性一覧に足りない列 (Mikke が書く項目のうち実在しないもの)。 */
+  async findMissingOverseasColumns(): Promise<string[]> {
+    this.fieldNamesByList.delete(LIST_OVERSEAS);   // 最新の実在列で判定する
+    let existing: Set<string>;
+    try { existing = await this.getFieldNamesOf(LIST_OVERSEAS); }
+    catch { return []; }        // リスト自体が無い場合は呼び出し側の別導線に任せる
+    return overseasFieldSpecs().map((f) => f.name).filter((n) => !existing.has(n));
+  }
+
+  /** 選んだ行だけ削除する ($batch。1 件ずつだと件数ぶん往復する)。 */
+  async deleteOverseasIssues(
+    ids: number[], onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    if (!ids.length) return { ok: 0, fail: 0 };
+    // ★ 大きい ID から消す (途中で失敗しても、残る側の並びが分かりやすい)。
+    const ordered = [...ids].sort((a, b) => b - a);
+    return this.batchWrite(ordered.map((id) => ({ kind: 'delete' as const, id, row: {} })),
+      onProgress, LIST_OVERSEAS);
   }
 
   async deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {

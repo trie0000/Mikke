@@ -66,7 +66,33 @@ describe('buildOverseasResponsePlan: 追加 / 更新 / 削除', () => {
 
   it('一覧から消えたものはリストからも消す', () => {
     const plan = buildOverseasResponsePlan([], [row()]);
-    expect(plan.deletes).toEqual([{ id: 100, key: overseasKey('IID-1', 'APAC') }]);
+    expect(plan.deletes).toEqual([{ id: 100, key: overseasKey('IID-1', 'APAC'), reason: '一覧に無い' }]);
+  });
+
+  it('★ 管理対象から除外した行はリストから消す (理由も分かるようにする)', () => {
+    const plan = buildOverseasResponsePlan([issue({ isOutOfScope: true })], [row()]);
+    expect(plan.deletes).toEqual([{ id: 100, key: overseasKey('IID-1', 'APAC'), reason: '対象外' }]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.creates).toEqual([]);
+  });
+
+  it('除外した行がリストに無ければ何もしない (作り直さない)', () => {
+    const plan = buildOverseasResponsePlan([issue({ isOutOfScope: true })], []);
+    expect(plan.creates).toEqual([]);
+    expect(plan.deletes).toEqual([]);
+  });
+
+  it('除外を解除すると次の反映で作り直される', () => {
+    const plan = buildOverseasResponsePlan([issue({ isOutOfScope: false })], []);
+    expect(plan.creates).toHaveLength(1);
+  });
+
+  it('★ 一覧が空でも、リストに残っている行は削除の計画に入る', () => {
+    // 一覧を全部消した場合。ここで何も返さないと、リスト側の古い行が
+    // 二度と消せなくなる (リストは読み取り専用で手では消せない)。
+    const plan = buildOverseasResponsePlan([], [row(), row({ id: 101, issueInstanceId: 'IID-9' })]);
+    expect(plan.deletes.map((d) => d.id).sort()).toEqual([100, 101]);
+    expect(plan.deletes.every((d) => d.reason === '一覧に無い')).toBe(true);
   });
 
   it('★ 同じ脆弱性でも地域が違えば別アイテム (IID だけをキーにしない)', () => {

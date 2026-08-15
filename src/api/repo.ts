@@ -59,6 +59,10 @@ export interface Repository {
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ ok: number; fail: number }>;
   /** 全件削除 (やり直し用)。 */
+  /** 海外脆弱性一覧に足りない列。1 列でも欠けると書込が 400 になる。 */
+  findMissingOverseasColumns(): Promise<string[]>;
+  /** 海外脆弱性一覧から選んだ行を削除する。 */
+  deleteOverseasIssues(ids: number[], onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
   deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }>;
 
   /** 資産 (FQDN/IP) の管理部門リスト。 */

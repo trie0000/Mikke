@@ -172,6 +172,18 @@ export class MockRepository implements Repository {
     return { ok: total, fail: 0 };
   }
 
+  async findMissingOverseasColumns(): Promise<string[]> { return []; /* mock: 列の概念なし */ }
+
+  async deleteOverseasIssues(
+    ids: number[], onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ok: number; fail: number }> {
+    const del = new Set(ids);
+    const rows = load<OverseasIssue[]>(LS_OVERSEAS, []).filter((r) => !del.has(r.id));
+    save(LS_OVERSEAS, rows);
+    onProgress?.(ids.length, ids.length);
+    return { ok: ids.length, fail: 0 };
+  }
+
   async deleteAllOverseasIssues(onProgress?: (done: number, total: number) => void): Promise<{ ok: number; fail: number }> {
     const n = load<OverseasIssue[]>(LS_OVERSEAS, []).length;
     save(LS_OVERSEAS, []);
