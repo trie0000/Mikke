@@ -3,8 +3,8 @@
 // ★ 位置づけは国内の「データ移行 (Excel)」と同じ (初期データの取り込み)。
 //   毎月の通知ファイルは海外脆弱性一覧の画面から取り込む。あちらは追記型で
 //   検知状況を履歴から決めるので、入口も書式も別物。
-// ★ 旧略称の読み替えは「データ移行 (Excel)」で設定したものをそのまま使う
-//   (同じ会社の話なので、表を 2 つ持つと必ず食い違う)。
+// ★ 旧略称の読み替えは独立した画面 (設定 → 取込 → 旧略称の読み替え) の設定を
+//   そのまま使う。国内と共通 (同じ会社の話なので、表を 2 つ持つと必ず食い違う)。
 import { el, clear } from '../utils/dom';
 import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
@@ -55,6 +55,9 @@ export async function renderOverseasMigrationPanel(root: HTMLElement): Promise<O
         ]));
         return;
       }
+      // ★ 設定を引き直す。読み替え表は別画面 (旧略称の読み替え) で直せるので、
+      //   パネルを開いたときの内容のままだと「直したのに効かない」ことになる。
+      Object.assign(settings, await getRepo().getSettings());
       // 既にある行を突合キー (Issue Instance ID × 地域) で引けるようにしてから
       // 振り分ける (同じキーを 2 回読んでも増やさず、上書きにするため)。
       const existing = indexOverseasByKey(await getRepo().listOverseasIssues());
@@ -111,7 +114,7 @@ export async function renderOverseasMigrationPanel(root: HTMLElement): Promise<O
         `事業会社を判定できない略称が ${plan.unknownAliases.length} 件あります: ${plan.unknownAliases.join(' / ')}`,
         el('br'),
         '現在も使っている略称ならアクセス権画面で登録し、組織再編前の古い略称なら'
-        + '「データ移行 (Excel)」の「旧略称の読み替え」に追加してください。',
+        + '「旧略称の読み替え」に追加してください。',
         `このまま登録すると、これらの行は「${OTHER_COMPANY}」になります。`,
       ])] : []),
     );
@@ -194,7 +197,7 @@ export async function renderOverseasMigrationPanel(root: HTMLElement): Promise<O
       el('li', {}, ['同じ Issue Instance ID でも地域が違えば別の行として登録します (同じ組は上書き)。']),
       el('li', {}, ['IP/URL は IP と FQDN に振り分けます。URL で書かれている場合は http:// を外してホスト名だけにします。']),
       el('li', {}, ['事業会社は略称で書かれているので、アクセス権画面で登録した略称から判定します。'
-        + '旧略称の読み替えは「データ移行 (Excel)」で設定したものを使います。']),
+        + '旧略称の読み替えは「旧略称の読み替え」(国内と共通) の設定を使います。']),
       el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
     ]),
     el('div', { class: 'mikke-field' }, [

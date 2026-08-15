@@ -5,16 +5,17 @@
 //   2. 事業会社の略称からアクセス権画面の事業会社を引き当て、内容を組み立てる (lib/migration.ts)
 //   3. 内容を確認 (取り込める件数 / 引けなかった略称 / 気づいたこと) してから登録
 //   4. 担当者はメールアドレスを鍵に SharePoint から引く (引けなければ氏名列を使う)
+// ★ 旧略称の読み替え表は国内・海外で共通なので、独立した画面
+//   (設定 → 取込 → 旧略称の読み替え) に置いてある。ここでは保存済みの内容を
+//   **ファイルを読むたびに引き直して** 使う (別画面で直した内容がすぐ効く)。
 import { el, clear } from '../utils/dom';
 import { getRepo } from '../api/repo';
 import { toast } from '../components/toast';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import {
-  buildMigrationPlan, normalizeAliasRemap, remapConflicts, OTHER_COMPANY,
-  indexByIssueInstanceId, splitMigrationWrites,
-  type AliasRemapRow, type MigrationPlan, type MigrationWriteSplit,
+  buildMigrationPlan, OTHER_COMPANY, indexByIssueInstanceId, splitMigrationWrites,
+  type MigrationPlan, type MigrationWriteSplit,
 } from '../lib/migration';
-import { normalizePerms, registeredCompanies, aliasesFor, parseAliases } from '../lib/itemPerms';
 import type { MikkeSettings } from '../types';
 
 /** 移行元のシート名 (Excel のテーブルが載っているシート)。 */
@@ -38,88 +39,11 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     class: 'mikke-btn mikke-btn--primary', type: 'button', disabled: 'disabled',
   }, ['この内容で登録']) as HTMLButtonElement;
 
-  // ── 旧略称の読み替え表 ──
-  //   移行データには組織再編前の略称で書かれている行がある。旧略称 N 件を
-  //   現在の略称 1 件へ寄せる (N:1)。事業会社を引く直前に読み替える。
-  const perms = normalizePerms(settings.vulnResponsePerms);
-  /** 「現在の略称」の入力候補 (アクセス権画面で登録済みの略称と事業会社名)。 */
-  const knownAliases = [...new Set(
-    registeredCompanies(perms).flatMap((c) => [...aliasesFor(c, perms), c]),
-  )];
-  const aliasListId = `mikke-remap-alias-${Math.random().toString(36).slice(2, 8)}`;
-  let remapRows: AliasRemapRow[] = normalizeAliasRemap(settings.migrationAliasRemap);
-  if (!remapRows.length) remapRows = [{ to: '', from: [] }];
-  const remapBody = el('tbody', {});
-  const remapNote = el('div', { style: 'margin-top:var(--s-2)' });
-
-  /** 画面の入力値を読み替え表に取り込む (保存にも再計算にもこれを使う)。 */
-  const collectRemap = (): AliasRemapRow[] => normalizeAliasRemap(remapRows);
-
-  function paintRemap(): void {
-    clear(remapBody);
-    remapRows.forEach((row, i) => {
-      const toInput = el('input', {
-        type: 'text', class: 'mikke-input', value: row.to, list: aliasListId,
-        placeholder: '例: ENG', style: 'width:100%',
-      }) as HTMLInputElement;
-      toInput.addEventListener('input', () => { row.to = toInput.value; paintRemapNote(); });
-      const fromTa = el('textarea', {
-        class: 'mikke-input', rows: '3', spellcheck: 'false',
-        placeholder: '旧略称を 1 行 1 件',
-        style: 'width:100%;font-size:var(--fs-sm);line-height:1.6',
-      }, [row.from.join('\n')]) as HTMLTextAreaElement;
-      fromTa.addEventListener('input', () => { row.from = parseAliases(fromTa.value); paintRemapNote(); });
-      const del = el('button', { class: 'mikke-btn mikke-btn--ghost', type: 'button', title: 'この行を削除' }, ['削除']);
-      del.addEventListener('click', () => {
-        remapRows.splice(i, 1);
-        if (!remapRows.length) remapRows.push({ to: '', from: [] });
-        paintRemap(); paintRemapNote();
-      });
-      remapBody.appendChild(el('tr', {}, [
-        el('td', { style: 'vertical-align:top;width:16em' }, [toInput]),
-        el('td', { style: 'vertical-align:top' }, [fromTa]),
-        el('td', { style: 'vertical-align:top;width:5em;text-align:right' }, [del]),
-      ]));
-    });
-  }
-
-  /** 表の下に出す注意書き。読み替え先が未登録・旧略称の重複はここで気づく。 */
-  function paintRemapNote(): void {
-    clear(remapNote);
-    const rows = collectRemap();
-    const lower = new Set(knownAliases.map((a) => a.toLowerCase()));
-    const unknownTo = [...new Set(
-      rows.filter((r) => r.from.length && !lower.has(r.to.toLowerCase())).map((r) => r.to),
-    )];
-    const conflicts = remapConflicts(rows);
-    if (unknownTo.length) {
-      remapNote.appendChild(el('div', { class: 'mikke-error' }, [
-        `読み替え先がアクセス権画面に無い略称です: ${unknownTo.join(' / ')}`,
-        el('br'),
-        'このままだと読み替えても事業会社を引けません。アクセス権画面で略称を登録してください。',
-      ]));
-    }
-    if (conflicts.length) {
-      remapNote.appendChild(el('div', { class: 'mikke-error', style: 'margin-top:var(--s-2)' }, [
-        `同じ旧略称が複数の読み替え先に書かれています (先に書いた行が使われます): ${
-          conflicts.map((c) => `${c.from} → ${c.to.join(' / ')}`).join('、')}`,
-      ]));
-    }
-    // 読み込み済みなら、読み替えを直した結果をその場で反映する。
-    if (sheet) rebuildPlan();
-  }
-
-  const addRemapBtn = el('button', { class: 'mikke-btn', type: 'button' }, ['行を追加']);
-  addRemapBtn.addEventListener('click', () => {
-    remapRows.push({ to: '', from: [] });
-    paintRemap();
-  });
-
-  /** 読み込み済みのシートから計画を作り直す (読み替えを直したときにも使う)。 */
+  /** 読み込み済みのシートから計画を作り直す。 */
   function rebuildPlan(): void {
     if (!sheet) return;
     plan = buildMigrationPlan(sheet.rows, settings.vulnResponsePerms, settings.vulnTypeRules,
-      new Date().toISOString(), collectRemap(), sheet.headers);
+      new Date().toISOString(), settings.migrationAliasRemap, sheet.headers);
     split = splitMigrationWrites(plan.rows, existingIdx);
     paintPreview();
     if (plan.ready) runBtn.removeAttribute('disabled');
@@ -150,6 +74,9 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
         ]));
         return;
       }
+      // ★ 設定を引き直す。読み替え表は別画面で直せるので、パネルを開いたときの
+      //   内容のままだと「直したのに効かない」ことになる。
+      Object.assign(settings, await getRepo().getSettings());
       // 既にある Issue Instance ID を引けるようにしてから振り分ける
       // (同じ ID を 2 回読んでも増やさず、上書きにするため)。
       existingIdx = indexByIssueInstanceId(await getRepo().listIssues());
@@ -305,7 +232,7 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
       el('li', {}, ['Issue ID が空の行は取り込みません。']),
       el('li', {}, ['既にある Issue Instance ID は上書きします (二重に増えません)。']),
       el('li', {}, ['脆弱性タイプは Title から自動判定します (判定条件は「脆弱性タイプの判定」で設定)。']),
-      el('li', {}, ['組織再編前の古い略称は、下の「旧略称の読み替え」で現在の略称に寄せてから判定します。']),
+      el('li', {}, ['組織再編前の古い略称は「旧略称の読み替え」(この下のメニュー) で現在の略称に寄せてから判定します。']),
       el('li', {}, [`どの事業会社にも寄せられなかった行は「${OTHER_COMPANY}」で登録します (事業会社の欄が空の行はそのまま空欄)。`]),
     ]),
     el('div', { class: 'mikke-field' }, [
@@ -315,42 +242,8 @@ export async function renderMigrationPanel(root: HTMLElement): Promise<Migration
     runBtn,
     result,
 
-    // ── 旧略称の読み替え ──
-    el('div', { style: 'margin-top:var(--s-6);padding-top:var(--s-5);border-top:1px solid var(--line)' }, [
-      el('h4', { style: 'margin:0 0 var(--s-2);font-size:var(--fs-md)' }, ['旧略称の読み替え']),
-      el('p', { style: 'margin:0 0 var(--s-3);color:var(--ink-3);font-size:var(--fs-sm);line-height:1.6' }, [
-        '移行データに組織再編前の略称で書かれている行があるときに、現在の略称へ読み替えます。',
-        '1 行につき、現在の略称 1 件に対して旧略称を何件でも書けます。',
-      ]),
-      el('ul', { style: 'margin:0 0 var(--s-4);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
-        el('li', {}, ['大文字・小文字は区別しません。']),
-        el('li', {}, ['読み替えは 1 段だけです (A→B と B→C を書いても A は B までで止まります)。']),
-        el('li', {}, ['同じ旧略称を複数行に書いた場合は、先に書いた行が使われます。']),
-        el('li', {}, ['「保存」で保存します。読み込み済みのデータは、書き換えるとその場で判定し直します。']),
-      ]),
-      el('datalist', { id: aliasListId }, knownAliases.map((a) => el('option', { value: a }))),
-      el('table', { class: 'mikke-table', style: 'width:100%;table-layout:fixed' }, [
-        el('thead', {}, [el('tr', {}, [
-          el('th', {}, ['現在の略称']),
-          el('th', {}, ['旧略称 (1 行 1 件)']),
-          el('th', {}, ['']),
-        ])]),
-        remapBody,
-      ]),
-      el('div', { style: 'margin-top:var(--s-3)' }, [addRemapBtn]),
-      remapNote,
-    ]),
   ]);
 
-  paintRemap();
-  paintRemapNote();
-
-  return {
-    body,
-    save: async () => {
-      const rows = collectRemap();
-      settings.migrationAliasRemap = rows;
-      await getRepo().saveSettings({ ...settings, migrationAliasRemap: rows });
-    },
-  };
+  return { body };
 }
+
