@@ -144,6 +144,18 @@ describe('★ 秘密情報を残さない作りになっていること', () => 
     expect(relay).not.toMatch(/Invoke-MikkeScanner\w+ [^\n]*-ApiBase \$/);
   });
 
+  it('★ CDP が使えなくても、既定ブラウザ (ベースプロファイル) に SPO を開かない', () => {
+    const launcher = fs.readFileSync('dist/mikke-launch.ps1', 'utf8');
+    // 専用ブラウザを起動済みなら何も開かない / 未起動なら専用プロファイルで開く
+    expect(launcher).toContain('-AlreadyOpened $edgeAlreadyOpened');
+    expect(launcher).toContain('Mikke 専用ブラウザで開きます');
+    // 既定ブラウザで開くのは Edge が見つからないときの最後の手段だけ
+    const legacy = launcher.slice(launcher.indexOf('function Invoke-LegacyFlow'),
+      launcher.indexOf('# ─── CDP ワンクリック起動'));
+    expect((legacy.match(/Start-Process \$Url/g) ?? []).length).toBe(1);
+    expect(legacy).toContain('Edge が見つからないため、既定のブラウザで開きます');
+  });
+
   it('relay を変えたのでバージョンを上げてある (自己更新で配るため)', () => {
     const relay = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
     const manifest = JSON.parse(fs.readFileSync('dist/relay-version.txt', 'utf8')) as { version: string };

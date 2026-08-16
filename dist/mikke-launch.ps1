@@ -130,10 +130,36 @@ if (Test-RelayUp -Url $healthUrl) {
 }
 
 # ─── 従来フロー (CDP が使えない時のフォールバック) ───────────────────────────
+# ★ **既定ブラウザで開かない**。既定ブラウザは利用者がふだん使っている Edge
+#   (ベースプロファイル) なので、そこに SharePoint のタブが勝手に増えてしまう。
+#   CDP が使えなくても、開く先は Mikke 専用プロファイルに揃える。
+#   - 専用ブラウザを既に起動済み … 何も開かない (二重にタブが増えるのを防ぐ)
+#   - まだ起動していない         … 専用プロファイルで開く
+#   - Edge が見つからない        … 最後の手段として既定ブラウザ (その旨を出す)
 function Invoke-LegacyFlow {
-    param([string]$Url)
-    if ($Url) {
-        Write-Host "SharePoint を開きます: $Url" -ForegroundColor Cyan
+    param(
+        [string]$Url,
+        [string]$EdgeExe,
+        [string]$UserDataDir,
+        [bool]$AlreadyOpened
+    )
+    if ($AlreadyOpened) {
+        Write-Host 'Mikke 専用ブラウザは起動済みです (このまま使ってください)。' -ForegroundColor Cyan
+    } elseif ($Url -and $EdgeExe -and $UserDataDir) {
+        Write-Host "Mikke 専用ブラウザで開きます: $Url" -ForegroundColor Cyan
+        try {
+            Start-Process -FilePath $EdgeExe -ArgumentList @(
+                "--user-data-dir=`"$UserDataDir`"",
+                '--no-first-run',
+                '--no-default-browser-check',
+                "`"$Url`""
+            ) | Out-Null
+        } catch {
+            Write-Host "専用ブラウザの起動に失敗しました。手動で開いてください: $Url" -ForegroundColor Yellow
+        }
+    } elseif ($Url) {
+        Write-Host 'Edge が見つからないため、既定のブラウザで開きます。' -ForegroundColor Yellow
+        Write-Host "  $Url" -ForegroundColor DarkGray
         try {
             Start-Process $Url | Out-Null
         } catch {
@@ -316,12 +342,17 @@ function Get-CdpTargetWs {
 }
 
 $cdpDone = $false
+# フォールバック時に「どのブラウザで開くか」を決めるための情報。
+$edgeExeFound = ''
+$edgeProfileDir = ''
+$edgeAlreadyOpened = $false
 if (-not $cdpEnabled) {
     Write-Host 'CDP は無効化されています (MIKKE_CDP=0)。従来フローで起動します。' -ForegroundColor DarkGray
 } elseif (-not $siteUrl) {
     Write-Host 'サイト URL 未設定のため CDP 起動をスキップします。' -ForegroundColor DarkGray
 } else {
     $edge = Find-EdgeExe -Explicit $edgePath
+    $edgeExeFound = $edge
     if (-not $edge) {
         Write-Host 'Edge が見つかりませんでした。従来フローに切り替えます。' -ForegroundColor Yellow
     } else {
@@ -340,6 +371,7 @@ if (-not $cdpEnabled) {
         # ★ 既存の専用プロファイルは絶対に作り直さない (作り直すと再サインインになる)。
         #   MIKKE_EDGE_USERDATA(明示) > 既存の %LOCALAPPDATA%\mikke-edge > 新規作成
         if (-not $edgeUserData) { $edgeUserData = Join-Path $env:LOCALAPPDATA 'mikke-edge' }
+        $edgeProfileDir = $edgeUserData
         $profileExisted = Test-Path -LiteralPath $edgeUserData
         if (-not $profileExisted) {
             # 新規作成時だけ、既存 Edge からサインイン情報を引き継ぐ。
@@ -371,8 +403,12 @@ if (-not $cdpEnabled) {
 
             if ($alreadyUp) {
                 Write-Host "CDP ブラウザは起動済みです (port $cdpPort)" -ForegroundColor Green
+                $edgeAlreadyOpened = $true
             } else {
                 Write-Host 'Mikke 専用ブラウザを起動します...' -ForegroundColor Cyan
+                # ★ ここで URL 付きで開いている。以降で失敗しても、フォールバックで
+                #   もう一度開かない (既定ブラウザにタブが増える原因だった)。
+                $edgeAlreadyOpened = $true
                 Start-Process -FilePath $edge -ArgumentList @(
                     "--remote-debugging-port=$cdpPort",
                     '--remote-allow-origins=*',
@@ -643,4 +679,7 @@ public class MikkeCdp {
     }
 }
 
-if (-not $cdpDone) { Invoke-LegacyFlow -Url $siteUrl }
+if (-not $cdpDone) {
+    Invoke-LegacyFlow -Url $siteUrl -EdgeExe $edgeExeFound -UserDataDir $edgeProfileDir `
+                      -AlreadyOpened $edgeAlreadyOpened
+}
