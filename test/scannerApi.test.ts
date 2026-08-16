@@ -126,6 +126,34 @@ describe('★ 秘密情報を残さない作りになっていること', () => 
     expect(env).toContain('通常はここに書かない');
   });
 
+  it('★ アダプタ仕様書が新しい契約 (引数で受け取る) で書かれている', () => {
+    const spec = fs.readFileSync('dist/SCANNER-ADAPTER-SPEC.md', 'utf8');
+    // 3 つの関数すべてに引数が入っている
+    for (const must of [
+      '-ApiBase <URL> -ApiKey <KEY>',            // 全体像の図
+      '[string]$ApiBase',                        // 関数の署名
+      '設定 → 個人設定 → 接続 → 検査ツール API', // 設定場所の案内
+      '4-2. 環境変数はフォールバック',
+      '4-3. 秘密情報を残さない',
+    ]) {
+      expect(spec, `${must} の記載が無い`).toContain(must);
+    }
+    // 旧方式 (env が原則) の記述が残っていない
+    expect(spec).not.toContain('MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)');
+  });
+
+  it('★ 雛形スクリプトも新しい契約になっている', () => {
+    const tpl = fs.readFileSync('dist/mikke-scanner-adapter.example.ps1', 'utf8');
+    // Fetch / Download / IssueReport の 3 関数ぶん
+    expect((tpl.match(/\[string\]\$ApiBase/g) ?? []).length).toBe(3);
+    expect(tpl).not.toContain('param([Parameter(Mandatory = $true)][string]$IssueInstanceId)');
+  });
+
+  it('一括ダウンロードの依頼書も揃っている', () => {
+    const md = fs.readFileSync('dist/SCANNER-ADAPTER-DOWNLOAD-REQUEST.md', 'utf8');
+    expect(md).toContain('-ApiBase <string> -ApiKey <string>');
+  });
+
   it('中継サーバへの変更依頼書がある', () => {
     const md = fs.readFileSync('dist/RELAY-API-CREDENTIALS-CHANGE.md', 'utf8');
     for (const must of [

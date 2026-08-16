@@ -6,25 +6,23 @@
 
 ---
 
-> **【更新あり】検査ツール API のベース URL / API キーの受け渡し方が変わりました。**
-> 環境変数 (`mikke-relay.env`) ではなく、**ブラウザから来るリクエストの引数**で受け取ります。
-> 差分は `RELAY-API-CREDENTIALS-CHANGE.md` を参照してください
-> （関数のパラメータに `-ApiBase` / `-ApiKey` が増えます。環境変数へのフォールバックは残します）。
-
----
-
 ## 1. 全体像（どこで呼ばれるか）
 
 ```
 [ブラウザ UI]  詳細画面の「最新状態を取得」ボタン
-   │  POST http://127.0.0.1:18120/mikke/issue   body: {"issueInstanceId":"<ID>"}
+   │  API のベース URL / キーは 設定 → 個人設定 → 接続 → 検査ツール API で
+   │  各自のブラウザに保存されている（この端末にのみ保存）
+   │
+   │  POST http://127.0.0.1:18120/mikke/issue
+   │  body: {"issueInstanceId":"<ID>", "apiBase":"https://…", "apiKey":"…"}
    ▼
 [mikke-relay.ps1]  ローカル中継サーバ（HttpListener / 編集禁止・自動更新で管理）
    │  毎リクエスト  . mikke-scanner-adapter.ps1  を dot-source し、
-   │  Invoke-MikkeScannerFetch -IssueInstanceId <ID>  を呼ぶ
+   │  Invoke-MikkeScannerFetch -IssueInstanceId <ID> -ApiBase <URL> -ApiKey <KEY>
+   │  を呼ぶ（受け取った接続情報は保存しない・ログに出さない）
    ▼
 [mikke-scanner-adapter.ps1]  ★今回実装するファイル
-   │  検査ツール API を呼び、結果を正規化して hashtable で返す
+   │  渡された接続情報で検査ツール API を呼び、結果を正規化して hashtable で返す
    ▼
 [検査ツール API]
 ```
@@ -65,7 +63,11 @@
 
 ```powershell
 function Invoke-MikkeScannerFetch {
-    param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueInstanceId,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
     # ...実装...
     return @{ ... }   # 下記スキーマの hashtable
 }
@@ -76,6 +78,11 @@ function Invoke-MikkeScannerFetch {
 | パラメータ | 型 | 説明 |
 | --- | --- | --- |
 | `IssueInstanceId` | string | 検査ツールの Issue Instance ID（CSV の「Issue Instance ID」列と同じ値） |
+| `ApiBase` | string | API のベース URL。ブラウザの設定から渡る（§4） |
+| `ApiKey` | string | API キー / トークン。同上 |
+
+`ApiBase` / `ApiKey` は **必須ではない引数**にしておくこと（`Mandatory` を付けない）。
+渡ってこない場合の扱いは §4 を参照。
 
 ### 3-3. 戻り値（hashtable）
 
@@ -106,28 +113,65 @@ function Invoke-MikkeScannerFetch {
 
 | ケース | throw メッセージの例 |
 | --- | --- |
-| 設定不足 | `'MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)'` |
+| 設定不足 | `'検査ツール API のベース URL が指定されていません (Mikke の 設定 → 個人設定 → 検査ツール API で設定してください)'` |
 | 認証失敗 | `'検査ツール API の認証に失敗しました (API キーを確認してください)'` |
 | 該当 ID なし | `'Issue が見つかりません: <ID>'` |
 | タイムアウト/接続不可 | `'検査ツール API に接続できません: <理由>'` |
 
 タイムアウトは `Invoke-RestMethod -TimeoutSec 30` 程度を設定すること（無限待ちにしない）。
 
-## 4. 設定値の受け渡し
+## 4. 接続情報（ベース URL / API キー）の受け渡し
 
-接続先 URL・API キー等の**固有情報はスクリプトに直書きしない**。relay が起動時に読み込む `mikke-relay.env`（`KEY=VALUE` 形式、同フォルダ）に置き、アダプタからは**環境変数**で参照する:
+### 4-1. 原則: **引数で受け取る**
+
+接続先 URL・API キー等の**固有情報はスクリプトにもファイルにも書かない**。
+利用者が Mikke の画面（**設定 → 個人設定 → 接続 → 検査ツール API**）に入力した値が、
+**実行のたびにリクエストの引数として** relay 経由でアダプタに渡る。
 
 ```powershell
-$apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
-$apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
+function Invoke-MikkeScannerFetch {
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueInstanceId,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
+    # 引数を優先し、無ければ環境変数にフォールバック (§4-2)
+    if (-not $ApiBase) { $ApiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE') }
+    if (-not $ApiKey)  { $ApiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY') }
+    if (-not $ApiBase) { throw '検査ツール API のベース URL が指定されていません (Mikke の 設定 → 個人設定 → 検査ツール API で設定してください)' }
+    if (-not $ApiKey)  { throw '検査ツール API のキーが指定されていません (Mikke の 設定 → 個人設定 → 検査ツール API で設定してください)' }
+    # 以降は $ApiBase / $ApiKey を使う
+}
 ```
+
+**なぜこうするか**: API キーをファイル（`mikke-relay.env`）に置くと、配布物・バックアップ・
+リポジトリに秘密情報が残る。ブラウザ（各自の端末）にだけ置き、使うときだけ渡す方式にしている。
+値は `127.0.0.1` 宛の通信でのみ流れ、端末の外には出ない。
+
+### 4-2. 環境変数はフォールバック
+
+引数が来なかったときだけ、従来どおり `mikke-relay.env` の環境変数を見る。
 
 | 環境変数 | 用途 |
 | --- | --- |
 | `MIKKE_SCANNER_API_BASE` | API のベース URL（例: `https://scanner.example.com/api/v1`） |
 | `MIKKE_SCANNER_API_KEY` | API キー / トークン |
 
-追加の設定が必要な場合は `MIKKE_SCANNER_` 接頭辞で `mikke-relay.env` に追加してよい（relay が全キーを環境変数として読み込む）。**env を変更した場合のみ relay の再起動が必要**（アダプタ本体の変更は再起動不要）。
+- 古いブラウザ（引数を送らない版）から呼ばれても動くようにするための保険。
+- **通常は env に書かない運用**。書く場合も、その端末限りの一時的な設定として扱う。
+- 追加の設定（プロキシ設定など、秘密でないもの）が必要なら `MIKKE_SCANNER_` 接頭辞で
+  `mikke-relay.env` に追加してよい。**env を変更した場合のみ relay の再起動が必要**
+  （アダプタ本体の変更は再起動不要）。
+
+### 4-3. 秘密情報を残さない（必須）
+
+- **ログに出さない**。`Write-Host` に `$ApiKey` を含めない。リクエスト body をまるごと
+  出力しない。診断ログ規約（§5-1）に従うこと。
+- **ファイルに保存しない**。トークンのキャッシュをファイルに書かない（§12-3 の競合問題にもなる）。
+- **`$script:` / グローバル変数に入れない**。並列実行（§12）で別の呼び出しに混ざる。
+  **関数のローカル変数だけで完結させる**。
+- **エラーメッセージに含めない**。API のレスポンス本文をそのまま throw する実装は、
+  キーが混ざっていないか確認する。
 
 ## 5. 動作上の前提
 
@@ -159,16 +203,22 @@ $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
 # 保存: UTF-8 (BOM 付き) / Windows PowerShell 5.1 互換
 
 function Invoke-MikkeScannerFetch {
-    param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueInstanceId,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
 
     # TLS 1.2 (PS5.1 対策)
     [Net.ServicePointManager]::SecurityProtocol = `
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    # 設定 (mikke-relay.env 由来の環境変数)
-    $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
-    $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
-    if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です (mikke-relay.env に設定してください)' }
+    # 接続情報: 引数が正。無ければ env にフォールバック (§4)
+    $apiBase = $ApiBase
+    $apiKey  = $ApiKey
+    if (-not $apiBase) { $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE') }
+    if (-not $apiKey)  { $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY') }
+    if (-not $apiBase) { throw '検査ツール API のベース URL が指定されていません (Mikke の 設定 → 個人設定 → 検査ツール API で設定してください)' }
 
     # ── API 呼び出し (実際のエンドポイント/認証方式に合わせて実装) ──
     $headers = @{ Authorization = "Bearer $apiKey" }
@@ -248,8 +298,10 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 - [ ] トップレベルは関数定義のみ（副作用コードなし）
 - [ ] 戻り値は §3-3 のスキーマ（すべて文字列値）
 - [ ] エラーは利用者が読める日本語メッセージで throw / タイムアウト設定あり
-- [ ] API キー・URL はスクリプトに直書きせず `mikke-relay.env` 参照
-- [ ] 秘密情報をログ (`Write-Host`) に出していない
+- [ ] API キー・URL はスクリプトにもファイルにも書かず、**引数 (`-ApiBase` / `-ApiKey`) で受け取る**
+- [ ] 引数が無いときだけ環境変数にフォールバックしている（§4-2）
+- [ ] 未設定時のエラーは §4-1 の文言（設定場所が分かる）で throw している
+- [ ] 秘密情報をログ (`Write-Host`)・ファイル・`$script:` 変数に残していない
 - [ ] §7 のテスト 3 段階がすべて通る
 
 ---
@@ -291,7 +343,11 @@ Mikke の詳細画面 →「最新状態を取得」→ 値が更新され「最
 
 ```powershell
 function Invoke-MikkeScannerDownload {
-    param([Parameter(Mandatory = $true)][string[]]$Types)
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Types,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
     # ...実装...
     return @{ items = @( ... ) }
 }
@@ -302,6 +358,7 @@ function Invoke-MikkeScannerDownload {
 | パラメータ | 型 | 説明 |
 | --- | --- | --- |
 | `Types` | string[] | 取得する種別の配列。`vuln` / `ip` / `iprange` / `domain` / `cert` / `webapps` の**部分集合**（利用者がモーダルで選んだもの） |
+| `ApiBase` / `ApiKey` | string | 接続情報。§4 と同じ扱い（引数が正・env はフォールバック） |
 
 種別の意味:
 
@@ -516,8 +573,19 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/merge' -Method Post -Conten
 | 項目 | 内容 |
 |---|---|
 | 関数名 | `Invoke-MikkeScannerIssueReport` |
-| 入力 | `-IssueInstanceId <string>` |
+| 入力 | `-IssueInstanceId <string>` `-ApiBase <string>` `-ApiKey <string>` |
 | 戻り値 | hashtable（下記） |
+
+```powershell
+function Invoke-MikkeScannerIssueReport {
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueInstanceId,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
+    # 接続情報の扱いは §4 と同じ
+}
+```
 
 ```powershell
 @{
@@ -539,14 +607,21 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18120/mikke/merge' -Method Post -Conten
 
 ```powershell
 function Invoke-MikkeScannerIssueReport {
-    param([Parameter(Mandatory = $true)][string]$IssueInstanceId)
+    param(
+        [Parameter(Mandatory = $true)][string]$IssueInstanceId,
+        [string]$ApiBase,
+        [string]$ApiKey
+    )
 
     [Net.ServicePointManager]::SecurityProtocol = `
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE')
-    $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY')
-    if (-not $apiBase) { throw 'MIKKE_SCANNER_API_BASE が未設定です' }
+    # 接続情報: 引数が正。無ければ env にフォールバック (§4)
+    $apiBase = $ApiBase
+    $apiKey  = $ApiKey
+    if (-not $apiBase) { $apiBase = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE') }
+    if (-not $apiKey)  { $apiKey  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY') }
+    if (-not $apiBase) { throw '検査ツール API のベース URL が指定されていません (Mikke の 設定 → 個人設定 → 検査ツール API で設定してください)' }
 
     $url = "$apiBase/issues/$([uri]::EscapeDataString($IssueInstanceId))/report"
     $resp = Invoke-WebRequest -Uri $url -Headers @{ Authorization = "Bearer $apiKey" } `
@@ -630,7 +705,7 @@ relay の受付ループは `GetContext()` の逐次ループで、**1 リクエ
 | 項目 | 内容 |
 |---|---|
 | URL | `POST /mikke/issues` |
-| 入力 | `{ "issueInstanceIds": ["IID-1","IID-2"], "includeReport": true }` |
+| 入力 | `{ "issueInstanceIds": ["IID-1","IID-2"], "includeReport": true, "apiBase": "https://…", "apiKey": "…" }` |
 | 並列数 | relay 側 `$MIKKE_ISSUES_MAX_PARALLEL`（既定 **5**） |
 
 出力:
@@ -655,6 +730,8 @@ relay の受付ループは `GetContext()` の逐次ループで、**1 リクエ
 
 - **固定パスの一時ファイルを使わない**。`$env:TEMP\export.csv` のような固定名は 5 本が同じファイルを奪い合います。`[System.IO.Path]::GetRandomFileName()` や Issue Instance ID を混ぜた名前にしてください。
 - **グローバル変数・`$script:` スコープに状態を持たない**。関数内で完結させてください。
+  接続情報 (`$ApiBase` / `$ApiKey`) も同様です。**引数で受け取ってローカル変数だけで使う**こと。
+  グローバルに持つと、別の利用者・別のリクエストの値が混ざります。
 - **検査ツール API のレート制限に注意**。同時 5 リクエストが許容されない場合は、
   - アダプタ内で待つ（`Start-Sleep` 等）か、
   - relay の `$MIKKE_ISSUES_MAX_PARALLEL` を下げる（Mikke 側の `REFRESH_PARALLEL` も同じ値に合わせる）

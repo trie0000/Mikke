@@ -40,7 +40,7 @@ Invoke-MikkeScannerMerge。
 【成果物】
 - ファイル: mikke-scanner-adapter.ps1（既存があれば、その中に関数を追記）
 - 追加する関数は次の2つのみ（既存の Invoke-MikkeScannerFetch は変更しない）
-  1) Invoke-MikkeScannerDownload -Types <string[]>
+  1) Invoke-MikkeScannerDownload -Types <string[]> -ApiBase <string> -ApiKey <string>
   2) Invoke-MikkeScannerMerge   -Files <object[]>
 - relay 本体（mikke-relay.ps1 / *.bat）は編集しない（自動更新で上書きされる）
 
@@ -82,8 +82,10 @@ Invoke-MikkeScannerMerge。
 - Windows PowerShell 5.1 互換（?. / ?? / 三項 ?: / ConvertFrom-Json -AsHashtable /
   && || は使わない）。HTTPS を呼ぶなら関数先頭で TLS1.2 を明示
 - ファイルは UTF-8 (BOM 付き) で保存
-- 接続先 URL・API キーはスクリプトに直書きせず mikke-relay.env の環境変数
-  （MIKKE_SCANNER_API_BASE / MIKKE_SCANNER_API_KEY、必要なら MIKKE_SCANNER_ 接頭辞で追加）
+- 接続先 URL・API キーはスクリプトにもファイルにも書かない。
+  **引数 -ApiBase / -ApiKey で受け取る**（Mikke の画面で各自が設定した値が渡る。§4）。
+  引数が無いときだけ環境変数 MIKKE_SCANNER_API_BASE / MIKKE_SCANNER_API_KEY に
+  フォールバックする。秘密でない追加設定は MIKKE_SCANNER_ 接頭辞で env に足してよい
 - エラーは利用者が読める日本語メッセージで throw、タイムアウトを設定（例 -TimeoutSec 120）
 - 診断ログ規約（§5-1）に従い、リクエスト URL をログ／失敗時は HTTP status と
   応答ボディ先頭500文字をログ。ただし Authorization 等の秘密はログに出さない
@@ -94,7 +96,8 @@ Invoke-MikkeScannerMerge。
 
 【テスト（§9-3 / §10-5）】
 1) 単体(取得): . .\mikke-scanner-adapter.ps1;
-   $f = (Invoke-MikkeScannerDownload -Types @('vuln','ip')).items; $f | %{ $_.type+' '+$_.fileName }
+   $f = (Invoke-MikkeScannerDownload -Types @('vuln','ip') `
+           -ApiBase 'https://<host>' -ApiKey '<key>').items; $f | %{ $_.type+' '+$_.fileName }
 2) 単体(マージ): $r = Invoke-MikkeScannerMerge -Files $f; $r.fileName; $r.rowCount
    [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.contentBase64)) |
      Select-Object -First 3
