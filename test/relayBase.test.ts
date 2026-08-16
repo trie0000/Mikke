@@ -98,6 +98,16 @@ describe('★ 接続先の設定欄を画面に置かない (env と二重管理
     expect(launcher).toContain('MIKKE_BUNDLE_LOCAL_BASE');
   });
 
+  it('★ env の見本にキーの重複が無い', () => {
+    // 重複すると読む側は **先に書いた方だけ** を採用する
+    // (Import-EnvFile は既に設定済みのキーを上書きしない)。
+    // 見本に 2 つあると、後ろを直したのに効かない、という事故になる。
+    const env = fs.readFileSync('dist/mikke-relay.env.example', 'utf8');
+    const keys = [...env.matchAll(/^#?\s*(MIKKE_[A-Z_]+)\s*=/gm)].map((m) => m[1]!);
+    const dup = keys.filter((k, i) => keys.indexOf(k) !== i);
+    expect([...new Set(dup)]).toEqual([]);
+  });
+
   it('env の見本に指定方法が書いてある', () => {
     const env = fs.readFileSync('dist/mikke-relay.env.example', 'utf8');
     for (const key of ['MIKKE_RELAY_PORT', 'MIKKE_BUNDLE_SOURCE', 'MIKKE_BUNDLE_LOCAL_BASE', 'MIKKE_BUNDLE_DIR']) {
