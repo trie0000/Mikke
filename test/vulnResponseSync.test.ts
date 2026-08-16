@@ -239,6 +239,57 @@ describe('単一行テキスト列に収める (SP は 255 文字超 / 改行を
   });
 });
 
+describe('★ 最終確認日 (見る側が「いつ時点の情報か」を判断するための欄)', () => {
+  const plan = (over: Partial<ManagedIssue>, prev: Partial<VulnResponseRow>, now: string) =>
+    buildVulnResponsePlan([issue(over)], ASSETS, keysOf(['web01.example.com']),
+      [row(prev)], undefined, false, now);
+
+  it('反映した日 (JST の暦日) で入る', () => {
+    const p = buildVulnResponsePlan([issue()], ASSETS, keysOf([]), [], undefined, false,
+      '2026-08-16T01:00:00Z');
+    expect(p.creates[0]!.confirmedAt).toBe('2026-08-16T00:00:00Z');
+  });
+
+  it('検知中の行は日が変わったら最終確認日だけ更新する', () => {
+    const p = plan({}, { confirmedAt: '2026-08-15T00:00:00Z' }, '2026-08-16T01:00:00Z');
+    expect(p.updates).toHaveLength(1);
+    expect(p.updates[0]!.fields).toEqual({ confirmedAt: '2026-08-16T00:00:00Z' });
+  });
+
+  it('同じ日に何度反映しても書かない (日付単位なので差分が出ない)', () => {
+    const p = plan({}, { confirmedAt: '2026-08-16T00:00:00Z' }, '2026-08-16T09:00:00Z');
+    expect(p.updates).toEqual([]);
+    expect(p.unchanged).toBe(1);
+  });
+
+  it('★ クローズ (未検出) の行は、他に変化が無ければ書かない', () => {
+    const p = plan({ detectionStatus: '未検出' },
+      { detectionStatus: '未検出', confirmedAt: '2026-08-10T00:00:00Z' }, '2026-08-16T01:00:00Z');
+    expect(p.updates).toEqual([]);
+    expect(p.unchanged).toBe(1);
+  });
+
+  it('★ 未検出(New) も同じ扱い', () => {
+    const p = plan({ detectionStatus: '未検出(New)' },
+      { detectionStatus: '未検出(New)', confirmedAt: '2026-08-10T00:00:00Z' }, '2026-08-16T01:00:00Z');
+    expect(p.updates).toEqual([]);
+  });
+
+  it('★ クローズした当日は、検知状況の変化と一緒に最終確認日も入る', () => {
+    const p = plan({ detectionStatus: '未検出' },
+      { detectionStatus: '継続', confirmedAt: '2026-08-10T00:00:00Z' }, '2026-08-16T01:00:00Z');
+    expect(p.updates[0]!.fields).toEqual({
+      detectionStatus: '未検出', confirmedAt: '2026-08-16T00:00:00Z',
+    });
+  });
+
+  it('反映日時を渡さなければ最終確認日は触らない', () => {
+    const p = buildVulnResponsePlan([issue()], ASSETS, keysOf(['web01.example.com']),
+      [row({ confirmedAt: '2026-01-01T00:00:00Z' })]);
+    expect(p.updates).toEqual([]);
+  });
+});
+
 describe('★ 列の種類の宣言がスキーマと一致していること', () => {
   it('text / note / date の割り当てが vulnResponseFieldSpecs と同じ', () => {
     // ズレると「Note のつもりで切り詰めない → 500」または

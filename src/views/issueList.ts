@@ -507,7 +507,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         }
         return [...set];
       };
-      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing, scope, overwriteResponse);
+      // ★ 最終確認日 (見る側が「いつ時点の情報か」を判断できるようにする欄) を
+      //   この反映の日付で入れる。日付単位なので同じ日の再反映では差分が出ない。
+      const plan = buildVulnResponsePlan(cache, assetsByKey, keysOf, existing, scope, overwriteResponse,
+        new Date().toISOString());
       const label = (onlySelected ? `選択 ${targets.length} 件の反映` : '連携リストへの反映')
         + (overwriteResponse ? '（対応状況も上書き）' : '');
       const total = plan.creates.length + plan.updates.length + plan.deletes.length;

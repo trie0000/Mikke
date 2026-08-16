@@ -17,6 +17,7 @@ export const LABEL = {
   detectionStatus: '検知状況',
   firstSeen: '初回検知日',
   lastSeen: '最終検知日',
+  confirmedAt: '最終確認日',
 
   // ── 組織・資産 ──
   businessCompany: '事業会社',

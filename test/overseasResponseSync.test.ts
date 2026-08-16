@@ -95,6 +95,57 @@ describe('buildOverseasResponsePlan: 追加 / 更新 / 削除', () => {
     expect(plan.deletes.every((d) => d.reason === '一覧に無い')).toBe(true);
   });
 
+  it('★ 最終確認日は反映した日 (JST の暦日) で入る', () => {
+    const plan = buildOverseasResponsePlan([issue()], [], undefined, '2026-08-16T01:00:00Z');
+    expect(plan.creates[0]!.confirmedAt).toBe('2026-08-16T00:00:00Z');
+  });
+
+  it('★ 検知中の行は日が変わったら最終確認日だけ更新する', () => {
+    const prev = row({ confirmedAt: '2026-08-15T00:00:00Z' });
+    const plan = buildOverseasResponsePlan([issue()], [prev], undefined, '2026-08-16T01:00:00Z');
+    expect(plan.updates).toEqual([
+      { id: 100, key: overseasKey('IID-1', 'APAC'), fields: { confirmedAt: '2026-08-16T00:00:00Z' } },
+    ]);
+  });
+
+  it('★ 同じ日に何度反映しても書かない (日付単位なので差分が出ない)', () => {
+    const prev = row({ confirmedAt: '2026-08-16T00:00:00Z' });
+    const plan = buildOverseasResponsePlan([issue()], [prev], undefined, '2026-08-16T09:00:00Z');
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('★ クローズ (未検出) の行は、他に変化が無ければ最終確認日を書かない', () => {
+    const closed = issue({ detectionStatus: '未検出' });
+    const prev = { ...row(), ...toOverseasResponseFields(closed, '2026-08-10T00:00:00Z'), id: 100 };
+    const plan = buildOverseasResponsePlan([closed], [prev], undefined, '2026-08-16T01:00:00Z');
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
+  it('★ 未検出(New) も同じ扱い', () => {
+    const closed = issue({ detectionStatus: '未検出(New)' });
+    const prev = { ...row(), ...toOverseasResponseFields(closed, '2026-08-10T00:00:00Z'), id: 100 };
+    const plan = buildOverseasResponsePlan([closed], [prev], undefined, '2026-08-16T01:00:00Z');
+    expect(plan.updates).toEqual([]);
+  });
+
+  it('★ クローズした当日は、検知状況の変化と一緒に最終確認日も入る', () => {
+    // 前回は継続で、今回 未検出 になった行
+    const prev = row({ confirmedAt: '2026-08-10T00:00:00Z' });
+    const plan = buildOverseasResponsePlan(
+      [issue({ detectionStatus: '未検出' })], [prev], undefined, '2026-08-16T01:00:00Z');
+    expect(plan.updates[0]!.fields).toEqual({
+      detectionStatus: '未検出', confirmedAt: '2026-08-16T00:00:00Z',
+    });
+  });
+
+  it('反映日時を渡さなければ最終確認日は触らない (従来どおりの差分だけ)', () => {
+    const plan = buildOverseasResponsePlan([issue()], [row({ confirmedAt: '2026-01-01T00:00:00Z' })]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.unchanged).toBe(1);
+  });
+
   it('★ 同じ脆弱性でも地域が違えば別アイテム (IID だけをキーにしない)', () => {
     const plan = buildOverseasResponsePlan(
       [issue({ region: 'APAC' }), issue({ id: 2, region: 'EU' })],

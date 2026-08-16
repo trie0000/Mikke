@@ -108,7 +108,7 @@ afterAll(() => { server?.close(); });
 describe('連携用リストへの書込: リストに無い列を送らない', () => {
   it('足りない列を名指しで報告する (エラーに出して構築を促すため)', async () => {
     expect(await repo.findMissingVulnResponseColumns()).toEqual(
-      ['VulnTitle', 'LegacyMgmtNumber', 'ReportUrl', 'ExtConnAppId',
+      ['VulnTitle', 'LegacyMgmtNumber', 'ReportUrl', 'ConfirmedAt', 'ExtConnAppId',
         'ResponsePlan', 'NoAppReason']);
   });
 

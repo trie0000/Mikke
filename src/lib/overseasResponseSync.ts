@@ -36,6 +36,9 @@ export interface OverseasResponseFields {
   assetHomepageUrl: string;
   lastSeen: string;
   remarks: string;
+  /** Mikke がこの内容を確認した日 (JST の暦日)。
+   *  ★ 見る側が「最終検知日が動かない = 更新されていない」と誤解しないための欄。 */
+  confirmedAt: string;
 }
 
 /** OverseasResponseFields のキー → SP 列名 (内部名)。
@@ -59,6 +62,7 @@ export const OVERSEAS_RESPONSE_COLUMN: Record<keyof OverseasResponseFields, stri
   assetHomepageUrl: 'AssetHomepageUrl',
   lastSeen: 'LastSeen',
   remarks: 'Remarks',
+  confirmedAt: 'ConfirmedAt',
 };
 
 /** 列の種類 (schema.ts と一致させること)。 */
@@ -67,10 +71,12 @@ export const OVERSEAS_RESPONSE_KIND: Record<keyof OverseasResponseFields, 'text'
   region: 'text', businessCompany: 'text', affiliateCompany: 'text', webMapsId: 'text',
   identifyEvidence: 'note', assetIp: 'text', assetFqdn: 'text', assetTitle: 'text',
   assetMappedDomains: 'note', assetHomepageUrl: 'note', lastSeen: 'date', remarks: 'note',
+  confirmedAt: 'date',
 };
 
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
-export const OVERSEAS_RESPONSE_DATE_FIELDS: (keyof OverseasResponseFields)[] = ['contactedAt', 'lastSeen'];
+export const OVERSEAS_RESPONSE_DATE_FIELDS: (keyof OverseasResponseFields)[] =
+  ['contactedAt', 'lastSeen', 'confirmedAt'];
 
 /** 海外連携用リストの既存アイテム。 */
 export interface OverseasResponseRow extends OverseasResponseFields {
@@ -100,8 +106,19 @@ function day(iso?: string): string {
   return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
 }
 
-/** 1 件分の書き込み内容を組み立てる。 */
-export function toOverseasResponseFields(issue: OverseasIssue): OverseasResponseFields {
+/**
+ * クローズか (検査ツール上から消えている)。国内の isClosedDetection と同じ扱い。
+ * ★ クローズした行は中身が動かないので、最終確認日を毎日書き足さない。
+ */
+export function isClosedOverseas(issue: OverseasIssue): boolean {
+  return issue.detectionStatus === '未検出' || issue.detectionStatus === '未検出(New)';
+}
+
+/** 1 件分の書き込み内容を組み立てる。
+ *  @param confirmedAt Mikke がこの内容を確認した日 (JST の暦日。省略時は空)。 */
+export function toOverseasResponseFields(
+  issue: OverseasIssue, confirmedAt = '',
+): OverseasResponseFields {
   const raw: OverseasResponseFields = {
     issueInstanceId: text(issue.issueInstanceId),
     title: text(issue.title),
@@ -119,6 +136,7 @@ export function toOverseasResponseFields(issue: OverseasIssue): OverseasResponse
     assetHomepageUrl: text(issue.assetHomepageUrl),
     lastSeen: jstDateOnly(issue.lastSeen),
     remarks: text(issue.remarks),
+    confirmedAt,
   };
   // 単一行テキスト列は 255 文字・改行なしに収める (超えると SP が 500 を返す)。
   const out = { ...raw };
@@ -139,6 +157,9 @@ export function buildOverseasResponsePlan(
   issues: OverseasIssue[],
   existing: OverseasResponseRow[],
   scope?: Set<string>,
+  /** 反映を実行した日時 (ISO)。最終確認日はこの **JST の暦日** で入れる。
+   *  ★ 時刻まで持たせない。持たせると毎回すべての行に差分が出て全件書き込みになる。 */
+  nowIso = '',
 ): OverseasResponsePlan {
   const keyOfIssue = (i: OverseasIssue) => overseasKey(i.issueInstanceId, i.region ?? '');
   const keyOfRow = (r: OverseasResponseRow) => overseasKey(r.issueInstanceId, r.region);
@@ -147,6 +168,7 @@ export function buildOverseasResponsePlan(
     existing = existing.filter((r) => scope.has(keyOfRow(r)));
   }
   const byKey = new Map(existing.filter((r) => text(r.issueInstanceId)).map((r) => [keyOfRow(r), r]));
+  const asOf = jstDateOnly(nowIso);
   const plan: OverseasResponsePlan = { creates: [], updates: [], deletes: [], unchanged: 0 };
   const seen = new Set<string>();
 
@@ -164,16 +186,25 @@ export function buildOverseasResponsePlan(
       continue;
     }
 
-    const fields = toOverseasResponseFields(issue);
+    const fields = toOverseasResponseFields(issue, asOf);
     if (!row) { plan.creates.push(fields); continue; }
 
+    // ★ 最終確認日は最後に決める (国内と同じ考え方)。
     const diff: Partial<OverseasResponseFields> = {};
     for (const k of Object.keys(fields) as (keyof OverseasResponseFields)[]) {
-      if (k === 'issueInstanceId' || k === 'region') continue;   // 突合キーは変えない
+      // 突合キーは変えない。確認日は下で決める。
+      if (k === 'issueInstanceId' || k === 'region' || k === 'confirmedAt') continue;
       const isDate = OVERSEAS_RESPONSE_DATE_FIELDS.includes(k);
       const a = isDate ? day(fields[k]) : text(fields[k]);
       const b = isDate ? day(row[k]) : text(row[k]);
       if (a !== b) diff[k] = fields[k];
+    }
+    // 他に変化があった日か、まだ検知中で日付が変わったときだけ書く。
+    // クローズ (未検出系) で変化が無い行は書かない。
+    const changed = Object.keys(diff).length > 0;
+    const active = !isClosedOverseas(issue);
+    if (asOf && day(asOf) !== day(row.confirmedAt) && (changed || active)) {
+      diff.confirmedAt = asOf;
     }
     if (Object.keys(diff).length) plan.updates.push({ id: row.id, key, fields: diff });
     else plan.unchanged++;

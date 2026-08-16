@@ -27,6 +27,10 @@ export interface VulnResponseFields {
   identifyEvidence: string;
   /** 脆弱性レポート (PDF) の SP 上のサーバ相対 URL。空なら未取得。 */
   reportUrl: string;
+  /** Mikke がこの内容を確認した日 (JST の暦日)。
+   *  ★ 見る側が「最終検知日が動かない = 更新されていない」と誤解しないための欄。
+   *    最終検知日と並べて「8/16 に確認した / 検知は 7/31 のまま」と読める。 */
+  confirmedAt: string;
 
   // ── 資産管理者が記入する欄 (既定では書かない) ──────────────────────────────
   // ★ ここは全部 任意 (?) にしてある。値が入っているときだけ body に載るので、
@@ -67,6 +71,7 @@ export const VULNRESPONSE_COLUMN: Record<keyof VulnResponseFields, string> = {
   relatedAssets: 'RelatedAssets',
   identifyEvidence: 'IdentifyEvidence',
   reportUrl: 'ReportUrl',
+  confirmedAt: 'ConfirmedAt',
   responseStatus: 'ResponseStatus',
   responseDueDate: 'DueDate',
   extConnAppId: 'ExtConnAppId',
@@ -97,7 +102,8 @@ export function jstDateOnly(iso?: string): string {
 }
 
 /** 日付列 (空文字ではなく null を送らないと SP が 400 を返す)。 */
-export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen', 'responseDueDate'];
+export const VULNRESPONSE_DATE_FIELDS: (keyof VulnResponseFields)[] =
+  ['firstSeen', 'lastSeen', 'responseDueDate', 'confirmedAt'];
 
 /** 列の種類。sp/schema.ts の vulnResponseFieldSpecs() と一致させること
  *  (ズレは test/vulnResponseSync.test.ts で検査)。 */
@@ -108,6 +114,7 @@ export const VULNRESPONSE_KIND: Record<keyof VulnResponseFields, 'text' | 'note'
   businessCompany: 'text', affiliateCompany: 'text', assetMgmtId: 'text',
   relatedAssets: 'note', identifyEvidence: 'note',
   reportUrl: 'url',
+  confirmedAt: 'date',
   responseStatus: 'text', responseDueDate: 'date', extConnAppId: 'text',
   responsePlan: 'note', noAppReason: 'note', responseRemarks: 'note',
 };
@@ -192,6 +199,8 @@ export function toVulnResponseFields(
   assetsByKey: Map<string, ManagedAsset>,
   /** true なら資産管理者の記入欄 (対応状況 / 対応期日) も Mikke の値で上書きする。 */
   overwriteResponse = false,
+  /** Mikke がこの内容を確認した日 (JST の暦日。省略時は空)。 */
+  confirmedAt = '',
 ): VulnResponseFields {
   const ips = assetKeys.filter(isIpKey);
   const fqdns = assetKeys.filter((k) => !isIpKey(k));
@@ -230,6 +239,7 @@ export function toVulnResponseFields(
     // ★ レポートは「情報更新」で取得したときに管理対象へ記録される。ここでは
     //   その URL をそのまま渡すだけ (未取得なら空 = 列も空になる)。
     reportUrl: text(issue.reportUrl),
+    confirmedAt,
     // ★ 既定では入れない (undefined = body に載らない = 記入内容に触れない)。
     ...(overwriteResponse ? {
       responseStatus: text(issue.mgmtStatus),
@@ -260,7 +270,18 @@ export function overlongTextFields(f: VulnResponseFields): { field: keyof VulnRe
 }
 
 /** 日付として比べる項目 (他は文字列として比べる)。 */
-const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen', 'responseDueDate'];
+const DATE_FIELDS: (keyof VulnResponseFields)[] = ['firstSeen', 'lastSeen', 'responseDueDate', 'confirmedAt'];
+
+/**
+ * その脆弱性は「クローズ」か (検査ツール上から消えている)。
+ * ★ クローズした行は中身が動かないので、最終確認日を毎日書き足さない。
+ *   書くと変更が無いのに全件更新が走り、版履歴だけが増える。
+ *   クローズした当日は検知状況の変化と一緒に日付も入るので、
+ *   「その日に未検出を確認して、以後変化なし」と読める。
+ */
+export function isClosedDetection(status: string | undefined): boolean {
+  return status === '未検出' || status === '未検出(New)';
+}
 
 /**
  * 管理対象一覧と連携用リストを突合し、追加 / 更新 / 削除の計画を組み立てる。
@@ -278,12 +299,17 @@ export function buildVulnResponsePlan(
   scope?: Set<string>,
   /** true なら資産管理者の記入欄 (対応状況 / 対応期日) も上書きする。 */
   overwriteResponse = false,
+  /** 反映を実行した日時 (ISO)。最終確認日はこの **JST の暦日** で入れる。
+   *  ★ 時刻まで持たせない。持たせると毎回すべての行に差分が出て、変更が無くても
+   *    全件書き込みになる。日付なら同じ日に何度反映しても差分ゼロで済む。 */
+  nowIso = '',
 ): VulnResponsePlan {
   if (scope) {
     issues = issues.filter((i) => scope.has(text(i.issueInstanceId)));
     existing = existing.filter((r) => scope.has(text(r.issueInstanceId)));
   }
   const byId = new Map(existing.filter((r) => r.issueInstanceId).map((r) => [r.issueInstanceId, r]));
+  const asOf = jstDateOnly(nowIso);
   const plan: VulnResponsePlan = { creates: [], updates: [], deletes: [], unchanged: 0 };
   const seen = new Set<string>();
 
@@ -299,15 +325,25 @@ export function buildVulnResponsePlan(
       continue;
     }
 
-    const fields = toVulnResponseFields(issue, assetKeysOf(issue), assetsByKey, overwriteResponse);
+    const fields = toVulnResponseFields(issue, assetKeysOf(issue), assetsByKey, overwriteResponse, asOf);
     if (!row) { plan.creates.push(fields); continue; }
 
+    // ★ 最終確認日は最後に決める。他の項目に差分があるかで扱いが変わるため。
     const diff: Partial<VulnResponseFields> = {};
     for (const k of Object.keys(fields) as (keyof VulnResponseFields)[]) {
-      if (k === 'issueInstanceId') continue;   // 突合キーは変えない
+      if (k === 'issueInstanceId' || k === 'confirmedAt') continue;   // 突合キーは変えない
       const a = DATE_FIELDS.includes(k) ? day(fields[k]) : text(fields[k]);
       const b = DATE_FIELDS.includes(k) ? day(row[k]) : text(row[k]);
       if (a !== b) diff[k] = fields[k];
+    }
+    // 最終確認日を書くのは次のどちらか。
+    //   1. 他に変化があった   … その日に内容が変わったので、確認日も揃える
+    //   2. まだ検知中で日付が変わった … 「今日時点でも同じ内容」を示すため 1 日 1 回
+    // クローズ (未検出系) で変化が無い行は書かない。無駄な全件更新を避ける。
+    const changed = Object.keys(diff).length > 0;
+    const active = !isClosedDetection(text(issue.detectionStatus));
+    if (asOf && day(asOf) !== day(row.confirmedAt) && (changed || active)) {
+      diff.confirmedAt = asOf;
     }
     if (Object.keys(diff).length) plan.updates.push({ id: row.id, issueInstanceId: iid, fields: diff });
     else plan.unchanged++;

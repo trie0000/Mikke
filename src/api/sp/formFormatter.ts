@@ -200,7 +200,8 @@ export function buildVulnResponseHeader(): Record<string, unknown> {
         card('脆弱性情報', '読み取り専用', [
           twoColumns(
             [item(LABEL.legacyMgmtNumber, textValue('[$LegacyMgmtNumber]')), item(LABEL.firstSeen, dateValue('FirstSeen'))],
-            [item(LABEL.detectionStatus, textValue('[$DetectionStatus]')), item(LABEL.lastSeen, dateValue('LastSeen'))],
+            [item(LABEL.detectionStatus, textValue('[$DetectionStatus]')), item(LABEL.lastSeen, dateValue('LastSeen')),
+              item(LABEL.confirmedAt, dateValue('ConfirmedAt'))],
           ),
           // 脆弱性レポート (PDF)。一覧の「レポート」列からも直接開ける。
           item(LABEL.report, linkValue('ReportUrl', REPORT_LINK_TEXT)),
@@ -272,6 +273,7 @@ export function buildOverseasResponseHeader(): Record<string, unknown> {
             ],
             [
               item(LABEL.lastSeen, dateValue('LastSeen')),
+              item(LABEL.confirmedAt, dateValue('ConfirmedAt')),
               item(LABEL.responseRemarks, textValue('[$Remarks]')),
             ],
           ),

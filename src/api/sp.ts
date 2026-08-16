@@ -530,7 +530,7 @@ export class SpRepository implements Repository {
       `/_api/web/lists/getbytitle('${LIST_VULNRESPONSE}')/items`
       + '?$select=Id,Title,VulnTitle,LegacyMgmtNumber,DetectionStatus,FirstSeen,LastSeen,'
       + 'AssetIp,AssetFqdn,AssetType,BusinessCompany,AffiliateCompany,AssetMgmtId,'
-      + 'RelatedAssets,IdentifyEvidence,ReportUrl,'
+      + 'RelatedAssets,IdentifyEvidence,ReportUrl,ConfirmedAt,'
       // 資産管理者の記入欄。上書きを選んだときに「変わった分だけ書く」ための比較に使う
       // (毎回書くと相手の更新時刻が動いて「通知」列の判定が濁る)。
       + 'ResponseStatus,DueDate,ExtConnAppId,ResponsePlan,NoAppReason,Remarks&$top=5000';
@@ -556,6 +556,7 @@ export class SpRepository implements Repository {
             identifyEvidence: r.IdentifyEvidence ?? '',
             // URL 列は {Url, Description} で返る。差分は Url だけで比べる。
             reportUrl: r.ReportUrl?.Url ?? '',
+            confirmedAt: r.ConfirmedAt ?? '',
             responseStatus: r.ResponseStatus ?? '',
             responseDueDate: r.DueDate ?? '',
             extConnAppId: r.ExtConnAppId ?? '',

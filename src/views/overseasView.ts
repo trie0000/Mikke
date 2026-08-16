@@ -533,7 +533,8 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       }
       progress.set('海外連携リストへ反映: 現在の内容を読んでいます');
       const existing = await getRepo().listOverseasResponseRows();
-      const plan = buildOverseasResponsePlan(cache, existing, scope);
+      // ★ 最終確認日をこの反映の日付で入れる (国内と同じ)。
+      const plan = buildOverseasResponsePlan(cache, existing, scope, new Date().toISOString());
       const label = onlySelected ? `選択 ${targets.length} 件の反映` : '海外連携リストへの反映';
       const total = plan.creates.length + plan.updates.length + plan.deletes.length;
       // ★ 内容に変更が無くても止まらない。権限だけ未適用のことがある

@@ -217,6 +217,7 @@ export function overseasResponseFieldSpecs(): FieldSpec[] {
     ro('AssetMappedDomains', 'Asset Mapped Domains', { type: 'Note' }),
     ro('AssetHomepageUrl', 'Asset Homepage URL', { type: 'Note' }),
     ro('LastSeen', LABEL.lastSeen, { type: 'DateTime', dateOnly: true }),
+    ro('ConfirmedAt', LABEL.confirmedAt, { type: 'DateTime', dateOnly: true }),
     ro('Remarks', LABEL.responseRemarks, { type: 'Note' }),
   ];
 }
@@ -224,7 +225,7 @@ export function overseasResponseFieldSpecs(): FieldSpec[] {
 /** 海外連携用リストの既定ビューに出す列。 */
 export const OVERSEAS_RESPONSE_VIEW_FIELDS = [
   'LinkTitle', 'VulnTitle', 'ContactedAt', 'DetectionStatus', 'Region',
-  'BusinessCompany', 'AffiliateCompany', 'WebMapsId', 'AssetFqdn', 'AssetIp', 'LastSeen',
+  'BusinessCompany', 'AffiliateCompany', 'WebMapsId', 'AssetFqdn', 'AssetIp', 'LastSeen', 'ConfirmedAt',
 ];
 
 /** MikkeSettings: KV を JSON 1 行で保持。 */
@@ -335,6 +336,9 @@ export function vulnResponseFieldSpecs(): FieldSpec[] {
     pushed('DetectionStatus', LABEL.detectionStatus),
     pushed('FirstSeen', LABEL.firstSeen, { type: 'DateTime', dateOnly: true }),
     pushed('LastSeen', LABEL.lastSeen, { type: 'DateTime', dateOnly: true }),
+    // ★ Mikke がこの内容を確認した日。最終検知日が動かないとき、
+    //   「更新されていない」のか「変わっていない」のかを見る側が区別できるようにする。
+    pushed('ConfirmedAt', LABEL.confirmedAt, { type: 'DateTime', dateOnly: true }),
 
     // ── 資産情報 (ヘッダーカードで読み取り専用表示 / 本体では新規時のみ入力可) ──
     //   ※ SharePoint のフォーム本体はセクション見出ししか付けられず、カード化・段組が
@@ -407,7 +411,7 @@ export function orderFieldLinks(current: string[], specNames: string[]): string[
  *  件名は LinkTitle として既定ビューに最初から入っているので Title は入れない
  *  (入れると件名が 2 列並ぶ)。 */
 export const VULNRESPONSE_VIEW_FIELDS = [
-  'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'LastSeen',
+  'LinkTitle', 'VulnTitle', 'LegacyMgmtNumber', 'DetectionStatus', 'LastSeen', 'ConfirmedAt',
   'AssetFqdn', 'AssetIp', 'BusinessCompany', 'AssetMgmtId', 'ReportUrl',
   'ResponseStatus', 'DueDate', 'Responder', 'ExtConnAppId',
 ];
