@@ -242,10 +242,15 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
   function bulkUpdate(mode: ImportMode, onlySelected = false): void {
     if (bulkBusy) return;
     if (onlySelected && !selected.size) { toast(rootEl, '脆弱性が選択されていません。', 'warn'); return; }
+    // ★ 選択分は新規追加が起きないので、固定/追加 の区別を見せない。
+    //   検知状況は標準ルール (継続/再検知/未検出化) で更新する。
     const label = mode === 'fixed' ? '固定モード' : '追加モード';
-    const desc = mode === 'fixed'
-      ? '新規の脆弱性は追加しません。既存の検知中のステータスは据え置き、今回のデータで消えた検知系のみ「未検出(New)」に変更します。ステータス以外の項目は取得データで更新します。'
-      : '新たに条件一致した脆弱性を追加し、既存のステータスも標準ルール（継続/再検知/未検出化）で更新します。';
+    const desc = onlySelected
+      ? '選択した脆弱性だけを更新します。新しい脆弱性が増えることはありません。'
+        + '検知状況は取得結果に合わせて更新します（引き続き検出されていれば継続/再検知、消えていれば未検出(New)）。'
+      : mode === 'fixed'
+        ? '新規の脆弱性は追加しません。既存の検知中のステータスは据え置き、今回のデータで消えた検知系のみ「未検出(New)」に変更します。ステータス以外の項目は取得データで更新します。'
+        : '新たに条件一致した脆弱性を追加し、既存のステータスも標準ルール（継続/再検知/未検出化）で更新します。';
     // 個別レポートの取得可否 (既定 ON)。件数が多いと時間がかかるので外せるようにする。
     const reportCheck = el('input', { type: 'checkbox', checked: 'checked' }) as HTMLInputElement;
     // ★ レポートの zip 取得はここで選ぶ (専用ボタンは置かない)。
@@ -263,7 +268,7 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         ]),
       ]);
     openModal(rootEl, {
-      title: `情報更新（${onlySelected ? `選択 ${selected.size} 件` : '全件'}・${label}）`,
+      title: onlySelected ? `情報更新（選択 ${selected.size} 件）` : `情報更新（全件・${label}）`,
       body: el('div', { style: 'line-height:1.8' }, [
         el('p', { style: 'margin:0 0 var(--s-3)' }, onlySelected
           ? ['選択中の脆弱性を ', el('b', {}, ['1 件ずつ検査ツールに問い合わせて']), ' 最新の内容に更新します。']
@@ -842,10 +847,10 @@ export function renderIssueList(rootEl: HTMLElement): HTMLElement {
         'upload', '連携リストへ反映(選択)', () => { void pushToVulnResponse(true); }),
       selBtn('選択中の脆弱性について、連携リストで事業会社が記入した内容を取り込みます',
         'sync', '連携リスト取り込み(選択)', () => { void syncFromVulnResponse(false, true); }),
-      selBtn('選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて更新します（固定モード）',
-        'download', '情報更新(選択・固定)', () => bulkUpdate('fixed', true)),
-      selBtn('選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて更新します（追加モード）',
-        'download', '情報更新(選択・追加)', () => bulkUpdate('add', true)),
+      // ★ 選択分は既にある脆弱性を問い合わせ直すだけで、**新規追加は起きない**。
+      //   固定/追加 (= 新規を足すかどうか) の区別が意味を持たないのでボタンは 1 つ。
+      selBtn('選択中の脆弱性を 1 件ずつ検査ツールに問い合わせて最新の内容に更新します',
+        'download', '情報更新(選択)', () => bulkUpdate('add', true)),
       el('button', {
         class: 'mikke-btn mikke-btn--danger', style: 'height:28px;padding:0 var(--s-5);font-size:var(--fs-sm)',
         ...(bulkBusy ? { disabled: 'disabled' } : {}), onclick: () => bulkExclude(),
