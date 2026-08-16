@@ -126,6 +126,31 @@ describe('★ 秘密情報を残さない作りになっていること', () => 
     expect(env).toContain('通常はここに書かない');
   });
 
+  it('★ 中継サーバが 4 経路すべてで接続情報を受け取り、アダプタへ渡す', () => {
+    const relay = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
+    // body から取り出すヘルパを 4 か所で使っている (/issue /issue-report /issues /download)
+    expect((relay.match(/Get-ScannerCredential -Parsed/g) ?? []).length).toBe(4);
+    // 並列実行の runspace へは引数で渡す (呼び出し元の変数を引き継がないため)
+    expect(relay).toContain('param($AdapterPath, $Iid, $WithReport, $ApiBase, $ApiKey)');
+    expect(relay).toContain('param($AdapterPath, $Type, $ApiBase, $ApiKey)');
+  });
+
+  it('★ 古いアダプタ (引数を宣言していない) を壊さない', () => {
+    const relay = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
+    // 宣言を見てから渡す (PowerShell は宣言の無いパラメータでエラーになる)
+    expect(relay).toContain("Parameters.ContainsKey('ApiBase')");
+    expect(relay).toContain("Parameters.ContainsKey('ApiKey')");
+    // 直接渡し (splat でない) が残っていないこと
+    expect(relay).not.toMatch(/Invoke-MikkeScanner\w+ [^\n]*-ApiBase \$/);
+  });
+
+  it('relay を変えたのでバージョンを上げてある (自己更新で配るため)', () => {
+    const relay = fs.readFileSync('dist/mikke-relay.ps1', 'utf8');
+    const manifest = JSON.parse(fs.readFileSync('dist/relay-version.txt', 'utf8')) as { version: string };
+    const inScript = /\$MIKKE_RELAY_VERSION = '([^']+)'/.exec(relay)?.[1];
+    expect(inScript).toBe(manifest.version);
+  });
+
   it('★ アダプタ仕様書が新しい契約 (引数で受け取る) で書かれている', () => {
     const spec = fs.readFileSync('dist/SCANNER-ADAPTER-SPEC.md', 'utf8');
     // 3 つの関数すべてに引数が入っている
@@ -154,15 +179,19 @@ describe('★ 秘密情報を残さない作りになっていること', () => 
     expect(md).toContain('-ApiBase <string> -ApiKey <string>');
   });
 
-  it('中継サーバへの変更依頼書がある', () => {
+  it('★ 変更依頼書はアダプタだけを対象にしている (relay はこちらで直す)', () => {
     const md = fs.readFileSync('dist/RELAY-API-CREDENTIALS-CHANGE.md', 'utf8');
+    // API 仕様に依存するアダプタの直し方だけを書く
     for (const must of [
-      'apiBase', 'apiKey',
-      '/mikke/issue', '/mikke/issue-report', '/mikke/issues', '/mikke/download',
+      '対象ファイル: `mikke-scanner-adapter.ps1` のみ',
       'Invoke-MikkeScannerFetch', 'Invoke-MikkeScannerIssueReport', 'Invoke-MikkeScannerDownload',
-      'ログに', '後方互換',
+      'ApiBase', 'ApiKey', 'ログに', '後方互換',
     ]) {
       expect(md, `${must} の記載が無い`).toContain(must);
     }
+    // relay の実装手順を依頼しない (この環境で直して git で同期する)
+    expect(md).not.toContain('mikke-relay.ps1 の変更内容');
+    expect(md).not.toContain('AddArgument');
+    expect(md).toContain('中継サーバ (`mikke-relay.ps1`) は対応済み');
   });
 });

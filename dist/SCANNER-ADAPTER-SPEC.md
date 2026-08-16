@@ -84,6 +84,10 @@ function Invoke-MikkeScannerFetch {
 `ApiBase` / `ApiKey` は **必須ではない引数**にしておくこと（`Mandatory` を付けない）。
 渡ってこない場合の扱いは §4 を参照。
 
+> relay は、アダプタがこの 2 つを**宣言しているときだけ**渡す（PowerShell は宣言の無い
+> パラメータを渡すとエラーになるため、関数定義を見て判定している）。
+> つまり、引数を足していない古いアダプタでも relay は壊れず、環境変数で動き続ける。
+
 ### 3-3. 戻り値（hashtable）
 
 ```powershell

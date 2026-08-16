@@ -32,7 +32,7 @@ param(
 
 # ★ relay スクリプト群のバージョン (= self-update で更新検知に使う)。
 #   .ps1 / .bat を編集したら手で +1 する。build.js が正規表現で抽出する。
-$MIKKE_RELAY_VERSION = '1.0.27'
+$MIKKE_RELAY_VERSION = '1.0.28'
 
 # self-update で管理対象のファイル一覧 (env は意図的に含めない)。
 # ★ ここに無いファイルが送られてくると self-update 全体が 400 で失敗する。
@@ -352,6 +352,41 @@ function Invoke-BundleDir {
     }
 }
 
+# ─── 検査ツール API の接続情報 ──────────────────────────────────────────────
+# ★ ベース URL / API キーは **リクエストの引数** で受け取る。
+#   利用者が Mikke の画面 (設定 → 個人設定 → 接続 → 検査ツール API) に入れた値が
+#   実行のたびに渡ってくる。relay は受け取って渡すだけで、保存もログ出力もしない。
+#   秘密情報をファイル (env) に残さないための方式。
+# ★ 引数が来ないときだけ、従来どおり環境変数にフォールバックする (後方互換)。
+#   古いブラウザから呼ばれても止まらないようにするため。
+function Get-ScannerCredential {
+    param($Parsed)
+    $base = $null
+    $key  = $null
+    if ($Parsed) {
+        if ($Parsed.apiBase) { $base = ([string]$Parsed.apiBase).Trim() }
+        if ($Parsed.apiKey)  { $key  = ([string]$Parsed.apiKey).Trim() }
+    }
+    if (-not $base) { $base = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_BASE') }
+    if (-not $key)  { $key  = [Environment]::GetEnvironmentVariable('MIKKE_SCANNER_API_KEY') }
+    # ★ 戻り値をログに出さないこと (API キーが含まれる)。
+    return @{ ApiBase = $base; ApiKey = $key }
+}
+
+# ★ アダプタが -ApiBase / -ApiKey を **宣言しているときだけ** 渡すための引数を作る。
+#   PowerShell は宣言の無いパラメータを渡すとエラーになる (無視されない)。
+#   relay は自動更新で配られるので、アダプタの更新が後になっても壊れないようにする。
+#   古いアダプタはこれまでどおり環境変数を見る。
+function Get-ScannerCredentialArgs {
+    param([string]$FunctionName, $Cred)
+    $extra = @{}
+    $cmd = Get-Command $FunctionName -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $extra }
+    if ($cmd.Parameters.ContainsKey('ApiBase') -and $Cred.ApiBase) { $extra['ApiBase'] = $Cred.ApiBase }
+    if ($cmd.Parameters.ContainsKey('ApiKey')  -and $Cred.ApiKey)  { $extra['ApiKey']  = $Cred.ApiKey }
+    return $extra
+}
+
 # ─── /mikke/issue — 検査ツール API 中継 (アダプタ委譲) ──────────────────────
 # 入力: { issueInstanceId }。出力: 正規化済み Issue。
 #
@@ -371,7 +406,14 @@ function Invoke-IssueFetch {
     $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
     $bodyText = $reader.ReadToEnd(); $reader.Close()
     $iid = $null
-    try { if ($bodyText) { $iid = ([string](($bodyText | ConvertFrom-Json).issueInstanceId)).Trim() } } catch { }
+    $cred = @{ ApiBase = $null; ApiKey = $null }
+    try {
+        if ($bodyText) {
+            $parsed = $bodyText | ConvertFrom-Json
+            $iid = ([string]$parsed.issueInstanceId).Trim()
+            $cred = Get-ScannerCredential -Parsed $parsed
+        }
+    } catch { }
     if (-not $iid) { Send-Error $response 400 'no_issue_id' 'issueInstanceId を指定してください'; return }
 
     $adapterPath = Join-Path $PSScriptRoot 'mikke-scanner-adapter.ps1'
@@ -391,7 +433,8 @@ function Invoke-IssueFetch {
             Send-Error $response 500 'adapter_invalid' 'アダプタに Invoke-MikkeScannerFetch 関数が定義されていません'
             return
         }
-        $result = Invoke-MikkeScannerFetch -IssueInstanceId $iid
+        $credArgs = Get-ScannerCredentialArgs -FunctionName 'Invoke-MikkeScannerFetch' -Cred $cred
+        $result = Invoke-MikkeScannerFetch -IssueInstanceId $iid @credArgs
         Write-Host "[issue] $iid -> OK" -ForegroundColor Green
         $scanFields = @{}
         if ($result.scanFields) { $scanFields = $result.scanFields }
@@ -446,7 +489,14 @@ function Invoke-IssueReport {
     $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
     $bodyText = $reader.ReadToEnd(); $reader.Close()
     $iid = $null
-    try { if ($bodyText) { $iid = ([string](($bodyText | ConvertFrom-Json).issueInstanceId)).Trim() } } catch { }
+    $cred = @{ ApiBase = $null; ApiKey = $null }
+    try {
+        if ($bodyText) {
+            $parsed = $bodyText | ConvertFrom-Json
+            $iid = ([string]$parsed.issueInstanceId).Trim()
+            $cred = Get-ScannerCredential -Parsed $parsed
+        }
+    } catch { }
     if (-not $iid) { Send-Error $response 400 'no_issue_id' 'issueInstanceId を指定してください'; return }
 
     $adapterPath = Join-Path $PSScriptRoot 'mikke-scanner-adapter.ps1'
@@ -469,7 +519,8 @@ function Invoke-IssueReport {
             }
             return
         }
-        $result = Invoke-MikkeScannerIssueReport -IssueInstanceId $iid
+        $credArgs = Get-ScannerCredentialArgs -FunctionName 'Invoke-MikkeScannerIssueReport' -Cred $cred
+        $result = Invoke-MikkeScannerIssueReport -IssueInstanceId $iid @credArgs
         $fileName = [string]$result.fileName
         $content  = [string]$result.contentBase64
         if (-not $content) { throw 'アダプタが contentBase64 を返しませんでした' }
@@ -511,11 +562,13 @@ function Invoke-IssuesBatch {
     $bodyText = $reader.ReadToEnd(); $reader.Close()
     $ids = @()
     $includeReport = $false
+    $cred = @{ ApiBase = $null; ApiKey = $null }
     try {
         if ($bodyText) {
             $parsed = $bodyText | ConvertFrom-Json
             if ($parsed.issueInstanceIds) { $ids = @($parsed.issueInstanceIds | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ }) }
             if ($null -ne $parsed.includeReport) { $includeReport = [bool]$parsed.includeReport }
+            $cred = Get-ScannerCredential -Parsed $parsed
         }
     } catch { }
     if (-not $ids -or $ids.Count -eq 0) { Send-Error $response 400 'no_issue_id' 'issueInstanceIds を 1 つ以上指定してください'; return }
@@ -533,12 +586,19 @@ function Invoke-IssuesBatch {
     # 1 脆弱性ぶんを取得する worker (隔離 runspace 内で実行される)。
     # レポートは「任意実装」なので、関数が無ければ reportSkipped を立てるだけで throw しない。
     $worker = {
-        param($AdapterPath, $Iid, $WithReport)
+        # ★ runspace は呼び出し元の変数を引き継がない。接続情報も引数で渡す。
+        param($AdapterPath, $Iid, $WithReport, $ApiBase, $ApiKey)
         . $AdapterPath
         if (-not (Get-Command Invoke-MikkeScannerFetch -ErrorAction SilentlyContinue)) {
             throw 'アダプタに Invoke-MikkeScannerFetch 関数が定義されていません'
         }
-        $fetched = Invoke-MikkeScannerFetch -IssueInstanceId $Iid
+        # ★ アダプタが引数を宣言しているときだけ渡す (無いと PowerShell がエラーにする)。
+        #   runspace は別セッションなので relay 側のヘルパは使えない。ここで判定する。
+        $credArgs = @{}
+        $cmdFetch = Get-Command Invoke-MikkeScannerFetch -ErrorAction SilentlyContinue
+        if ($cmdFetch.Parameters.ContainsKey('ApiBase') -and $ApiBase) { $credArgs['ApiBase'] = $ApiBase }
+        if ($cmdFetch.Parameters.ContainsKey('ApiKey')  -and $ApiKey)  { $credArgs['ApiKey']  = $ApiKey }
+        $fetched = Invoke-MikkeScannerFetch -IssueInstanceId $Iid @credArgs
         $out = @{
             issueInstanceId = $Iid
             scannerStatus   = [string]$fetched.scannerStatus
@@ -554,7 +614,11 @@ function Invoke-IssuesBatch {
             } else {
                 # レポートだけの失敗で情報更新まで落とさない。
                 try {
-                    $rep = Invoke-MikkeScannerIssueReport -IssueInstanceId $Iid
+                    $repArgs = @{}
+                    $cmdRep = Get-Command Invoke-MikkeScannerIssueReport -ErrorAction SilentlyContinue
+                    if ($cmdRep.Parameters.ContainsKey('ApiBase') -and $ApiBase) { $repArgs['ApiBase'] = $ApiBase }
+                    if ($cmdRep.Parameters.ContainsKey('ApiKey')  -and $ApiKey)  { $repArgs['ApiKey']  = $ApiKey }
+                    $rep = Invoke-MikkeScannerIssueReport -IssueInstanceId $Iid @repArgs
                     if ($rep -and $rep.contentBase64) {
                         $name = [string]$rep.fileName
                         if (-not $name) { $name = "$Iid.pdf" }
@@ -581,7 +645,8 @@ function Invoke-IssuesBatch {
     foreach ($id in $ids) {
         $ps = [PowerShell]::Create()
         $ps.RunspacePool = $pool
-        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($id).AddArgument($includeReport)
+        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($id).AddArgument($includeReport).
+            AddArgument($cred.ApiBase).AddArgument($cred.ApiKey)
         $jobs += [pscustomobject]@{ Iid = $id; PS = $ps; Handle = $ps.BeginInvoke() }
     }
 
@@ -645,10 +710,12 @@ function Invoke-Download {
     $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
     $bodyText = $reader.ReadToEnd(); $reader.Close()
     $types = @()
+    $cred = @{ ApiBase = $null; ApiKey = $null }
     try {
         if ($bodyText) {
-            $parsed = ($bodyText | ConvertFrom-Json).types
-            if ($parsed) { $types = @($parsed | ForEach-Object { [string]$_ }) }
+            $parsed = $bodyText | ConvertFrom-Json
+            if ($parsed.types) { $types = @($parsed.types | ForEach-Object { [string]$_ }) }
+            $cred = Get-ScannerCredential -Parsed $parsed
         }
     } catch { }
     if (-not $types -or $types.Count -eq 0) { Send-Error $response 400 'no_types' 'types を 1 つ以上指定してください'; return }
@@ -666,12 +733,18 @@ function Invoke-Download {
     # 1 種別を取得する worker (隔離 runspace 内で実行される)。adapter を dot-source し
     # 1 種別ぶんの items を返す。診断ログ (Write-Host) は Information ストリームに溜まる。
     $worker = {
-        param($AdapterPath, $Type)
+        # ★ runspace は呼び出し元の変数を引き継がない。接続情報も引数で渡す。
+        param($AdapterPath, $Type, $ApiBase, $ApiKey)
         . $AdapterPath
         if (-not (Get-Command Invoke-MikkeScannerDownload -ErrorAction SilentlyContinue)) {
             throw 'アダプタに Invoke-MikkeScannerDownload 関数が定義されていません'
         }
-        $r = Invoke-MikkeScannerDownload -Types @($Type)
+        # ★ アダプタが引数を宣言しているときだけ渡す (古いアダプタでも壊れないように)。
+        $credArgs = @{}
+        $cmdDl = Get-Command Invoke-MikkeScannerDownload -ErrorAction SilentlyContinue
+        if ($cmdDl.Parameters.ContainsKey('ApiBase') -and $ApiBase) { $credArgs['ApiBase'] = $ApiBase }
+        if ($cmdDl.Parameters.ContainsKey('ApiKey')  -and $ApiKey)  { $credArgs['ApiKey']  = $ApiKey }
+        $r = Invoke-MikkeScannerDownload -Types @($Type) @credArgs
         if ($r -and $r.items) { return @($r.items) }
         return @()
     }
@@ -683,7 +756,8 @@ function Invoke-Download {
     foreach ($t in $types) {
         $ps = [PowerShell]::Create()
         $ps.RunspacePool = $pool
-        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($t)
+        [void]$ps.AddScript($worker).AddArgument($adapterPath).AddArgument($t).
+            AddArgument($cred.ApiBase).AddArgument($cred.ApiKey)
         $jobs += [pscustomobject]@{ Type = $t; PS = $ps; Handle = $ps.BeginInvoke() }
     }
 
