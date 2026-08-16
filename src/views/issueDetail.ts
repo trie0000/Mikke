@@ -553,7 +553,7 @@ export function renderIssueDetail(rootEl: HTMLElement): HTMLElement {
     if (!h.ok) {
       toast(rootEl,
         `中継サーバに接続できません (${getRelayBase()})。mikke-launch.bat を実行するか、`
-        + '設定 → 接続 の「中継サーバ ベース URL」を確認してください。', 'warn', 10000);
+        + 'ポートを変えている場合は mikke-relay.env の MIKKE_RELAY_PORT を確認してください。', 'warn', 10000);
       return;
     }
     try {

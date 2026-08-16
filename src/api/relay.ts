@@ -2,23 +2,80 @@
 // 役割: 大容量 CSV 解析 (/mikke/csv-parse) と 検査ツール API 中継 (/mikke/issue・雛形)。
 
 // ★ Mikke に割り当てたポート (共通ガイド §14.2 の採番表: relay 18120 / CDP 19320)。
-const DEFAULT_BASE = 'http://127.0.0.1:18120/mikke';
+const DEFAULT_PORT = 18120;
+const DEFAULT_BASE = `http://127.0.0.1:${DEFAULT_PORT}/mikke`;
+/** 接続先の記憶場所。**人が設定する項目ではない**。
+ *  ★ ポートの指定は mikke-relay.env の MIKKE_RELAY_PORT だけ。ここはその結果を
+ *    覚えておくキャッシュで、次の 2 つが書く:
+ *      - ランチャー (mikke-launch.ps1) … 起動時に実際のポートを書き込む
+ *      - 自動探索 (discoverRelayBase)  … ブックマークレット起動などで見つけたもの
+ *    画面に設定欄を置くと env と二重管理になり、片方だけ直して繋がらなくなる。 */
+const BASE_KEY = 'mikke.relay.base';
+/** 自動探索で当たるポートの数 (既定ポートから連番)。 */
+const SCAN_COUNT = 20;
 
 export function getRelayBase(): string {
   try {
-    return (localStorage.getItem('mikke.relay.base') || DEFAULT_BASE).replace(/\/+$/, '');
+    return (localStorage.getItem(BASE_KEY) || DEFAULT_BASE).replace(/\/+$/, '');
   } catch { return DEFAULT_BASE; }
+}
+
+/** 見つけた接続先を覚える (次回から探さない)。 */
+function rememberRelayBase(base: string): void {
+  try { localStorage.setItem(BASE_KEY, base.replace(/\/+$/, '')); } catch { /* noop */ }
+}
+
+/** その接続先が応答するか (短めに打ち切る)。 */
+async function pingRelay(base: string, timeoutMs = 1500): Promise<boolean> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${base}/health`, { method: 'GET', signal: ac.signal });
+    return r.ok;
+  } catch { return false; } finally { clearTimeout(timer); }
+}
+
+/**
+ * 接続先を自動で見つける。
+ * ★ MIKKE_RELAY_PORT を既定から変えても、画面で設定し直さなくて済むようにするため。
+ *   ランチャー起動なら起動時に書き込まれるのでここは通らない。ブックマークレット
+ *   起動や、ポートを変えた直後だけ効く。
+ * ★ 既定ポートから連番で当たる (18120, 18121, …)。閉じているポートへの fetch は
+ *   即座に失敗するので、並列に投げてしまってよい。
+ */
+export async function discoverRelayBase(): Promise<string | null> {
+  const seen = new Set<string>();
+  const cands: string[] = [];
+  const add = (b: string): void => {
+    const v = b.replace(/\/+$/, '');
+    if (!seen.has(v)) { seen.add(v); cands.push(v); }
+  };
+  add(getRelayBase());
+  for (let i = 0; i < SCAN_COUNT; i++) add(`http://127.0.0.1:${DEFAULT_PORT + i}/mikke`);
+  const hits = await Promise.all(cands.map(async (b) => ((await pingRelay(b)) ? b : null)));
+  const found = hits.find((b): b is string => !!b) ?? null;
+  if (found) rememberRelayBase(found);
+  return found;
 }
 
 export interface RelayHealth { ok: boolean; version?: string; }
 
-/** /mikke/health — 起動確認。 */
+/** /mikke/health — 起動確認。
+ *  ★ 覚えている接続先で駄目なら 1 度だけ自動探索する。ポートを env で変えた直後や、
+ *    ブックマークレットで開いたときに、画面の設定を触らずに繋がるようにするため。 */
 export async function relayHealth(): Promise<RelayHealth> {
-  try {
-    const r = await fetch(`${getRelayBase()}/health`, { method: 'GET' });
-    if (!r.ok) return { ok: false };
-    return await r.json();
-  } catch { return { ok: false }; }
+  const ask = async (base: string): Promise<RelayHealth | null> => {
+    try {
+      const r = await fetch(`${base}/health`, { method: 'GET' });
+      if (!r.ok) return null;
+      return await r.json() as RelayHealth;
+    } catch { return null; }
+  };
+  const first = await ask(getRelayBase());
+  if (first) return first;
+  const found = await discoverRelayBase();
+  if (!found) return { ok: false };
+  return (await ask(found)) ?? { ok: false };
 }
 
 export interface CsvParseResult {
@@ -104,21 +161,8 @@ export async function relayGetBundleDir(): Promise<RelayBundleDir> {
   return await r.json();
 }
 
-/** POST /mikke/bundle-dir — relay の配信ディレクトリを変更 (開発用)。
- *  relay 側で存在チェックし、存在しなければ 400 を返す。 */
-export async function relaySetBundleDir(dir: string): Promise<RelayBundleDir> {
-  const r = await fetch(`${getRelayBase()}/bundle-dir`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dir }),
-  });
-  if (!r.ok) {
-    let detail = `HTTP ${r.status}`;
-    try { const j = await r.json(); if (j?.error?.detail) detail = j.error.detail; } catch { /* noop */ }
-    throw new Error(detail);
-  }
-  return await r.json();
-}
+// ★ 配信ディレクトリを変更する API (POST /mikke/bundle-dir) は呼ばない。
+//   指定は mikke-relay.env の MIKKE_BUNDLE_DIR だけにする (画面からは表示のみ)。
 
 export interface RelayIssueResult {
   scannerStatus?: string;

@@ -50,6 +50,10 @@ $cdpEnabled = $true
 $cdpPort = 19320  # 既定。共通ガイド §14.2 の採番 (CDP は 193xx 帯) に従う
 $edgePath = ''
 $edgeUserData = ''
+# バンドルの読込元。'local' = relay の配信フォルダ / 'sp' = SharePoint のドキュメント。
+# ★ 画面には設定欄を置かない (env と二重管理になるため)。既定は local。
+$bundleSource = 'local'
+$bundleLocalBase = ''
 if (Test-Path -LiteralPath $envFile) {
     foreach ($line in (Get-Content -LiteralPath $envFile -Encoding UTF8)) {
         if ($line -match '^\s*MIKKE_SITE_URL\s*=\s*(.+)$') {
@@ -65,6 +69,10 @@ if (Test-Path -LiteralPath $envFile) {
             $edgePath = $Matches[1].Trim().Trim('"').Trim("'")
         } elseif ($line -match '^\s*MIKKE_EDGE_USERDATA\s*=\s*(.+)$') {
             $edgeUserData = $Matches[1].Trim().Trim('"').Trim("'")
+        } elseif ($line -match '^\s*MIKKE_BUNDLE_SOURCE\s*=\s*(.+)$') {
+            $bundleSource = $Matches[1].Trim().Trim('"').Trim("'").ToLower()
+        } elseif ($line -match '^\s*MIKKE_BUNDLE_LOCAL_BASE\s*=\s*(.+)$') {
+            $bundleLocalBase = $Matches[1].Trim().Trim('"').Trim("'").TrimEnd('/')
         }
     }
 }
@@ -469,8 +477,22 @@ public class MikkeCdp {
             #     - UI の更新ボタンは取り直して差し替えるだけで最新になる
             #   となり、mikke-launch.bat を実行し直す必要が無くなる。
             #   SharePoint 上の配布物は参照しない (開発中はローカルが正)。
-            $srcJs = 'try{localStorage.setItem("mikke.dev.bundle-source","local");' +
-                     'localStorage.setItem("mikke.dev.local-base","http://127.0.0.1:' + $Port + '/mikke");}catch(e){};true'
+            # ★ 中継サーバの接続先も一緒に書き込む。ポートは mikke-relay.env の
+            #   MIKKE_RELAY_PORT だけで決めたいので、画面側に設定欄は置かない。
+            #   ここで書けば、既定から変えても利用者は何も設定しなくてよい。
+            #   読込元 (local / sp) と base は mikke-relay.env で決める。既定は
+            #   local base = relay と同じポート (MIKKE_RELAY_PORT に自動追従)。
+            $relayBase = "http://127.0.0.1:$Port/mikke"
+            $localBase = if ($bundleLocalBase) { $bundleLocalBase } else { $relayBase }
+            $srcJs = if ($bundleSource -eq 'sp' -or $bundleSource -eq 'sharepoint') {
+                # SharePoint のドキュメント/Mikke から読む (本番と同じ経路)
+                'try{localStorage.removeItem("mikke.dev.bundle-source");' +
+                'localStorage.setItem("mikke.relay.base","' + $relayBase + '");}catch(e){};true'
+            } else {
+                'try{localStorage.setItem("mikke.dev.bundle-source","local");' +
+                'localStorage.setItem("mikke.dev.local-base","' + $localBase + '");' +
+                'localStorage.setItem("mikke.relay.base","' + $relayBase + '");}catch(e){};true'
+            }
             try { $cdp.Eval($srcJs, $false) | Out-Null } catch { }
 
             # ★ バンドル注入 (既定)

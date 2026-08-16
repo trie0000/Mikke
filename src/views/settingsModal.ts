@@ -13,11 +13,8 @@ import { normalizeVulnTypeRules } from '../lib/migration';
 import { opsForType, opLabel, opNeedsValue2 } from '../lib/conditions';
 import { parseCsv } from '../lib/csv';
 import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
-import {
-  getBundleSource, setBundleSource, getLocalBase, setLocalBase,
-  currentBuildId, DEFAULT_LOCAL_BASE, type BundleSource,
-} from '../utils/bundleVersion';
-import { relayGetBundleDir, relaySetBundleDir } from '../api/relay';
+import { getBundleSource, getLocalBase, currentBuildId } from '../utils/bundleVersion';
+import { relayGetBundleDir, getRelayBase } from '../api/relay';
 import { performRelayUpdate } from '../utils/relayUpdate';
 import { RELEASE_NOTES, type ReleaseNote } from '../lib/releaseNotes';
 import { getState, setState } from '../state';
@@ -173,7 +170,7 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
       groups: [
         { title: '接続', items: [{ key: 'connection', label: 'SP サイト / 中継サーバ', render: () => renderConnectionPanel(root) }] },
         { title: '情報', items: [{ key: 'releaseNotes', label: '更新履歴', render: () => renderReleaseNotesPanel() }] },
-        { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel(root) }] },
+        { title: '開発', items: [{ key: 'developer', label: 'バンドル読込元 (開発者)', render: () => renderDeveloperPanel() }] },
         { title: '危険', items: [
           { key: 'reset', label: '管理対象一覧のリセット', danger: true, render: () => renderResetPanel(root) },
         ] },
@@ -742,15 +739,27 @@ async function renderVulnTypePanel(): Promise<SettingPanel> {
 // ── その他: 接続 ──
 function renderConnectionPanel(root: HTMLElement): SettingPanel {
   let siteUrl = '';
-  let relayBase = '';
   try { siteUrl = localStorage.getItem('mikke.selectedSiteUrl') || ''; } catch { /* noop */ }
-  try { relayBase = localStorage.getItem('mikke.relay.base') || 'http://127.0.0.1:18120/mikke'; } catch { /* noop */ }
   const siteInput = el('input', { type: 'text', value: siteUrl, placeholder: 'https://<tenant>.sharepoint.com/sites/<site>' }) as HTMLInputElement;
-  const relayInput = el('input', { type: 'text', value: relayBase }) as HTMLInputElement;
+  // ★ 中継サーバの接続先はここで設定しない。ポートの指定は mikke-relay.env の
+  //   MIKKE_RELAY_PORT だけにする (画面にも設定欄があると二重管理になり、
+  //   片方だけ直して「起動しているのに繋がらない」状態になる)。
+  //   ここには今つないでいる先を出すだけにして、直し方を書いておく。
+  const relayLine = el('div', { style: 'font-family:var(--font-mono, monospace);font-size:var(--fs-sm);color:var(--ink-2)' },
+    [getRelayBase()]);
   const body = el('div', {}, [
     panelHead('SP サイト / 中継サーバ', '管理 DB を置く SharePoint サイトと、CSV 解析・API 中継に使うローカル中継サーバの接続先。'),
     el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['SP サイト URL']), siteInput]),
-    el('div', { class: 'mikke-field' }, [el('label', { class: 'mikke-field-label' }, ['中継サーバ ベース URL']), relayInput]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['中継サーバ (自動)']),
+      relayLine,
+      el('div', { style: 'margin-top:var(--s-2);font-size:var(--fs-xs);color:var(--ink-3);line-height:1.7' }, [
+        'ポートは中継サーバ側の mikke-relay.env (MIKKE_RELAY_PORT) だけで決まります。',
+        el('br'),
+        'ランチャーで起動すると接続先が自動で設定され、ブックマークレットで開いた場合も'
+        + '既定ポートから順に探して見つけます。ここで設定する必要はありません。',
+      ]),
+    ]),
   ]);
 
   // relay スクリプト更新がある場合の適用ボタン (起動時チェックで検知済み)。
@@ -796,7 +805,6 @@ function renderConnectionPanel(root: HTMLElement): SettingPanel {
     save: () => {
       try {
         if (siteInput.value.trim()) localStorage.setItem('mikke.selectedSiteUrl', siteInput.value.trim().replace(/\/$/, ''));
-        localStorage.setItem('mikke.relay.base', relayInput.value.trim().replace(/\/+$/, ''));
       } catch { /* noop */ }
       toast(root, '接続設定を保存しました', 'ok');
     },
@@ -835,87 +843,47 @@ function renderReleaseNotesPanel(): SettingPanel {
 //  ローダは起動時に localStorage(mikke.dev.*) を見て本体取得先を決める。ここを
 //  変えると「次回リロード」で SharePoint / ローカル relay の dist が切り替わる。
 //  開発中は local にすれば SP へ毎回アップロードせずに反映できる。
-async function renderDeveloperPanel(root: HTMLElement): Promise<SettingPanel> {
-  const cur = getBundleSource();
-  const name = 'mikke-bundle-source';
-  const radioSP = el('input', { type: 'radio', name, value: 'sharepoint', style: 'cursor:pointer',
-    ...(cur === 'sharepoint' ? { checked: 'checked' } : {}) }) as HTMLInputElement;
-  const radioLocal = el('input', { type: 'radio', name, value: 'local', style: 'cursor:pointer',
-    ...(cur === 'local' ? { checked: 'checked' } : {}) }) as HTMLInputElement;
-  const baseInput = el('input', { type: 'text', value: getLocalBase(), placeholder: DEFAULT_LOCAL_BASE,
-    style: 'width:100%;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLInputElement;
+async function renderDeveloperPanel(): Promise<SettingPanel> {
+  // ★ ここは **表示だけ**。読込元・base・配信フォルダの指定は中継サーバの
+  //   mikke-relay.env に一本化する。画面にも設定欄があると二重管理になり、
+  //   片方だけ直して「反映されない」状態になるため。
+  const src = getBundleSource();
 
   // relay の配信ディレクトリ (mikke.bundle.js / version.txt の読込元) を照会。
-  // relay 未起動なら空のまま (保存時に POST して反映)。
-  let originalDir = '';
+  let dir = '';
   let relayReachable = false;
   try {
     const bd = await relayGetBundleDir();
-    originalDir = bd.dir || '';
+    dir = bd.dir || '';
     relayReachable = true;
   } catch { /* relay 未起動 / 未到達 */ }
-  const dirInput = el('input', { type: 'text', value: originalDir,
-    placeholder: relayReachable ? '' : '(relay 未起動 — 起動後に再度開くと現在値を取得)',
-    style: 'width:100%;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLInputElement;
-  const dirStatus = el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2)' }, [
-    relayReachable ? `現在の relay 配信元: ${originalDir || '(未設定)'}` : '※ relay に接続できません（中継サーバを起動してください）。',
-  ]);
 
-  const radioRow = (input: HTMLInputElement, label: string, hint: string) =>
-    el('label', { style: 'display:flex;align-items:flex-start;gap:var(--s-3);cursor:pointer;padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2);margin-bottom:var(--s-2)' }, [
-      el('span', { style: 'padding-top:2px' }, [input]),
-      el('span', { style: 'font-size:var(--fs-sm);color:var(--ink)' }, [
-        el('strong', {}, [label]), el('br'),
-        el('span', { style: 'color:var(--ink-3);font-size:var(--fs-xs)' }, [hint]),
-      ]),
+  const row = (label: string, value: string, hint?: string): HTMLElement =>
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, [label]),
+      el('div', { style: 'font-family:var(--font-mono, monospace);font-size:var(--fs-sm);color:var(--ink-2);word-break:break-all' },
+        [value || '—']),
+      ...(hint ? [el('div', { style: 'margin-top:var(--s-2);font-size:var(--fs-xs);color:var(--ink-3);line-height:1.7' }, [hint])] : []),
     ]);
 
   const body = el('div', {}, [
     panelHead('バンドル読込元 (開発者)',
-      'Mikke 本体 (mikke.bundle.js) をどこから読むかを切り替えます。開発中はローカル relay の dist を読ませると、SharePoint へ毎回アップロードせずに変更を反映できます。'),
-    el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--s-4)' }, [
-      `現在の起動 build: ${currentBuildId() || '(不明)'}`,
-    ]),
-    radioRow(radioSP, 'SharePoint (本番)', '実行中サイトの ドキュメント/Mikke から読む'),
-    radioRow(radioLocal, 'ローカル relay (開発)', '下記 base から読む。mikke-relay が GET /mikke/mikke.bundle.js で配信'),
-    el('div', { class: 'mikke-field', style: 'margin-top:var(--s-3)' }, [
-      el('label', { class: 'mikke-field-label' }, ['ローカル base URL']),
-      baseInput,
-    ]),
-    el('div', { class: 'mikke-field', style: 'margin-top:var(--s-4)' }, [
-      el('label', { class: 'mikke-field-label' }, ['relay の配信ディレクトリ (新しいコードの読込元)']),
-      dirInput,
-      dirStatus,
-      el('div', { style: 'font-size:var(--fs-xs);color:var(--ink-3);margin-top:var(--s-2);line-height:1.6' }, [
-        'ローカル relay が mikke.bundle.js / version.txt を読むフォルダの絶対パス。',
-        '開発時はビルド先 dist（例: C:\\Users\\…\\Mikke\\dist）を指定すると、ビルドし直すだけで反映されます。',
-        '保存時に relay へ送信し、relay 側でフォルダの存在を確認します。',
-      ]),
-    ]),
-    el('div', { style: 'margin-top:var(--s-4);padding:var(--s-3);background:var(--accent-soft);border-radius:var(--r-2);font-size:var(--fs-sm);color:var(--ink-2)' }, [
-      '※ 読込元(SharePoint/ローカル)の切替は「次回リロード」で反映されます（ローダは起動時に 1 度だけ参照先を決めるため）。保存後、右上の更新アイコンまたはブックマーク再クリックでリロードしてください。配信ディレクトリの変更は relay に即時反映されます。',
+      'Mikke 本体 (mikke.bundle.js) をどこから読んでいるかの表示です。'
+      + '指定は中継サーバの mikke-relay.env で行います。'),
+    row('起動中の build', currentBuildId() || '(不明)'),
+    row('読込元', src === 'local' ? 'ローカル relay (開発)' : 'SharePoint (本番)',
+      'mikke-relay.env の MIKKE_BUNDLE_SOURCE で切り替えます (local / sp)。'
+      + 'ランチャーで起動したときに反映されます。'),
+    row('ローカル base URL', getLocalBase(),
+      '既定は中継サーバと同じポート (MIKKE_RELAY_PORT に追従)。'
+      + '別の場所に置いている場合だけ MIKKE_BUNDLE_LOCAL_BASE で指定します。'),
+    row('relay の配信フォルダ', relayReachable ? (dir || '(未設定)') : '(relay 未起動 — 起動後に開き直すと出ます)',
+      'relay が mikke.bundle.js / version.txt を読むフォルダ。'
+      + 'mikke-relay.env の MIKKE_BUNDLE_DIR で指定します (既定は relay と同じフォルダ)。'),
+    el('div', { style: 'margin-top:var(--s-4);padding:var(--s-3);background:var(--accent-soft);border-radius:var(--r-2);font-size:var(--fs-sm);color:var(--ink-2);line-height:1.7' }, [
+      '※ env を直したら、中継サーバとランチャーを起動し直してください。'
+      + '読込元の切り替えは起動時に 1 度だけ決まるため、開いたままでは変わりません。',
     ]),
   ]);
-  return {
-    body,
-    save: async () => {
-      const src: BundleSource = radioLocal.checked ? 'local' : 'sharepoint';
-      setBundleSource(src);
-      setLocalBase(baseInput.value);
-
-      // relay 配信ディレクトリの変更があれば POST。relay 未到達/失敗は警告に留め、
-      // ローカル設定の保存自体は止めない。
-      const dir = dirInput.value.trim();
-      if (dir && dir !== originalDir) {
-        try {
-          const res = await relaySetBundleDir(dir);
-          toast(root, `relay 配信ディレクトリを設定しました: ${res.dir}${res.bundleExists ? '' : '（⚠ そのフォルダに mikke.bundle.js が見つかりません）'}`, res.bundleExists ? 'ok' : 'warn', 6000);
-        } catch (e) {
-          toast(root, `relay 配信ディレクトリの設定に失敗: ${(e as Error).message}`, 'error', 6000);
-        }
-      }
-
-      toast(root, `読込元を「${src === 'local' ? 'ローカル relay' : 'SharePoint'}」に保存しました。リロードで反映されます。`, 'ok', 6000);
-    },
-  };
+  return { body };
 }
