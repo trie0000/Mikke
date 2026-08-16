@@ -40,6 +40,8 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   let companies: string[] = [];
   /** 対象外にした行も表示するか (既定は隠す。国内の一覧と同じ)。 */
   let showExcluded = false;
+  /** 描き直しの前に覚えたスクロール位置 (paint() が戻す)。 */
+  let pendingScroll: { top: number; left: number } | null = null;
   /** 取り込み前の確認を出している間は表を描き直さない (描くと確認画面が消える)。 */
   let previewing = false;
 
@@ -198,6 +200,9 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
 
   async function load(): Promise<void> {
     previewing = false;
+    // ★ 読み直しで位置を失わない。除外・削除・反映のあとに毎回先頭へ飛ぶと、
+    //   長い一覧を上から順に処理する作業で毎回スクロールし直すことになる。
+    rememberScroll();
     clear(tableWrap);
     tableWrap.appendChild(el('div', { class: 'mikke-empty' }, ['読み込み中…']));
     try {
@@ -215,11 +220,34 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       applyRows();
       paint();
     } catch (e) {
+      pendingScroll = null;      // 描けなかったので戻す位置も捨てる
       clear(tableWrap);
       tableWrap.appendChild(el('div', { class: 'mikke-error' }, [
         `海外脆弱性一覧の取得に失敗しました: ${(e as Error).message}`,
       ]));
     }
+  }
+
+  /** 表を描き直しても位置を失わないよう、今の位置を覚えておく。 */
+  function rememberScroll(): void {
+    if (!pendingScroll) pendingScroll = { top: tableWrap.scrollTop, left: tableWrap.scrollLeft };
+  }
+
+  /** 行を描いた後にスクロール位置を戻す。
+   *  ★ その場で当ててから、届くまで数回だけ試す。仮想スクロールは行を描くまで
+   *    高さが足りず値が丸められる。requestAnimationFrame は **タブが裏にあると
+   *    発火しない** ので使わない (国内の一覧と同じ作り)。 */
+  function applyScroll(pos: { top: number; left: number }): void {
+    if (!pos.top && !pos.left) return;
+    let tries = 0;
+    const apply = (): void => {
+      tableWrap.scrollTop = pos.top;
+      tableWrap.scrollLeft = pos.left;
+      const off = Math.abs(tableWrap.scrollTop - pos.top) > 1
+        || Math.abs(tableWrap.scrollLeft - pos.left) > 1;
+      if (off && ++tries < 10) setTimeout(apply, 16);
+    };
+    apply();
   }
 
   /** 表に流す行 (既定では対象外を隠す)。
@@ -678,7 +706,14 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       ]),
       hiddenToggle,
     );
-    if (!busy && !previewing) table.render();
+    if (!busy && !previewing) {
+      // 表示切替・選択解除・反映後など、paint() から描き直すときも位置を保つ。
+      rememberScroll();
+      table.render();
+      const pos = pendingScroll;
+      pendingScroll = null;
+      if (pos) applyScroll(pos);
+    }
   }
 
   paint();
