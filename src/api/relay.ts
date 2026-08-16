@@ -1,5 +1,10 @@
 // PowerShell 中継サーバ (localhost) クライアント。
 // 役割: 大容量 CSV 解析 (/mikke/csv-parse) と 検査ツール API 中継 (/mikke/issue・雛形)。
+//
+// ★ 検査ツールの API ベース URL / API キーは **リクエストごとに引数で渡す**。
+//   relay の .env には置かない (秘密情報を配布物・リポジトリに混ぜないため)。
+//   設定は各自のブラウザに保存する (utils/scannerApi.ts)。
+import { scannerApiArgs } from '../utils/scannerApi';
 
 // ★ Mikke に割り当てたポート (共通ガイド §14.2 の採番表: relay 18120 / CDP 19320)。
 const DEFAULT_PORT = 18120;
@@ -181,7 +186,7 @@ export async function relayGetIssue(issueInstanceId: string): Promise<RelayIssue
   const r = await fetch(`${getRelayBase()}/issue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueInstanceId }),
+    body: JSON.stringify({ issueInstanceId, ...scannerApiArgs() }),
   });
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;
@@ -209,7 +214,7 @@ export async function relayGetIssueReport(issueInstanceId: string): Promise<Rela
   const r = await fetch(`${getRelayBase()}/issue-report`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueInstanceId }),
+    body: JSON.stringify({ issueInstanceId, ...scannerApiArgs() }),
   });
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;
@@ -244,7 +249,7 @@ export async function relayGetIssues(
   const r = await fetch(`${getRelayBase()}/issues`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issueInstanceIds, includeReport }),
+    body: JSON.stringify({ issueInstanceIds, includeReport, ...scannerApiArgs() }),
   });
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;
@@ -312,7 +317,7 @@ export async function relayDownloadFromScanner(types: string[]): Promise<RelayDo
   const r = await fetch(`${getRelayBase()}/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ types }),
+    body: JSON.stringify({ types, ...scannerApiArgs() }),
   });
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;

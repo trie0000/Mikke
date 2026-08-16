@@ -15,6 +15,7 @@ import { parseCsv } from '../lib/csv';
 import { COLUMN_TYPES, inferTemplate } from '../lib/inferType';
 import { getBundleSource, getLocalBase, currentBuildId } from '../utils/bundleVersion';
 import { relayGetBundleDir, getRelayBase } from '../api/relay';
+import { getScannerApi, setScannerApi } from '../utils/scannerApi';
 import { performRelayUpdate } from '../utils/relayUpdate';
 import { RELEASE_NOTES, type ReleaseNote } from '../lib/releaseNotes';
 import { getState, setState } from '../state';
@@ -141,6 +142,9 @@ function buildMajorGroups(root: HTMLElement): MajorGroup[] {
       key: 'personal', title: '個人設定', subtitle: '端末ローカルに保存。自分にだけ反映。',
       groups: [
         { title: '表示', items: [{ key: 'theme', label: 'テーマ・外観', render: () => renderThemePanel(root) }] },
+        { title: '接続', items: [
+          { key: 'scannerApi', label: '検査ツール API', render: () => renderScannerApiPanel(root) },
+        ] },
       ],
     },
     {
@@ -583,6 +587,54 @@ async function renderDownloadPanel(root: HTMLElement): Promise<SettingPanel> {
       const folder = input.value.trim().replace(/^\/+|\/+$/g, '') || 'Shared Documents/MikkeDownloads';
       await getRepo().saveSettings({ ...s, downloadFolder: folder });
       toast(root, '保存先フォルダを保存しました', 'ok');
+    },
+  };
+}
+
+// ── 個人設定: 検査ツール API (この端末にだけ保存する) ──
+function renderScannerApiPanel(root: HTMLElement): SettingPanel {
+  const cur = getScannerApi();
+  const baseInput = el('input', {
+    type: 'text', value: cur.base, placeholder: 'https://<検査ツール API のホスト>',
+    style: 'width:100%;font-family:var(--font-mono, monospace);font-size:var(--fs-sm)',
+  }) as HTMLInputElement;
+  // ★ 画面に出しっぱなしにしない。保存済みかどうかだけ分かればよい。
+  const keyInput = el('input', {
+    type: 'password', value: cur.key, placeholder: cur.key ? '' : '(未設定)', autocomplete: 'off',
+    style: 'width:100%;font-family:var(--font-mono, monospace);font-size:var(--fs-sm)',
+  }) as HTMLInputElement;
+  const reveal = el('label', { style: 'display:inline-flex;align-items:center;gap:6px;margin-top:var(--s-2);font-size:var(--fs-xs);color:var(--ink-3);cursor:pointer' }, [
+    el('input', { type: 'checkbox',
+      onchange: (e: Event) => { keyInput.type = (e.target as HTMLInputElement).checked ? 'text' : 'password'; } }),
+    'キーを表示する',
+  ]);
+
+  const body = el('div', {}, [
+    panelHead('検査ツール API',
+      '「情報更新」「レポート取得」「ダウンロード」で使う検査ツール API の接続先です。'
+      + 'この端末にだけ保存し、中継サーバへは実行のたびに渡します。'),
+    el('ul', { style: 'margin:0 0 var(--s-5);padding-left:1.2em;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.8' }, [
+      el('li', {}, ['SharePoint には保存しません。ほかの利用者には共有されません。']),
+      el('li', {}, ['中継サーバの設定ファイル (mikke-relay.env) にも書きません。'
+        + '配布物やリポジトリに秘密情報が混ざらないようにするためです。']),
+      el('li', {}, ['両方そろっていないと中継サーバへ渡しません (片方だけでは呼べないため)。']),
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['ベース URL']), baseInput,
+    ]),
+    el('div', { class: 'mikke-field' }, [
+      el('label', { class: 'mikke-field-label' }, ['API キー']), keyInput, reveal,
+    ]),
+  ]);
+  return {
+    body,
+    save: () => {
+      setScannerApi({ base: baseInput.value, key: keyInput.value });
+      const now = getScannerApi();
+      toast(root, now.base && now.key
+        ? '検査ツール API の設定を保存しました (この端末にのみ保存)'
+        : '検査ツール API の設定を保存しました (未設定の項目があります)',
+        now.base && now.key ? 'ok' : 'warn');
     },
   };
 }
