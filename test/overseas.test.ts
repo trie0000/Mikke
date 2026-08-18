@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   nextOverseasDetection, toOpenStatus, toRegion, resolveOverseasColumns,
-  missingOverseasColumns, buildOverseasPlan, indexMergedCsv, OVERSEAS_COL,
+  missingOverseasColumns, buildOverseasPlan, indexMergedCsv, overseasScannerPatch, OVERSEAS_COL,
 } from '../src/lib/overseas';
 import { parseFlexibleDate } from '../src/lib/migration';
 import type { ManagedIssue, OverseasIssue } from '../src/types';
@@ -314,5 +314,50 @@ describe('見出しの探し方', () => {
     const p = buildOverseasPlan([{ x: '1' }], ['x'], [], MERGED, [], parseFlexibleDate, NOW);
     expect(p.creates).toEqual([]);
     expect(p.missingColumns).toContain(OVERSEAS_COL.issueInstanceId);
+  });
+});
+
+describe('★ 選択分の情報更新 (検査ツールから取り直す)', () => {
+  it('ツール由来の項目だけを差分にする', () => {
+    const patch = overseasScannerPatch({
+      lastSeen: '2026-08-16T00:00:00Z',
+      scanFields: {
+        'Title': 'TLS 1.0 が有効', 'Asset IP': '203.0.113.10', 'Asset Domain': 'web01.example.com',
+        'Asset Title': 'web01', 'Asset Mapped Domains': 'a.example.com',
+        'Asset Homepage URL': 'https://web01.example.com/',
+      },
+    });
+    expect(patch).toEqual({
+      title: 'TLS 1.0 が有効', assetIp: '203.0.113.10', assetFqdn: 'web01.example.com',
+      assetTitle: 'web01', assetMappedDomains: 'a.example.com',
+      assetHomepageUrl: 'https://web01.example.com/', lastSeen: '2026-08-16T00:00:00Z',
+    });
+  });
+
+  it('★ 検知状況・通知日・事業会社は触らない (Excel と人が決める領域)', () => {
+    const patch = overseasScannerPatch({
+      lastSeen: '2026-08-16T00:00:00Z',
+      scanFields: { 'Title': 'x', 'Status': 'open', 'REALM': 'EU', 'Business': 'ENG' },
+    });
+    for (const k of ['detectionStatus', 'openStatus', 'contactedAt', 'region',
+      'businessCompany', 'affiliateCompany', 'webMapsId', 'identifyEvidence', 'remarks']) {
+      expect(patch, `${k} を触ってはいけない`).not.toHaveProperty(k);
+    }
+  });
+
+  it('★ 取れなかった項目は差分に入れない (空で既存を消さない)', () => {
+    expect(overseasScannerPatch({ scanFields: { 'Title': 'x' } })).toEqual({ title: 'x' });
+    expect(overseasScannerPatch({})).toEqual({});
+  });
+
+  it('Scan_ 接頭辞付きのキーでも拾う', () => {
+    const patch = overseasScannerPatch({ scanFields: { 'Scan_Asset Domain': 'web09.example.com' } });
+    expect(patch.assetFqdn).toBe('web09.example.com');
+  });
+
+  it('lastSeen は応答の値を優先し、無ければ scanFields から拾う', () => {
+    expect(overseasScannerPatch({ scanFields: { 'Last Seen': '2026-07-31' } }).lastSeen).toBe('2026-07-31');
+    expect(overseasScannerPatch({ lastSeen: '2026-08-01', scanFields: { 'Last Seen': '2026-07-31' } }).lastSeen)
+      .toBe('2026-08-01');
   });
 });

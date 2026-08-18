@@ -194,6 +194,48 @@ function scanOf(issue: ManagedIssue | undefined, name: string): string {
   return text(resolveScanValue(issue.scanFields, `Scan_${name}`, []));
 }
 
+/**
+ * 検査ツールの応答 (scanFields) から、名前のゆれを吸収して値を引く。
+ * ★ アダプタは CSV のヘッダ名そのままで返す (`Asset IP` など) が、管理対象に
+ *   保存済みの値は `Scan_` 接頭辞付きのことがある。両方を試す。
+ */
+export function scanFieldOf(fields: Record<string, string> | undefined, names: string[]): string {
+  if (!fields) return '';
+  const keys = Object.keys(fields);
+  for (const n of names) {
+    for (const cand of [n, `Scan_${n}`]) {
+      const hit = findColumn(keys, cand);
+      if (hit && text(fields[hit])) return text(fields[hit]);
+    }
+  }
+  return '';
+}
+
+/** 検査ツールから取り直した 1 件を、海外一覧の行に当てる差分。
+ *
+ * ★ 更新するのは **検査ツール由来の項目だけ**。
+ *   - 検知状況 / open … 月次 Excel の履歴から決まる (ツールの現在値で上書きしない)
+ *   - 通知日 / 地域 / 備考 … Excel 由来
+ *   - 事業会社 / 管理会社 / WebMAPS管理ID / 参考情報 … 人が決める
+ * ★ 取れなかった項目は差分に入れない。空で上書きして既存を消さないため。
+ */
+export function overseasScannerPatch(
+  res: { lastSeen?: string; scanFields?: Record<string, string> },
+): Partial<OverseasIssue> {
+  const patch: Partial<OverseasIssue> = {};
+  const put = (key: keyof OverseasIssue, v: string): void => {
+    if (v) (patch as Record<string, unknown>)[key] = v;
+  };
+  put('title', scanFieldOf(res.scanFields, ['Title']));
+  put('assetIp', scanFieldOf(res.scanFields, ['Asset IP']));
+  put('assetFqdn', scanFieldOf(res.scanFields, ['Asset Domain', 'Asset']));
+  put('assetTitle', scanFieldOf(res.scanFields, ['Asset Title']));
+  put('assetMappedDomains', scanFieldOf(res.scanFields, ['Asset Mapped Domains']));
+  put('assetHomepageUrl', scanFieldOf(res.scanFields, ['Asset Homepage URL']));
+  put('lastSeen', text(res.lastSeen) || scanFieldOf(res.scanFields, ['Last Seen']));
+  return patch;
+}
+
 /** マージ CSV を Issue Instance ID で引ける形にする。 */
 export function indexMergedCsv(rows: Record<string, string>[]): Map<string, Record<string, string>> {
   const out = new Map<string, Record<string, string>>();

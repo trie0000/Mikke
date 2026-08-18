@@ -6,19 +6,25 @@
 //   2 回取り込んでも結果は変わらない (lib/overseas.ts)。
 import { el, clear, fmtDate } from '../utils/dom';
 import { icon } from '../icons';
-import { getRepo } from '../api/repo';
+import { getRepo, getRepoMode } from '../api/repo';
 import { toast } from '../components/toast';
 import { openModal } from '../components/modal';
 import { createProgressLine } from '../components/progressLine';
 import { DataTable } from './dataTable';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import { parseFlexibleDate } from '../lib/migration';
-import { buildOverseasPlan, indexMergedCsv, OVERSEAS_COL, type OverseasPlan } from '../lib/overseas';
+import {
+  buildOverseasPlan, indexMergedCsv, overseasScannerPatch, OVERSEAS_COL, type OverseasPlan,
+} from '../lib/overseas';
+import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
 import { loadLatestMergedCsv } from '../lib/downloadFlow';
 import { LABEL } from '../lib/fieldLabels';
 import { buildOverseasResponsePlan, overseasKey } from '../lib/overseasResponseSync';
 import { normalizePerms, registeredCompanies } from '../lib/itemPerms';
 import type { OverseasIssue } from '../types';
+
+/** 検査ツールへの問い合わせをまとめて送る単位 (relay 側の並列数に合わせる)。 */
+const REFRESH_CHUNK = 5;
 
 export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
   const root = el('div', { class: 'mikke-main', style: 'display:flex;flex-direction:column' });
@@ -502,6 +508,90 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     });
   }
 
+  // ── 選択分の情報更新 (検査ツールへ問い合わせ直す) ──────────────────────────
+  /**
+   * 選んだ脆弱性を検査ツールに問い合わせ、**ツール由来の項目だけ**を更新する。
+   * ★ 検知状況・open・通知日は触らない。海外の検知状況は月次 Excel の履歴から
+   *   決まる仕組みなので、ツールの現在値で上書きすると食い違う。
+   * ★ 新規追加は起きない (選んだ行を更新するだけ)。
+   */
+  async function refreshSelected(): Promise<void> {
+    const targets = cache.filter((i) => selected.has(i.id) && i.issueInstanceId);
+    if (!targets.length || bulkBusy) {
+      if (!targets.length) toast(rootEl, '行を選択してください。', 'warn');
+      return;
+    }
+    // dev (mock) は relay を持たないので、国内と同じくサンプル応答で動かす。
+    const devMock = getRepoMode() === 'mock';
+    if (!devMock) {
+      const h = await relayHealth();
+      if (!h.ok) {
+        toast(rootEl,
+          `中継サーバに接続できません (${getRelayBase()})。mikke-launch.bat を実行するか、`
+          + 'ポートを変えている場合は mikke-relay.env の MIKKE_RELAY_PORT を確認してください。', 'warn', 10000);
+        return;
+      }
+    }
+    bulkBusy = true;
+    paint();
+    progress.set('情報更新: 検査ツールへ問い合わせ', 0, targets.length);
+    const updates: { id: number; patch: Partial<OverseasIssue> }[] = [];
+    let done = 0; let fail = 0; let firstErr = '';
+    try {
+      // relay 内で並列取得されるので、同じ粒度で送る。
+      for (let i = 0; i < targets.length; i += REFRESH_CHUNK) {
+        const chunk = targets.slice(i, i + REFRESH_CHUNK);
+        let results: RelayIssueBatchItem[];
+        try {
+          results = devMock
+            ? chunk.map((x) => ({
+                issueInstanceId: x.issueInstanceId, ok: true, lastSeen: new Date().toISOString(),
+                scanFields: { 'Title': x.title ?? '', 'Asset Domain': x.assetFqdn ?? '' },
+              }))
+            : await relayGetIssues(chunk.map((x) => x.issueInstanceId), false);
+        } catch (e) {
+          fail += chunk.length;
+          done += chunk.length;
+          if (!firstErr) firstErr = (e as Error).message;
+          progress.set('情報更新: 検査ツールへ問い合わせ', done, targets.length);
+          continue;
+        }
+        const byId = new Map(results.map((r) => [r.issueInstanceId, r]));
+        for (const row of chunk) {
+          const res = byId.get(row.issueInstanceId);
+          if (!res || !res.ok) {
+            fail++;
+            if (!firstErr) firstErr = res?.error ?? '応答に該当 ID がありません';
+          } else {
+            const patch = overseasScannerPatch(res);
+            if (Object.keys(patch).length) updates.push({ id: row.id, patch });
+          }
+          done++;
+          progress.set('情報更新: 検査ツールへ問い合わせ', done, targets.length);
+        }
+      }
+      if (updates.length) {
+        progress.set('情報更新: 書き込み', 0, updates.length);
+        const w = await getRepo().applyOverseasPlan([], updates,
+          (d, t) => progress.set('情報更新: 書き込み', d, t));
+        if (w.fail) { fail += w.fail; if (!firstErr) firstErr = 'くわしくはブラウザのコンソール (F12) を見てください'; }
+      }
+      const okCount = updates.length - 0;
+      toast(rootEl,
+        `情報更新: ${okCount} 件を更新${fail ? ` / 失敗 ${fail} 件` : ''}`
+        + (targets.length - okCount - fail > 0 ? ` / 変更なし ${targets.length - okCount - fail} 件` : '')
+        + (firstErr ? ` — ${firstErr}` : ''),
+        fail ? 'warn' : 'ok', fail ? 12000 : 6000);
+    } catch (e) {
+      toast(rootEl, `情報更新に失敗しました: ${(e as Error).message}`, 'error', 10000);
+    } finally {
+      progress.hide();
+      bulkBusy = false;
+      selected.clear();
+      await load();
+    }
+  }
+
   // ── 海外連携用リストへの反映 ───────────────────────────────────────────────
   //   ★ 国内と違い **一方通行**。リスト側は読み取り専用で、取り込み (逆方向) は無い。
   async function push(onlySelected: boolean): Promise<void> {
@@ -644,6 +734,8 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
         el('span', { class: 'mikke-subbar-count' }, [`選択 ${selected.size} 件`]),
         btn('連携リストへ反映(選択)', '選択中の脆弱性だけを海外連携リストへ反映します',
           'mikke-btn--secondary', () => void push(true)),
+        btn('情報更新(選択)', '選択中の脆弱性を検査ツールに問い合わせ、脆弱性・資産の情報を最新にします',
+          'mikke-btn--secondary', () => void refreshSelected()),
         btn('管理対象から除外', 'データを残したまま一覧から隠します（連携リストからは次の反映で消えます）',
           'mikke-btn--secondary', () => bulkExclude()),
         ...(anyExcluded ? [btn('除外を解除', '除外を取り消して一覧に戻します',
