@@ -178,11 +178,23 @@ function onlyFilled(fields: Omit<OverseasIssue, 'id'>): Partial<OverseasIssue> {
 }
 
 /** マージ CSV の 1 行から、名前のゆれを吸収して値を引く。 */
+/**
+ * ★ 資産系の列は **完全一致だけ** で引く (大小文字・空白のゆれは吸収する)。
+ *   曖昧一致にすると、`Asset` という汎用列がある CSV で
+ *   `Asset IP` / `Asset Title` / `Asset Mapped Domains` / `Asset Homepage URL` が
+ *   **すべて同じ `Asset` 列に当たり**、資産の項目が全部同じ値になる (実データで確認)。
+ *   表記ゆれは names に候補を並べて吸収する。
+ */
+function exactColumn(keys: string[], name: string): string | null {
+  const want = norm(name);
+  return keys.find((k) => norm(k) === want) ?? null;
+}
+
 function csvOf(row: Record<string, string> | undefined, names: string[]): string {
   if (!row) return '';
   const keys = Object.keys(row);
   for (const n of names) {
-    const hit = findColumn(keys, n);
+    const hit = exactColumn(keys, n);
     if (hit && text(row[hit])) return text(row[hit]);
   }
   return '';
@@ -203,8 +215,9 @@ export function scanFieldOf(fields: Record<string, string> | undefined, names: s
   if (!fields) return '';
   const keys = Object.keys(fields);
   for (const n of names) {
+    // ★ 完全一致だけ (csvOf と同じ理由。`Asset` 列に全部吸われるのを防ぐ)。
     for (const cand of [n, `Scan_${n}`]) {
-      const hit = findColumn(keys, cand);
+      const hit = exactColumn(keys, cand);
       if (hit && text(fields[hit])) return text(fields[hit]);
     }
   }
@@ -246,6 +259,53 @@ export function indexMergedCsv(rows: Record<string, string>[]): Map<string, Reco
     const iid = text(r[key]);
     if (iid) out.set(iid, r);   // 同じ ID が複数行あれば後の行を採用
   }
+  return out;
+}
+
+export interface OverseasCsvRefresh {
+  /** 更新する行 (変わるものだけ)。 */
+  updates: { id: number; patch: Partial<OverseasIssue> }[];
+  /** 内容が同じで書く必要が無かった件数。 */
+  unchanged: number;
+  /** マージ CSV に見つからなかった Issue Instance ID。 */
+  unmatched: string[];
+}
+
+/**
+ * ダウンロードした全件 CSV をもとに、海外一覧の **既存行だけ** を更新する計画。
+ *
+ * ★ 新規追加はしない。海外一覧の行は月次 Excel の取り込みで作られるものなので、
+ *   CSV に居るからといって勝手に増やさない (国内の「追加モード」に当たるものは無い)。
+ * ★ 更新するのは検査ツール由来の項目だけ。検知状況・open・通知日・地域・備考と、
+ *   人が決める 4 項目 (事業会社/管理会社/WebMAPS管理ID/参考情報) は触らない。
+ * ★ 値が取れなかった項目・現在と同じ項目は差分に入れない (無駄な書き込みをしない)。
+ */
+export function buildOverseasCsvRefresh(
+  existing: OverseasIssue[],
+  merged: Map<string, Record<string, string>>,
+): OverseasCsvRefresh {
+  const out: OverseasCsvRefresh = { updates: [], unchanged: 0, unmatched: [] };
+  const missing = new Set<string>();
+  for (const row of existing) {
+    const iid = text(row.issueInstanceId);
+    if (!iid) continue;
+    const c = merged.get(iid);
+    if (!c) { missing.add(iid); continue; }
+    const patch: Partial<OverseasIssue> = {};
+    const put = (key: keyof OverseasIssue, v: string): void => {
+      if (v && v !== text(row[key])) (patch as Record<string, unknown>)[key] = v;
+    };
+    put('title', csvOf(c, ['Title']));
+    put('assetIp', csvOf(c, ['Asset IP']));
+    put('assetFqdn', csvOf(c, ['Asset Domain', 'Asset']));
+    put('assetTitle', csvOf(c, ['Asset Title']));
+    put('assetMappedDomains', csvOf(c, ['Asset Mapped Domains']));
+    put('assetHomepageUrl', csvOf(c, ['Asset Homepage URL']));
+    put('lastSeen', csvOf(c, ['Last Seen']));
+    if (Object.keys(patch).length) out.updates.push({ id: row.id, patch });
+    else out.unchanged++;
+  }
+  out.unmatched = [...missing].sort((a, b) => a.localeCompare(b));
   return out;
 }
 

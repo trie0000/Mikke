@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   nextOverseasDetection, toOpenStatus, toRegion, resolveOverseasColumns,
-  missingOverseasColumns, buildOverseasPlan, indexMergedCsv, overseasScannerPatch, OVERSEAS_COL,
+  missingOverseasColumns, buildOverseasPlan, buildOverseasCsvRefresh, indexMergedCsv,
+  overseasScannerPatch, OVERSEAS_COL,
 } from '../src/lib/overseas';
 import { parseFlexibleDate } from '../src/lib/migration';
 import type { ManagedIssue, OverseasIssue } from '../src/types';
@@ -359,5 +360,106 @@ describe('★ 選択分の情報更新 (検査ツールから取り直す)', () 
     expect(overseasScannerPatch({ scanFields: { 'Last Seen': '2026-07-31' } }).lastSeen).toBe('2026-07-31');
     expect(overseasScannerPatch({ lastSeen: '2026-08-01', scanFields: { 'Last Seen': '2026-07-31' } }).lastSeen)
       .toBe('2026-08-01');
+  });
+});
+
+describe('★ 全件 CSV による情報更新 (既存行だけ)', () => {
+  const row = (over: Partial<OverseasIssue> = {}): OverseasIssue => ({
+    id: 1, issueInstanceId: 'IID-1', detectionStatus: '継続', region: 'APAC',
+    contactedAt: '2026-06-10T00:00:00Z', openStatus: 'open', remarks: '月次の備考',
+    businessCompany: 'エナジー事業', affiliateCompany: 'ABC株式会社',
+    webMapsId: 'A1234567', identifyEvidence: '手で入れた根拠',
+    title: '古いタイトル', assetFqdn: 'old.example.com', ...over,
+  });
+
+  it('CSV の内容で脆弱性・資産の項目を更新する', () => {
+    const p = buildOverseasCsvRefresh([row()], MERGED);
+    expect(p.updates).toHaveLength(1);
+    expect(p.updates[0]!.patch).toEqual({
+      title: 'TLS 1.0 が有効', assetIp: '203.0.113.10', assetFqdn: 'web01.example.com',
+      assetTitle: 'web01', assetMappedDomains: 'a.example.com | b.example.com',
+      assetHomepageUrl: 'https://web01.example.com/', lastSeen: '2026-07-31T00:00:00Z',
+    });
+  });
+
+  it('★ 新規追加はしない (CSV に居ても一覧に無ければ増やさない)', () => {
+    const p = buildOverseasCsvRefresh([], MERGED);
+    expect(p.updates).toEqual([]);
+    expect(p).not.toHaveProperty('creates');
+  });
+
+  it('★ 検知状況・通知日・人が決める項目は触らない', () => {
+    const p = buildOverseasCsvRefresh([row()], MERGED);
+    for (const k of ['detectionStatus', 'openStatus', 'contactedAt', 'region', 'remarks',
+      'businessCompany', 'affiliateCompany', 'webMapsId', 'identifyEvidence']) {
+      expect(p.updates[0]!.patch, `${k} を触ってはいけない`).not.toHaveProperty(k);
+    }
+  });
+
+  it('内容が同じなら書かない', () => {
+    const same = row({
+      title: 'TLS 1.0 が有効', assetIp: '203.0.113.10', assetFqdn: 'web01.example.com',
+      assetTitle: 'web01', assetMappedDomains: 'a.example.com | b.example.com',
+      assetHomepageUrl: 'https://web01.example.com/', lastSeen: '2026-07-31T00:00:00Z',
+    });
+    const p = buildOverseasCsvRefresh([same], MERGED);
+    expect(p.updates).toEqual([]);
+    expect(p.unchanged).toBe(1);
+  });
+
+  it('CSV に無い行は名指しで返す (更新もしない)', () => {
+    const p = buildOverseasCsvRefresh([row({ issueInstanceId: 'IID-ZZZ' })], MERGED);
+    expect(p.updates).toEqual([]);
+    expect(p.unmatched).toEqual(['IID-ZZZ']);
+  });
+
+  it('CSV 側が空の項目で既存を消さない', () => {
+    const p = buildOverseasCsvRefresh([row({ issueInstanceId: 'IID-X', assetIp: '10.0.0.1' })], MERGED);
+    // IID-X は CSV に Asset IP が無い
+    expect(p.updates[0]!.patch).not.toHaveProperty('assetIp');
+  });
+});
+
+describe('★ 汎用の Asset 列がある CSV で、資産の項目が全部同じ値にならない', () => {
+  // 実データで踏んだ事故: マージ CSV に `Asset` という汎用列があると、
+  // 曖昧一致で Asset IP / Asset Title / Asset Mapped Domains / Asset Homepage URL が
+  // すべてその列に当たり、資産の項目が全部同じ値になっていた。
+  const CSV = indexMergedCsv([
+    { 'Issue Instance ID': 'IID-9001', 'Title': 'TLS 1.0 が有効',
+      'Last Seen': '2026-07-05', 'Asset': 'host1.example.com', 'Asset Type': 'FQDN' },
+  ]);
+  const target: OverseasIssue = {
+    id: 1, issueInstanceId: 'IID-9001', detectionStatus: '継続', region: 'APAC',
+  };
+
+  it('Asset 列は FQDN としてだけ使う', () => {
+    const patch = buildOverseasCsvRefresh([target], CSV).updates[0]!.patch;
+    expect(patch.assetFqdn).toBe('host1.example.com');
+    expect(patch).not.toHaveProperty('assetIp');
+    expect(patch).not.toHaveProperty('assetTitle');
+    expect(patch).not.toHaveProperty('assetMappedDomains');
+    expect(patch).not.toHaveProperty('assetHomepageUrl');
+  });
+
+  it('タイトルと最終検知日は正しく入る', () => {
+    const patch = buildOverseasCsvRefresh([target], CSV).updates[0]!.patch;
+    expect(patch.title).toBe('TLS 1.0 が有効');
+    expect(patch.lastSeen).toBe('2026-07-05');
+  });
+
+  it('月次の取り込み (buildOverseasPlan) でも同じ', () => {
+    const c = buildOverseasPlan([row('IID-9001', '2026-05-10', 'open')], H, [], CSV, [],
+      parseFlexibleDate, NOW).creates[0]!;
+    expect(c.assetFqdn).toBe('host1.example.com');
+    expect(c.assetIp).toBe('');
+    expect(c.assetTitle).toBe('');
+    expect(c.assetHomepageUrl).toBe('');
+  });
+
+  it('大小文字・空白のゆれは吸収する', () => {
+    const csv = indexMergedCsv([{ 'Issue Instance ID': 'IID-1', 'asset  ip': '203.0.113.10' }]);
+    const patch = buildOverseasCsvRefresh(
+      [{ id: 1, issueInstanceId: 'IID-1', detectionStatus: '継続' }], csv).updates[0]!.patch;
+    expect(patch.assetIp).toBe('203.0.113.10');
   });
 });

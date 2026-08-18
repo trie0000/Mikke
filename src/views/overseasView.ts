@@ -14,10 +14,11 @@ import { DataTable } from './dataTable';
 import { parseXlsxSheet, xlsxSheetNames } from '../lib/xlsx';
 import { parseFlexibleDate } from '../lib/migration';
 import {
-  buildOverseasPlan, indexMergedCsv, overseasScannerPatch, OVERSEAS_COL, type OverseasPlan,
+  buildOverseasPlan, buildOverseasCsvRefresh, indexMergedCsv, overseasScannerPatch,
+  OVERSEAS_COL, type OverseasPlan,
 } from '../lib/overseas';
 import { relayHealth, relayGetIssues, getRelayBase, type RelayIssueBatchItem } from '../api/relay';
-import { loadLatestMergedCsv } from '../lib/downloadFlow';
+import { loadLatestMergedCsv, acquireAndStore, mergeAndStore, ALL_DOWNLOAD_TYPES } from '../lib/downloadFlow';
 import { LABEL } from '../lib/fieldLabels';
 import { buildOverseasResponsePlan, overseasKey } from '../lib/overseasResponseSync';
 import { normalizePerms, registeredCompanies } from '../lib/itemPerms';
@@ -592,6 +593,78 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
     }
   }
 
+  // ── 全件の情報更新 (検査ツールから全件 CSV を取り直す) ────────────────────
+  /**
+   * 検査ツールから全件 (脆弱性 + 資産) を取得してマージ CSV を作り、それをもとに
+   * 海外一覧の **既存行だけ** を更新する。国内の「情報更新(全件・固定)」と同じ経路。
+   * ★ 新規追加は行わない。海外一覧の行は月次 Excel の取り込みで作られるため。
+   */
+  function refreshAllFromCsv(): void {
+    if (bulkBusy || previewing) return;
+    if (!cache.length) { toast(rootEl, '一覧に行がありません。先に Excel を取り込んでください。', 'warn'); return; }
+    const body = el('div', { style: 'line-height:1.8' }, [
+      el('p', { style: 'margin:0 0 var(--s-3)' }, [
+        '検査ツールから ', el('b', {}, ['全資産および脆弱性のレポート']), ' を取得して「ダウンロードデータ」に保存し、',
+        'それらを突合した ', el('b', {}, ['マージ CSV']), ' をもとに一覧を更新します。',
+      ]),
+      el('p', { style: 'margin:0 0 var(--s-3);color:var(--ink-2)' }, [
+        '更新するのは脆弱性タイトル・IP・FQDN・Asset Title・Asset Mapped Domains・',
+        'Asset Homepage URL・最終検知日です。',
+      ]),
+      el('p', { style: 'margin:0;color:var(--ink-2)' }, [
+        '新しい脆弱性が増えることはありません（海外一覧の行は月次 Excel の取り込みで作られます）。',
+        el('br'),
+        '検知状況・通知日・地域・備考と、事業会社・管理会社・WebMAPS管理ID・参考情報は変更しません。',
+      ]),
+    ]);
+    openModal(rootEl, {
+      title: `情報更新（全件 ${cache.length} 件）`,
+      body,
+      primaryLabel: '取得して更新',
+      onPrimary: async () => {
+        bulkBusy = true;
+        const line = el('div', { class: 'mikke-note', style: 'margin-top:var(--s-3)' }, ['取得しています…']);
+        body.appendChild(line);
+        try {
+          // 1) 全レポートを取得して保存 (国内と同じ downloadFlow を使う)
+          line.textContent = '検査ツールからレポートを取得しています…';
+          const res = await acquireAndStore(ALL_DOWNLOAD_TYPES);
+          if (res.errors.length) {
+            toast(rootEl, `一部レポートの保存に失敗 (成功 ${res.saved} / 失敗 ${res.errors.length}) — ${res.errors[0]}`,
+              'warn', 10000);
+          }
+          // 2) マージ CSV を生成して保存
+          line.textContent = 'マージ CSV を作っています…';
+          const merged = await mergeAndStore(res.items, res.runFolder);
+          if (!merged.parsed.rows.length) {
+            toast(rootEl, 'マージ CSV が空でした。レポートの保存のみ完了しました。', 'warn', 10000);
+            return;
+          }
+          // 3) 既存行だけを更新 (新規追加はしない)
+          line.textContent = '一覧を更新しています…';
+          const plan = buildOverseasCsvRefresh(cache, indexMergedCsv(merged.parsed.rows));
+          let fail = 0;
+          if (plan.updates.length) {
+            const w = await getRepo().applyOverseasPlan([], plan.updates, (d, t) => {
+              line.textContent = `一覧を更新しています… (${d}/${t})`;
+            });
+            fail = w.fail;
+          }
+          const parts = [`情報更新: ${plan.updates.length - fail} 件を更新`];
+          if (plan.unchanged) parts.push(`変更なし ${plan.unchanged} 件`);
+          if (plan.unmatched.length) parts.push(`CSV に無い ${plan.unmatched.length} 件`);
+          if (fail) parts.push(`失敗 ${fail} 件`);
+          toast(rootEl, parts.join(' / '), fail ? 'warn' : 'ok', fail ? 12000 : 8000);
+        } catch (e) {
+          toast(rootEl, `情報更新に失敗しました: ${(e as Error).message}`, 'error', 10000);
+        } finally {
+          bulkBusy = false;
+          await load();
+        }
+      },
+    });
+  }
+
   // ── 海外連携用リストへの反映 ───────────────────────────────────────────────
   //   ★ 国内と違い **一方通行**。リスト側は読み取り専用で、取り込み (逆方向) は無い。
   async function push(onlySelected: boolean): Promise<void> {
@@ -788,10 +861,18 @@ export function renderOverseasView(rootEl: HTMLElement): HTMLElement {
       }),
       `対象外も表示${excludedCount ? ` (${excludedCount})` : ''}`,
     ]);
+    const refreshBtn = el('button', {
+      class: 'mikke-btn mikke-btn--secondary', style: 'height:30px;font-size:var(--fs-sm)',
+      title: '検査ツールから全件を取得し、一覧の脆弱性・資産の情報を最新にします（行は増えません）',
+      ...(busy || bulkBusy || previewing ? { disabled: 'disabled' } : {}),
+      onclick: () => refreshAllFromCsv(),
+      html: icon('download') + '<span>情報更新(全件)</span>',
+    });
     toolbar.append(
       importBtn,
       colBtn,
       pushBtn,
+      refreshBtn,
       fileInput,
       el('span', { style: 'color:var(--ink-3);font-size:var(--fs-sm)' }, [
         '地域ごと・モニタリング区分ごとのファイルをまとめて読み込めます（ドラッグ＆ドロップ可）。'
